@@ -32,6 +32,8 @@ impl<'ctx> Codegen<'ctx> {
             structs: Vec::new(),
             struct_ids: HashMap::new(),
             struct_types: Vec::new(),
+            array_shapes: Vec::new(),
+            array_shape_ids: HashMap::new(),
             scopes: Vec::new(),
             string_literals: HashMap::new(),
             loop_targets: Vec::new(),
@@ -53,11 +55,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::I64 => Some(self.i64_type().into()),
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
-            ValueType::Array(element, length) => Some(
-                self.llvm_type(ValueType::from(element))?
-                    .array_type(length)
-                    .into(),
-            ),
+            ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
             ValueType::Enum(index) => self.enum_types.get(index).copied().map(Into::into),
             ValueType::Struct(index) => self.struct_types.get(index).copied().map(Into::into),
             ValueType::Unit => None,
@@ -83,7 +81,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    pub(super) fn resolve_type(&self, ty: &Type, span: Span) -> Result<ValueType, String> {
+    pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, String> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
             Type::Bool => ValueType::Bool,
@@ -106,12 +104,7 @@ impl<'ctx> Codegen<'ctx> {
                             span.line, span.column
                         ));
                     }
-                    Type::Array(_, _) => {
-                        return Err(format!(
-                            "line {}:{}: nested arrays are not supported",
-                            span.line, span.column
-                        ));
-                    }
+                    Type::Array(_, _) => self.resolve_array_element(element, span)?,
                     Type::Unit => {
                         return Err(format!(
                             "line {}:{}: array elements cannot have type `unit`",
@@ -119,7 +112,7 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                 };
-                ValueType::Array(element, *length)
+                self.array_type(element, *length)
             }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
@@ -136,6 +129,69 @@ impl<'ctx> Codegen<'ctx> {
         })
     }
 
+    pub(super) fn array_type(&mut self, element: ArrayElementType, length: u32) -> ValueType {
+        let key = (element, length);
+        let index = if let Some(index) = self.array_shape_ids.get(&key) {
+            *index
+        } else {
+            let index = self.array_shapes.len();
+            self.array_shapes.push(ArrayShape { element, length });
+            self.array_shape_ids.insert(key, index);
+            index
+        };
+        ValueType::Array(index)
+    }
+
+    fn resolve_array_element(
+        &mut self,
+        element: &Type,
+        span: Span,
+    ) -> Result<ArrayElementType, String> {
+        match element {
+            Type::I64 => Ok(ArrayElementType::I64),
+            Type::Bool => Ok(ArrayElementType::Bool),
+            Type::Str => Ok(ArrayElementType::Str),
+            Type::Array(_, _) => {
+                let ValueType::Array(index) = self.resolve_type(element, span)? else {
+                    unreachable!()
+                };
+                Ok(ArrayElementType::Array(index))
+            }
+            Type::Unit => Err(format!(
+                "line {}:{}: array elements cannot have type `unit`",
+                span.line, span.column
+            )),
+            Type::Named(name) if self.enum_ids.contains_key(name) => {
+                Ok(ArrayElementType::Enum(self.enum_ids[name]))
+            }
+            Type::Named(name) if self.struct_ids.contains_key(name) => {
+                Ok(ArrayElementType::Struct(self.struct_ids[name]))
+            }
+            Type::Named(name) => Err(format!(
+                "line {}:{}: unknown type `{name}`",
+                span.line, span.column
+            )),
+        }
+    }
+
+    pub(super) fn llvm_array_type(&self, index: usize) -> Option<inkwell::types::ArrayType<'ctx>> {
+        let shape = self.array_shapes[index];
+        Some(
+            self.llvm_element_type(shape.element)?
+                .array_type(shape.length),
+        )
+    }
+
+    pub(super) fn llvm_element_type(
+        &self,
+        element: ArrayElementType,
+    ) -> Option<BasicTypeEnum<'ctx>> {
+        match element {
+            ArrayElementType::Array(index) => Some(self.llvm_array_type(index)?.into()),
+            _ => self.llvm_type(ValueType::from(element)),
+        }
+    }
+
     pub(super) fn declare_enums(&mut self, program: &Program) -> Result<(), String> {
         self.enums = program.enums.clone();
         for (index, declaration) in program.enums.iter().enumerate() {
@@ -149,14 +205,38 @@ impl<'ctx> Codegen<'ctx> {
                     declaration.name
                 ));
             }
-            self.enum_types.push(self.context.struct_type(
-                &[
-                    self.context.i32_type().into(),
-                    self.i64_type().into(),
-                    self.context.ptr_type(AddressSpace::default()).into(),
-                ],
-                false,
-            ));
+            let max_integers = declaration
+                .variants
+                .iter()
+                .map(|variant| {
+                    variant
+                        .payload
+                        .iter()
+                        .filter(|ty| matches!(ty, Type::I64 | Type::Bool))
+                        .count()
+                })
+                .max()
+                .unwrap_or(0);
+            let max_strings = declaration
+                .variants
+                .iter()
+                .map(|variant| {
+                    variant
+                        .payload
+                        .iter()
+                        .filter(|ty| matches!(ty, Type::Str))
+                        .count()
+                })
+                .max()
+                .unwrap_or(0);
+            let mut fields: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()];
+            fields.extend((0..max_integers).map(|_| BasicTypeEnum::from(self.i64_type())));
+            fields.extend(
+                (0..max_strings)
+                    .map(|_| BasicTypeEnum::from(self.context.ptr_type(AddressSpace::default()))),
+            );
+            self.enum_types
+                .push(self.context.struct_type(&fields, false));
         }
         Ok(())
     }

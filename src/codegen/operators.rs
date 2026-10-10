@@ -22,7 +22,7 @@ impl<'ctx> Codegen<'ctx> {
         if left.ty == ValueType::Unit {
             return Err("void expressions cannot be used as operands".into());
         }
-        if matches!(left.ty, ValueType::Array(_, _))
+        if matches!(left.ty, ValueType::Array(_))
             && matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
         {
             return Err("array values cannot be compared".into());

@@ -10,9 +10,15 @@ enum ValueType {
     Bool,
     Str,
     Unit,
-    Array(ArrayElementType, u32),
+    Array(usize),
     Enum(usize),
     Struct(usize),
+}
+
+#[derive(Clone, Copy)]
+struct ArrayShape {
+    element: ArrayElementType,
+    length: u32,
 }
 
 #[derive(Clone)]
@@ -31,6 +37,8 @@ struct Checker {
     enums: Vec<EnumDecl>,
     struct_ids: HashMap<String, usize>,
     structs: Vec<StructDecl>,
+    array_shapes: Vec<ArrayShape>,
+    array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
 }
 
 pub fn check(program: &Program) -> Result<(), String> {
@@ -44,6 +52,8 @@ pub fn check(program: &Program) -> Result<(), String> {
         enums: Vec::new(),
         struct_ids: HashMap::new(),
         structs: Vec::new(),
+        array_shapes: Vec::new(),
+        array_shape_ids: HashMap::new(),
     };
     checker.collect_signatures(program)?;
     for function in &program.functions {

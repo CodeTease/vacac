@@ -1,6 +1,98 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    pub(super) fn emit_expression_expected(
+        &mut self,
+        expression: &Expr,
+        expected: ValueType,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let needs_context = match (expression, expected) {
+            (Expr::Array(elements, _), ValueType::Array(index)) => {
+                elements.is_empty()
+                    || matches!(self.array_shapes[index].element, ArrayElementType::Array(_))
+            }
+            _ => false,
+        };
+        if needs_context {
+            let span = match expression {
+                Expr::Array(_, span) => *span,
+                _ => unreachable!(),
+            };
+            self.emit_array_literal_with_type(expression, expected, span)
+        } else {
+            self.emit_expression(expression)
+        }
+    }
+
+    pub(super) fn emit_array_literal_with_type(
+        &mut self,
+        expression: &Expr,
+        array_type: ValueType,
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let Expr::Array(elements, _) = expression else {
+            return self.emit_expression(expression);
+        };
+        let ValueType::Array(array_id) = array_type else {
+            return self.emit_array_literal(elements, span);
+        };
+        let shape = self.array_shapes[array_id];
+        if elements.is_empty() {
+            if shape.length != 0 {
+                return Err(format!(
+                    "line {}:{}: empty array literal must have array length 0",
+                    span.line, span.column
+                ));
+            }
+            return Ok(TypedValue {
+                value: Some(
+                    self.llvm_type(array_type)
+                        .ok_or("array has no LLVM type")?
+                        .const_zero(),
+                ),
+                ty: array_type,
+            });
+        }
+        if elements.len() != shape.length as usize {
+            return Err(format!(
+                "line {}:{}: array literal has length {}, expected {}",
+                span.line,
+                span.column,
+                elements.len(),
+                shape.length
+            ));
+        }
+        let llvm_type = self
+            .llvm_array_type(array_id)
+            .ok_or("array has no LLVM type")?;
+        let mut aggregate = llvm_type.const_zero().as_basic_value_enum();
+        for (index, expression) in elements.iter().enumerate() {
+            let element_type = ValueType::from(shape.element);
+            let value = self.emit_expression_expected(expression, element_type)?;
+            if value.ty != element_type {
+                return Err(format!(
+                    "array element has type {}, expected {}",
+                    self.type_name(value.ty),
+                    self.type_name(element_type)
+                ));
+            }
+            aggregate = self
+                .builder
+                .build_insert_value(
+                    aggregate.into_array_value(),
+                    value.value.ok_or("array element has no value")?,
+                    index as u32,
+                    "array.insert",
+                )
+                .map_err(|error| error.to_string())?
+                .as_basic_value_enum();
+        }
+        Ok(TypedValue {
+            value: Some(aggregate),
+            ty: array_type,
+        })
+    }
+
     pub(super) fn emit_array_literal(
         &mut self,
         elements: &[Expr],
@@ -31,15 +123,16 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Str => ArrayElementType::Str,
             ValueType::Enum(index) => ArrayElementType::Enum(index),
             ValueType::Struct(index) => ArrayElementType::Struct(index),
-            ValueType::Unit | ValueType::Array(_, _) => {
-                return Err("array elements cannot have type `unit` or be arrays".into());
-            }
+            ValueType::Array(index) => ArrayElementType::Array(index),
+            ValueType::Unit => return Err("array elements cannot have type `unit`".into()),
         };
-        let array_type = ValueType::Array(element, elements.len() as u32);
+        let array_type = self.array_type(element, elements.len() as u32);
+        let ValueType::Array(array_id) = array_type else {
+            unreachable!()
+        };
         let llvm_array_type = self
-            .llvm_type(array_type)
-            .ok_or("array has no LLVM type")?
-            .into_array_type();
+            .llvm_array_type(array_id)
+            .ok_or("array has no LLVM type")?;
         let mut aggregate = llvm_array_type.const_zero().as_basic_value_enum();
         let first_value = first.value.ok_or("array element has no value")?;
         aggregate = self

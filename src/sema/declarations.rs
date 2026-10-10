@@ -27,14 +27,16 @@ impl Checker {
                         format!("enum variant `{}` is defined more than once", variant.name),
                     ));
                 }
-                if matches!(
-                    &variant.payload,
-                    Some(Type::Unit | Type::Array(_, _) | Type::Named(_))
-                ) {
-                    return Err(at(
-                        variant.span,
-                        "enum payloads must have type `i64`, `bool`, or `str`",
-                    ));
+                for payload_type in &variant.payload {
+                    if matches!(
+                        payload_type,
+                        Type::Unit | Type::Array(_, _) | Type::Named(_)
+                    ) {
+                        return Err(at(
+                            variant.span,
+                            "enum payloads must have type `i64`, `bool`, or `str`",
+                        ));
+                    }
                 }
             }
         }
@@ -70,7 +72,8 @@ impl Checker {
             }
         }
         self.structs = program.structs.clone();
-        for declaration in &self.structs {
+        let struct_fields = self.structs.clone();
+        for declaration in &struct_fields {
             for field in &declaration.fields {
                 if self.resolve_type(&field.ty, field.span)? == ValueType::Unit {
                     return Err(at(field.span, "struct fields cannot have type `unit`"));

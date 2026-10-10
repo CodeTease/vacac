@@ -67,11 +67,20 @@ impl Parser {
             let variant_token = self.peek().clone();
             let variant_name = self.take_ident("enum variant name")?;
             let payload = if self.take(&TokenKind::LParen) {
-                let payload = self.parse_type()?;
+                let mut payload = Vec::new();
+                if self.at(&TokenKind::RParen) {
+                    return Err(unexpected(self.peek(), "at least one enum payload type"));
+                }
+                loop {
+                    payload.push(self.parse_type()?);
+                    if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                        break;
+                    }
+                }
                 self.consume(&TokenKind::RParen, "`)` after enum payload type")?;
-                Some(payload)
+                payload
             } else {
-                None
+                Vec::new()
             };
             variants.push(EnumVariant {
                 name: variant_name,
@@ -433,9 +442,19 @@ impl Parser {
                 self.advance();
                 let variant_name = self.take_ident("enum variant after `::`")?;
                 let payload = if self.take(&TokenKind::LParen) {
-                    let value = self.parse_expression(0)?;
+                    let mut values = Vec::new();
+                    if !self.at(&TokenKind::RParen) {
+                        loop {
+                            values.push(self.parse_expression(0)?);
+                            if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                                break;
+                            }
+                        }
+                    } else {
+                        return Err(unexpected(self.peek(), "at least one enum payload value"));
+                    }
                     self.consume(&TokenKind::RParen, "`)` after enum payload")?;
-                    Some(Box::new(value))
+                    Some(values)
                 } else {
                     None
                 };
@@ -505,24 +524,32 @@ impl Parser {
                 let enum_name = self.take_ident("enum name in match pattern")?;
                 self.consume(&TokenKind::DoubleColon, "`::` in match pattern")?;
                 let variant_name = self.take_ident("enum variant in match pattern")?;
-                let (binding, ignore_payload) = if self.take(&TokenKind::LParen) {
-                    let (binding, ignore_payload) = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "_")
-                    {
-                        self.advance();
-                        (None, true)
+                let bindings = if self.take(&TokenKind::LParen) {
+                    let mut bindings = Vec::new();
+                    if !self.at(&TokenKind::RParen) {
+                        loop {
+                            if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "_") {
+                                self.advance();
+                                bindings.push(None);
+                            } else {
+                                bindings.push(Some(self.take_ident("payload binding or `_`")?));
+                            }
+                            if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                                break;
+                            }
+                        }
                     } else {
-                        (Some(self.take_ident("payload binding or `_`")?), false)
-                    };
+                        return Err(unexpected(self.peek(), "at least one enum payload binding"));
+                    }
                     self.consume(&TokenKind::RParen, "`)` after payload pattern")?;
-                    (binding, ignore_payload)
+                    Some(bindings)
                 } else {
-                    (None, false)
+                    None
                 };
                 MatchPattern::Variant {
                     enum_name,
                     variant_name,
-                    binding,
-                    ignore_payload,
+                    bindings,
                 }
             };
             self.consume(&TokenKind::Equal, "`=` in match arm")?;

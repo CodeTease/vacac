@@ -42,6 +42,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Str => Self::Str,
             ArrayElementType::Enum(index) => Self::Enum(index),
             ArrayElementType::Struct(index) => Self::Struct(index),
+            ArrayElementType::Array(index) => Self::Array(index),
         }
     }
 }

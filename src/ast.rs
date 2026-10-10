@@ -8,13 +8,14 @@ pub enum Type {
     Named(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArrayElementType {
     I64,
     Bool,
     Str,
     Enum(usize),
     Struct(usize),
+    Array(usize),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,7 +56,7 @@ pub struct EnumDecl {
 #[derive(Debug, Clone)]
 pub struct EnumVariant {
     pub name: String,
-    pub payload: Option<Type>,
+    pub payload: Vec<Type>,
     pub span: Span,
 }
 
@@ -186,7 +187,7 @@ pub enum Expr {
     Variant {
         enum_name: String,
         variant_name: String,
-        payload: Option<Box<Expr>>,
+        payload: Option<Vec<Expr>>,
         span: Span,
     },
 }
@@ -204,8 +205,7 @@ pub enum MatchPattern {
     Variant {
         enum_name: String,
         variant_name: String,
-        binding: Option<String>,
-        ignore_payload: bool,
+        bindings: Option<Vec<Option<String>>>,
     },
 }
 

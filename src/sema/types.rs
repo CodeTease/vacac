@@ -1,14 +1,15 @@
 use super::*;
 
 impl Checker {
-    pub(super) fn resolve_type(&self, ty: &Type, span: Span) -> Result<ValueType, String> {
+    pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, String> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
             Type::Array(element, length) => {
-                ValueType::Array(self.resolve_array_element(element, span)?, *length)
+                let element = self.resolve_array_element(element, span)?;
+                self.array_type(element, *length)
             }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
@@ -24,9 +25,7 @@ impl Checker {
 
     pub(super) fn type_name(&self, ty: ValueType) -> String {
         match ty {
-            ValueType::Array(element, length) => {
-                format!("[{}; {length}]", self.array_element_type_name(element))
-            }
+            ValueType::Array(index) => self.array_shape_name(index),
             ValueType::Enum(index) => self
                 .enums
                 .get(index)
@@ -51,11 +50,34 @@ impl Checker {
             ArrayElementType::Str => "str".into(),
             ArrayElementType::Enum(index) => self.enums[index].name.clone(),
             ArrayElementType::Struct(index) => self.structs[index].name.clone(),
+            ArrayElementType::Array(index) => self.array_shape_name(index),
         }
     }
 
+    fn array_shape_name(&self, index: usize) -> String {
+        let shape = self.array_shapes[index];
+        format!(
+            "[{}; {}]",
+            self.array_element_type_name(shape.element),
+            shape.length
+        )
+    }
+
+    pub(super) fn array_type(&mut self, element: ArrayElementType, length: u32) -> ValueType {
+        let key = (element, length);
+        let index = if let Some(index) = self.array_shape_ids.get(&key) {
+            *index
+        } else {
+            let index = self.array_shapes.len();
+            self.array_shapes.push(ArrayShape { element, length });
+            self.array_shape_ids.insert(key, index);
+            index
+        };
+        ValueType::Array(index)
+    }
+
     fn resolve_array_element(
-        &self,
+        &mut self,
         element: &Type,
         span: Span,
     ) -> Result<ArrayElementType, String> {
@@ -72,8 +94,12 @@ impl Checker {
                     return Err(at(span, format!("unknown type `{name}`")));
                 }
             }
-            Type::Array(_, _) => {
-                return Err(at(span, "nested arrays are not supported"));
+            Type::Array(nested_element, length) => {
+                let nested_element = self.resolve_array_element(nested_element, span)?;
+                let ValueType::Array(index) = self.array_type(nested_element, *length) else {
+                    unreachable!()
+                };
+                ArrayElementType::Array(index)
             }
             Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
         })
@@ -213,6 +239,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Str => Self::Str,
             ArrayElementType::Enum(index) => Self::Enum(index),
             ArrayElementType::Struct(index) => Self::Struct(index),
+            ArrayElementType::Array(index) => Self::Array(index),
         }
     }
 }

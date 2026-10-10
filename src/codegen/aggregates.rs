@@ -1,11 +1,39 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    fn enum_payload_field(&self, enum_id: usize, variant_id: usize, payload_index: usize) -> u32 {
+        let variant = &self.enums[enum_id].variants[variant_id];
+        if matches!(variant.payload[payload_index], Type::Str) {
+            let integer_slots = self.enums[enum_id]
+                .variants
+                .iter()
+                .map(|variant| {
+                    variant
+                        .payload
+                        .iter()
+                        .filter(|ty| matches!(ty, Type::I64 | Type::Bool))
+                        .count()
+                })
+                .max()
+                .unwrap_or(0);
+            (1 + integer_slots
+                + variant.payload[..payload_index]
+                    .iter()
+                    .filter(|ty| matches!(ty, Type::Str))
+                    .count()) as u32
+        } else {
+            (1 + variant.payload[..payload_index]
+                .iter()
+                .filter(|ty| matches!(ty, Type::I64 | Type::Bool))
+                .count()) as u32
+        }
+    }
+
     pub(super) fn emit_enum_variant(
         &mut self,
         enum_name: &str,
         variant_name: &str,
-        payload_expr: Option<&Expr>,
+        payload_expr: Option<&[Expr]>,
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
         let enum_id = *self.enum_ids.get(enum_name).ok_or_else(|| {
@@ -25,64 +53,37 @@ impl<'ctx> Codegen<'ctx> {
                 )
             })?;
         let variant = self.enums[enum_id].variants[variant_index].clone();
-        let (integer_payload, string_payload) = match (&variant.payload, payload_expr) {
-            (None, None) => (
-                self.i64_type().const_zero(),
-                self.context.ptr_type(AddressSpace::default()).const_null(),
-            ),
-            (Some(payload_type), Some(expression)) => {
-                let payload = self.emit_expression(expression)?;
-                let expected = self.resolve_type(payload_type, variant.span)?;
-                if payload.ty != expected {
-                    return Err(format!(
-                        "enum payload has type {}, expected {}",
-                        self.type_name(payload.ty),
-                        self.type_name(expected)
+        let payload_values = match (&variant.payload[..], payload_expr) {
+            ([], None) => Vec::new(),
+            (expected, Some(expressions)) if expected.len() == expressions.len() => {
+                let mut values = Vec::with_capacity(expected.len());
+                for (payload_type, expression) in expected.iter().zip(expressions) {
+                    let payload = self.emit_expression(expression)?;
+                    let expected = self.resolve_type(payload_type, variant.span)?;
+                    if payload.ty != expected {
+                        return Err(format!(
+                            "enum payload has type {}, expected {}",
+                            self.type_name(payload.ty),
+                            self.type_name(expected)
+                        ));
+                    }
+                    values.push((
+                        payload.ty,
+                        payload.value.ok_or("enum payload has no value")?,
                     ));
                 }
-                match payload.ty {
-                    ValueType::I64 => (
-                        payload
-                            .value
-                            .ok_or("enum payload has no value")?
-                            .into_int_value(),
-                        self.context.ptr_type(AddressSpace::default()).const_null(),
-                    ),
-                    ValueType::Bool => {
-                        let value = self
-                            .builder
-                            .build_int_z_extend(
-                                payload
-                                    .value
-                                    .ok_or("enum payload has no value")?
-                                    .into_int_value(),
-                                self.i64_type(),
-                                "enum.bool.payload",
-                            )
-                            .map_err(|e| e.to_string())?;
-                        (
-                            value,
-                            self.context.ptr_type(AddressSpace::default()).const_null(),
-                        )
-                    }
-                    ValueType::Str => (
-                        self.i64_type().const_zero(),
-                        payload
-                            .value
-                            .ok_or("enum payload has no value")?
-                            .into_pointer_value(),
-                    ),
-                    _ => return Err("enum payloads must have type `i64`, `bool`, or `str`".into()),
-                }
+                values
             }
-            (Some(_), None) => {
+            (expected, Some(expressions)) => {
                 return Err(format!(
-                    "variant `{enum_name}::{variant_name}` requires a payload"
+                    "variant `{enum_name}::{variant_name}` expects {} payload value(s), got {}",
+                    expected.len(),
+                    expressions.len()
                 ));
             }
-            (None, Some(_)) => {
+            (_, None) => {
                 return Err(format!(
-                    "variant `{enum_name}::{variant_name}` does not take a payload"
+                    "variant `{enum_name}::{variant_name}` requires a payload"
                 ));
             }
         };
@@ -100,26 +101,26 @@ impl<'ctx> Codegen<'ctx> {
             )
             .map_err(|e| e.to_string())?
             .as_basic_value_enum();
-        value = self
-            .builder
-            .build_insert_value(
-                value.into_struct_value(),
-                integer_payload,
-                1,
-                "enum.integer.payload",
-            )
-            .map_err(|e| e.to_string())?
-            .as_basic_value_enum();
-        value = self
-            .builder
-            .build_insert_value(
-                value.into_struct_value(),
-                string_payload,
-                2,
-                "enum.string.payload",
-            )
-            .map_err(|e| e.to_string())?
-            .as_basic_value_enum();
+        for (payload_index, (ty, payload)) in payload_values.into_iter().enumerate() {
+            let field = self.enum_payload_field(enum_id, variant_index, payload_index);
+            let payload: BasicValueEnum<'ctx> = if ty == ValueType::Bool {
+                self.builder
+                    .build_int_z_extend(
+                        payload.into_int_value(),
+                        self.i64_type(),
+                        "enum.bool.payload",
+                    )
+                    .map_err(|e| e.to_string())?
+                    .into()
+            } else {
+                payload
+            };
+            value = self
+                .builder
+                .build_insert_value(value.into_struct_value(), payload, field, "enum.payload")
+                .map_err(|e| e.to_string())?
+                .as_basic_value_enum();
+        }
         Ok(TypedValue {
             value: Some(value),
             ty: ValueType::Enum(enum_id),
@@ -159,11 +160,11 @@ impl<'ctx> Codegen<'ctx> {
                     field_span.line, field_span.column
                 ));
             };
-            let value = self.emit_expression(expression)?;
             let expected = self.resolve_type(
                 &declaration.fields[index].ty,
                 declaration.fields[index].span,
             )?;
+            let value = self.emit_expression_expected(expression, expected)?;
             if value.ty != expected {
                 return Err(format!(
                     "line {}:{}: initializer for field `{field_name}` has type {}, expected {}",
@@ -284,56 +285,58 @@ impl<'ctx> Codegen<'ctx> {
         for (index, arm) in arms.iter().enumerate() {
             self.builder.position_at_end(arm_blocks[index]);
             self.scopes.push(HashMap::new());
-            let binding = match &arm.pattern {
+            let bindings = match &arm.pattern {
                 MatchPattern::Variant {
-                    binding: Some(binding),
+                    bindings: Some(bindings),
                     ..
-                } => Some(binding),
+                } => Some(bindings),
                 _ => None,
             };
-            if let Some(binding) = binding {
+            if let Some(bindings) = bindings {
                 let MatchPattern::Variant { variant_name, .. } = &arm.pattern else {
                     return Err("internal error: wildcard match arm cannot bind a payload".into());
                 };
-                let variant = self.enums[enum_id]
+                let variant_index = self.enums[enum_id]
                     .variants
                     .iter()
-                    .find(|variant| variant.name == *variant_name)
+                    .position(|variant| variant.name == *variant_name)
                     .ok_or("unknown match variant")?;
-                let payload_type = variant
-                    .payload
-                    .as_ref()
-                    .ok_or("payload binding on unit variant")?;
-                let ty = self.resolve_type(payload_type, arm.span)?;
-                let field = if ty == ValueType::Str { 2 } else { 1 };
-                let mut payload = self
-                    .builder
-                    .build_extract_value(enum_value, field, "enum.match.payload")
-                    .map_err(|e| e.to_string())?;
-                if ty == ValueType::Bool {
-                    payload = self
+                let payload_types = self.enums[enum_id].variants[variant_index].payload.clone();
+                for (payload_index, (binding, payload_type)) in
+                    bindings.iter().zip(&payload_types).enumerate()
+                {
+                    let Some(binding) = binding else { continue };
+                    let ty = self.resolve_type(payload_type, arm.span)?;
+                    let field = self.enum_payload_field(enum_id, variant_index, payload_index);
+                    let mut payload = self
                         .builder
-                        .build_int_truncate(
-                            payload.into_int_value(),
-                            self.bool_type(),
-                            "enum.match.bool",
-                        )
-                        .map_err(|e| e.to_string())?
-                        .into();
+                        .build_extract_value(enum_value, field, "enum.match.payload")
+                        .map_err(|e| e.to_string())?;
+                    if ty == ValueType::Bool {
+                        payload = self
+                            .builder
+                            .build_int_truncate(
+                                payload.into_int_value(),
+                                self.bool_type(),
+                                "enum.match.bool",
+                            )
+                            .map_err(|e| e.to_string())?
+                            .into();
+                    }
+                    let alloca = self.create_entry_alloca(ty, binding)?;
+                    self.builder
+                        .build_store(alloca, payload)
+                        .map_err(|e| e.to_string())?;
+                    self.scopes.last_mut().unwrap().insert(
+                        binding.clone(),
+                        Local {
+                            pointer: alloca,
+                            ty,
+                            immutable: false,
+                            loop_variable: false,
+                        },
+                    );
                 }
-                let alloca = self.create_entry_alloca(ty, binding)?;
-                self.builder
-                    .build_store(alloca, payload)
-                    .map_err(|e| e.to_string())?;
-                self.scopes.last_mut().unwrap().insert(
-                    binding.clone(),
-                    Local {
-                        pointer: alloca,
-                        ty,
-                        immutable: false,
-                        loop_variable: false,
-                    },
-                );
             }
             let (terminated, result) = self.emit_block(&arm.body, true)?;
             self.scopes.pop();

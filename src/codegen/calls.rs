@@ -17,12 +17,13 @@ impl<'ctx> Codegen<'ctx> {
                 ));
             }
             let value = self.emit_expression(&args[0])?;
-            let ValueType::Array(_, length) = value.ty else {
+            let ValueType::Array(index) = value.ty else {
                 return Err(format!(
                     "line {}:{}: argument 1 to `len` must be an array",
                     span.line, span.column
                 ));
             };
+            let length = self.array_shapes[index].length;
             return Ok(TypedValue {
                 value: Some(self.i64_type().const_int(u64::from(length), false).into()),
                 ty: ValueType::I64,
@@ -45,7 +46,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len());
         for (index, (arg, expected)) in args.iter().zip(params.iter()).enumerate() {
-            let value = self.emit_expression(arg)?;
+            let value = self.emit_expression_expected(arg, *expected)?;
             if value.ty != *expected {
                 return Err(format!(
                     "line {}:{}: argument {} to `{name}` expects {}, got {}",

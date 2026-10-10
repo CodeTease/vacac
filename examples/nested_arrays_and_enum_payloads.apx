@@ -1,0 +1,56 @@
+// Nested fixed-size arrays and enum variants with multiple primitive payloads.
+struct Board {
+    cells: [[i64; 3]; 2],
+}
+
+enum Event {
+    Placed(i64, i64, str),
+    Cleared(bool, str),
+    Finished,
+}
+
+fn make_board(rows: [[i64; 3]; 2]) -> Board {
+    Board { cells: rows }
+}
+
+fn describe(event: Event) -> i64 {
+    match event {
+        Event::Placed(row, column, label) => {
+            print(label);
+            print(": ");
+            print_i64(row);
+            print(",");
+            print_i64(column);
+            row * 10 + column
+        },
+        Event::Cleared(was_full, message) => {
+            print(message);
+            if was_full { 100 } else { 50 }
+        },
+        Event::Finished => { 0 },
+    }
+}
+
+fn main() -> i64 {
+    let board = make_board([[1, 2, 3], [4, 5, 6]]);
+    board.cells[1][2] = 9;
+
+    print("board row 2, column 3 = ");
+    print_i64(board.cells[1][2]);
+
+    let placed = describe(Event::Placed(1, 2, "placed"));
+    print("event value = ");
+    print_i64(placed);
+
+    let cleared = describe(Event::Cleared(true, "cleared\n"));
+    print_i64(cleared);
+
+    // `_` ignores an individual payload field without ignoring its neighbors.
+    match Event::Placed(0, 1, "ignored") {
+        Event::Placed(_, column, _) => { print_i64(column); 0 },
+        Event::Cleared(_, _) => { 0 },
+        Event::Finished => { 0 },
+    };
+
+    0
+}

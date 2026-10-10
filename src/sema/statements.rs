@@ -17,7 +17,11 @@ impl Checker {
         }
 
         if let Some(tail) = &block.tail {
-            let tail_type = self.check_expr(tail, false)?;
+            let tail_type = if function_body {
+                self.check_expr_expected(tail, return_type)?
+            } else {
+                self.check_expr(tail, false)?
+            };
             if function_body {
                 self.expect_type(
                     tail_type,
@@ -60,25 +64,19 @@ impl Checker {
                         format!("`{name}` is already declared in this scope"),
                     ));
                 }
-                let value_type = if matches!(value, Expr::Array(elements, _) if elements.is_empty())
-                {
-                    let Some(ty) = ty else {
-                        return Err(at(
-                            span_of_expr(value),
-                            "empty array literals require an array type annotation",
-                        ));
-                    };
-                    let annotated = self.resolve_type(ty, *span)?;
-                    if !matches!(annotated, ValueType::Array(_, 0)) {
-                        return Err(at(
-                            span_of_expr(value),
-                            "empty array literal must have array length 0",
-                        ));
-                    }
-                    annotated
+                let value_type = if let Some(ty) = ty {
+                    let expected = self.resolve_type(ty, *span)?;
+                    self.check_expr_expected(value, expected)?
                 } else {
                     self.check_expr(value, false)?
                 };
+                if matches!(value, Expr::Array(elements, _) if elements.is_empty()) && ty.is_none()
+                {
+                    return Err(at(
+                        span_of_expr(value),
+                        "empty array literals require an array type annotation",
+                    ));
+                }
                 if value_type == ValueType::Unit {
                     return Err(at(*span, "cannot bind a value of type `unit`"));
                 }
@@ -120,7 +118,7 @@ impl Checker {
                         format!("cannot assign to immutable binding `{name}`"),
                     ));
                 }
-                let value_type = self.check_expr(value, false)?;
+                let value_type = self.check_expr_expected(value, binding_type)?;
                 self.expect_type(
                     value_type,
                     binding_type,
@@ -153,7 +151,7 @@ impl Checker {
                     ));
                 }
                 let target_type = self.check_place(target, binding_type)?;
-                let value_type = self.check_expr(value, false)?;
+                let value_type = self.check_expr_expected(value, target_type)?;
                 let context = match target {
                     Expr::Field { name, .. } => format!("assignment to field `{name}`"),
                     Expr::Index { .. } => format!("array element assignment to `{root}`"),
@@ -238,9 +236,10 @@ impl Checker {
                 span,
             } => {
                 let array_type = self.check_expr(array, false)?;
-                let ValueType::Array(element, _) = array_type else {
+                let ValueType::Array(index) = array_type else {
                     return Err(at(*span, "array iteration requires an array"));
                 };
+                let element = self.array_shapes[index].element;
                 self.scopes
                     .push(HashMap::from([(name.clone(), ValueType::from(element))]));
                 self.immutable_scopes
@@ -270,7 +269,7 @@ impl Checker {
             }
             Stmt::Return { value, span } => {
                 if let Some(value) = value {
-                    let value_type = self.check_expr(value, false)?;
+                    let value_type = self.check_expr_expected(value, return_type)?;
                     self.expect_type(value_type, return_type, span_of_expr(value), "return value")?;
                 } else if return_type != ValueType::Unit {
                     return Err(at(

@@ -1,6 +1,67 @@
 use super::*;
 
 impl Checker {
+    pub(super) fn check_expr_expected(
+        &mut self,
+        expr: &Expr,
+        expected: ValueType,
+    ) -> Result<ValueType, String> {
+        let needs_context = match (expr, expected) {
+            (Expr::Array(elements, _), ValueType::Array(index)) => {
+                elements.is_empty()
+                    || matches!(self.array_shapes[index].element, ArrayElementType::Array(_))
+            }
+            _ => false,
+        };
+        if needs_context {
+            self.check_expr_with_type(expr, expected)
+        } else {
+            self.check_expr(expr, false)
+        }
+    }
+
+    pub(super) fn check_expr_with_type(
+        &mut self,
+        expr: &Expr,
+        expected: ValueType,
+    ) -> Result<ValueType, String> {
+        let Expr::Array(elements, span) = expr else {
+            return self.check_expr(expr, false);
+        };
+        let ValueType::Array(array_id) = expected else {
+            return self.check_expr(expr, false);
+        };
+        let shape = self.array_shapes[array_id];
+        if elements.is_empty() {
+            if shape.length != 0 {
+                return Err(at(*span, "empty array literal must have array length 0"));
+            }
+            return Ok(expected);
+        }
+        if elements.len() != shape.length as usize {
+            return Err(at(
+                *span,
+                format!(
+                    "array literal has length {}, expected {}",
+                    elements.len(),
+                    shape.length
+                ),
+            ));
+        }
+        let element_type = ValueType::from(shape.element);
+        for element in elements {
+            let actual = if matches!(shape.element, ArrayElementType::Array(_))
+                || matches!(element, Expr::Array(children, _) if children.is_empty())
+            {
+                self.check_expr_with_type(element, element_type)?
+            } else {
+                self.check_expr(element, false)?
+            };
+            self.expect_type(actual, element_type, span_of_expr(element), "array element")?;
+        }
+        Ok(expected)
+    }
+
     pub(super) fn check_place(&mut self, expr: &Expr, ty: ValueType) -> Result<ValueType, String> {
         match expr {
             Expr::Variable(_, _) => Ok(ty),
@@ -25,7 +86,9 @@ impl Checker {
                             ),
                         )
                     })?;
-                self.resolve_type(&field.ty, field.span)
+                let field_type = field.ty.clone();
+                let field_span = field.span;
+                self.resolve_type(&field_type, field_span)
             }
             Expr::Index { array, index, span } => {
                 let ty = self.check_place(array, ty)?;
@@ -37,7 +100,10 @@ impl Checker {
                     "array index",
                 )?;
                 match ty {
-                    ValueType::Array(element, _) => Ok(ValueType::from(element)),
+                    ValueType::Array(index) => {
+                        let element = self.array_shapes[index].element;
+                        Ok(ValueType::from(element))
+                    }
                     _ => Err(at(*span, "indexing requires an array")),
                 }
             }
@@ -85,7 +151,8 @@ impl Checker {
                     ValueType::Str => ArrayElementType::Str,
                     ValueType::Enum(index) => ArrayElementType::Enum(index),
                     ValueType::Struct(index) => ArrayElementType::Struct(index),
-                    ValueType::Unit | ValueType::Array(_, _) => {
+                    ValueType::Array(index) => ArrayElementType::Array(index),
+                    ValueType::Unit => {
                         return Err(at(
                             *span,
                             "array elements cannot have type `unit` or be arrays",
@@ -96,7 +163,7 @@ impl Checker {
                     let value_type = self.check_expr(value, false)?;
                     self.expect_type(value_type, first_type, span_of_expr(value), "array element")?;
                 }
-                Ok(ValueType::Array(element, elements.len() as u32))
+                Ok(self.array_type(element, elements.len() as u32))
             }
             Expr::Variable(name, span) => self
                 .lookup_local(name)
@@ -111,7 +178,9 @@ impl Checker {
                     "array index",
                 )?;
                 match array_type {
-                    ValueType::Array(element, _) => Ok(element.into()),
+                    ValueType::Array(index) => {
+                        Ok(ValueType::from(self.array_shapes[index].element))
+                    }
                     _ => Err(at(*span, "indexing requires an array")),
                 }
             }
@@ -133,7 +202,9 @@ impl Checker {
                             ),
                         )
                     })?;
-                self.resolve_type(&field.ty, field.span)
+                let field_type = field.ty.clone();
+                let field_span = field.span;
+                self.resolve_type(&field_type, field_span)
             }
             Expr::Struct { name, fields, span } => {
                 let struct_id = self
@@ -161,7 +232,7 @@ impl Checker {
                             )
                         })?;
                     let expected = self.resolve_type(&field.ty, field.span)?;
-                    let actual = self.check_expr(value, false)?;
+                    let actual = self.check_expr_expected(value, expected)?;
                     self.expect_type(
                         actual,
                         expected,
@@ -227,7 +298,7 @@ impl Checker {
                         if left_type == ValueType::Unit {
                             return Err(at(*span, "void expressions cannot be compared"));
                         }
-                        if matches!(left_type, ValueType::Array(_, _)) {
+                        if matches!(left_type, ValueType::Array(_)) {
                             return Err(at(*span, "array values cannot be compared"));
                         }
                         if matches!(left_type, ValueType::Enum(_)) {
@@ -261,7 +332,7 @@ impl Checker {
                         ));
                     }
                     let array_type = self.check_expr(&args[0], false)?;
-                    if !matches!(array_type, ValueType::Array(_, _)) {
+                    if !matches!(array_type, ValueType::Array(_)) {
                         return Err(at(
                             span_of_expr(&args[0]),
                             "argument 1 to `len` must be an array",
@@ -286,7 +357,7 @@ impl Checker {
                 let params = signature.params.clone();
                 let return_type = signature.return_type;
                 for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
-                    let actual = self.check_expr(arg, false)?;
+                    let actual = self.check_expr_expected(arg, expected)?;
                     self.expect_type(
                         actual,
                         expected,
@@ -341,31 +412,41 @@ impl Checker {
                     .variants
                     .iter()
                     .find(|variant| variant.name == *variant_name)
+                    .cloned()
                     .ok_or_else(|| {
                         at(
                             *span,
                             format!("enum `{enum_name}` has no variant `{variant_name}`"),
                         )
                     })?;
-                match (&variant.payload, payload) {
-                    (None, None) => {}
-                    (Some(expected), Some(value)) => {
-                        let expected = self.resolve_type(expected, variant.span)?;
-                        let actual = self.check_expr(value, false)?;
-                        self.expect_type(actual, expected, span_of_expr(value), "enum payload")?;
+                match (&variant.payload[..], payload) {
+                    ([], None) => {}
+                    (expected, Some(values)) if expected.len() == values.len() => {
+                        for (expected, value) in expected.iter().zip(values) {
+                            let expected = self.resolve_type(expected, variant.span)?;
+                            let actual = self.check_expr(value, false)?;
+                            self.expect_type(
+                                actual,
+                                expected,
+                                span_of_expr(value),
+                                "enum payload",
+                            )?;
+                        }
                     }
-                    (Some(_), None) => {
-                        return Err(at(
-                            *span,
-                            format!("variant `{enum_name}::{variant_name}` requires a payload"),
-                        ));
-                    }
-                    (None, Some(_)) => {
+                    (expected, Some(values)) => {
                         return Err(at(
                             *span,
                             format!(
-                                "variant `{enum_name}::{variant_name}` does not take a payload"
+                                "variant `{enum_name}::{variant_name}` expects {} payload value(s), got {}",
+                                expected.len(),
+                                values.len()
                             ),
+                        ));
+                    }
+                    (_, None) => {
+                        return Err(at(
+                            *span,
+                            format!("variant `{enum_name}::{variant_name}` requires a payload"),
                         ));
                     }
                 }
@@ -406,8 +487,7 @@ impl Checker {
                         MatchPattern::Variant {
                             enum_name,
                             variant_name,
-                            binding,
-                            ignore_payload,
+                            bindings,
                         } => {
                             if wildcard_seen {
                                 return Err(at(arm.span, "unreachable match arm after wildcard"));
@@ -444,8 +524,17 @@ impl Checker {
                                 ));
                             }
                             let variant = &declaration.variants[variant_index];
-                            match (&variant.payload, binding, ignore_payload) {
-                                (Some(_), None, false) => {
+                            match (&variant.payload[..], bindings) {
+                                ([], Some(_)) => {
+                                    return Err(at(
+                                        arm.span,
+                                        format!(
+                                            "match arm `{}::{}` has no payload to bind or ignore",
+                                            declaration.name, variant.name
+                                        ),
+                                    ));
+                                }
+                                (_, None) if !variant.payload.is_empty() => {
                                     return Err(at(
                                         arm.span,
                                         format!(
@@ -454,12 +543,17 @@ impl Checker {
                                         ),
                                     ));
                                 }
-                                (None, Some(_), _) | (None, None, true) => {
+                                (payload_types, Some(bindings))
+                                    if payload_types.len() != bindings.len() =>
+                                {
                                     return Err(at(
                                         arm.span,
                                         format!(
-                                            "match arm `{}::{}` has no payload to bind or ignore",
-                                            declaration.name, variant.name
+                                            "match arm `{}::{}` expects {} payload binding(s), got {}",
+                                            declaration.name,
+                                            variant.name,
+                                            payload_types.len(),
+                                            bindings.len()
                                         ),
                                     ));
                                 }
@@ -471,27 +565,32 @@ impl Checker {
                     self.scopes.push(HashMap::new());
                     self.immutable_scopes.push(std::collections::HashSet::new());
                     self.loop_scopes.push(std::collections::HashSet::new());
-                    let binding = match &arm.pattern {
+                    let bindings = match &arm.pattern {
                         MatchPattern::Variant {
-                            binding: Some(binding),
+                            bindings: Some(bindings),
                             ..
-                        } => Some(binding),
+                        } => Some(bindings),
                         _ => None,
                     };
-                    let arm_result = if let (Some(binding), Some(variant)) = (binding, variant) {
-                        let payload_type = variant
-                            .payload
-                            .as_ref()
-                            .expect("payload binding validated above");
-                        let binding_type = self.resolve_type(payload_type, arm.span)?;
-                        self.scopes
-                            .last_mut()
-                            .unwrap()
-                            .insert(binding.clone(), binding_type);
-                        self.check_block_result(&arm.body, arm.span)
-                    } else {
-                        self.check_block_result(&arm.body, arm.span)
-                    };
+                    if let (Some(bindings), Some(variant)) = (bindings, variant) {
+                        let mut seen_bindings = std::collections::HashSet::new();
+                        for (binding, payload_type) in bindings.iter().zip(&variant.payload) {
+                            if let Some(binding) = binding {
+                                if !seen_bindings.insert(binding.as_str()) {
+                                    return Err(at(
+                                        arm.span,
+                                        format!("`{binding}` is already declared in this scope"),
+                                    ));
+                                }
+                                let binding_type = self.resolve_type(payload_type, arm.span)?;
+                                self.scopes
+                                    .last_mut()
+                                    .unwrap()
+                                    .insert(binding.clone(), binding_type);
+                            }
+                        }
+                    }
+                    let arm_result = self.check_block_result(&arm.body, arm.span);
                     self.scopes.pop();
                     self.immutable_scopes.pop();
                     self.loop_scopes.pop();

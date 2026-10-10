@@ -30,7 +30,9 @@ impl<'ctx> Codegen<'ctx> {
                         )
                     })?;
                 let field = &self.structs[struct_id].fields[field_index];
-                let field_type = self.resolve_type(&field.ty, field.span)?;
+                let field_declaration_type = field.ty.clone();
+                let field_span = field.span;
+                let field_type = self.resolve_type(&field_declaration_type, field_span)?;
                 let field_pointer = self
                     .builder
                     .build_struct_gep(
@@ -45,7 +47,7 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Index { array, index, span } => {
                 let (array_pointer, array_type) =
                     self.emit_place_pointer(array, root_name, root_pointer, root_type)?;
-                let ValueType::Array(element, length) = array_type else {
+                let ValueType::Array(array_id) = array_type else {
                     return Err(format!(
                         "line {}:{}: indexing requires an array",
                         span.line, span.column
@@ -53,10 +55,11 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let index_value = self.emit_expression(index)?;
                 let index_value = self.expect_i64(index_value, "array index")?;
-                self.emit_bounds_check(index_value, length)?;
+                let shape = self.array_shapes[array_id];
+                self.emit_bounds_check(index_value, shape.length)?;
                 let element_pointer =
                     self.array_element_pointer(array_pointer, array_type, index_value)?;
-                Ok((element_pointer, ValueType::from(element)))
+                Ok((element_pointer, ValueType::from(shape.element)))
             }
             _ => Err("invalid assignment target".into()),
         }
@@ -159,7 +162,11 @@ impl<'ctx> Codegen<'ctx> {
         }
         let mut tail_value = None;
         if !terminated && let Some(expr) = &block.tail {
-            let value = self.emit_expression(expr)?;
+            let value = if function_body {
+                self.emit_expression_expected(expr, self.return_type)?
+            } else {
+                self.emit_expression(expr)?
+            };
             if function_body {
                 tail_value = Some(value);
             }
@@ -187,24 +194,9 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 }
-                let value = if let (Some(ty), Expr::Array(elements, _)) = (ty.as_ref(), value) {
-                    if elements.is_empty() {
-                        let array_type = self.resolve_type(ty, *span)?;
-                        if !matches!(array_type, ValueType::Array(_, 0)) {
-                            return Err(format!(
-                                "line {}:{}: empty array literal must have array length 0",
-                                span.line, span.column
-                            ));
-                        }
-                        let llvm_type =
-                            self.llvm_type(array_type).ok_or("array has no LLVM type")?;
-                        TypedValue {
-                            value: Some(llvm_type.const_zero()),
-                            ty: array_type,
-                        }
-                    } else {
-                        self.emit_expression(value)?
-                    }
+                let value = if let Some(ty) = ty.as_ref() {
+                    let array_type = self.resolve_type(ty, *span)?;
+                    self.emit_expression_expected(value, array_type)?
                 } else {
                     self.emit_expression(value)?
                 };
@@ -257,7 +249,7 @@ impl<'ctx> Codegen<'ctx> {
                     };
                     return Err(format!("line {}:{}: {reason}", span.line, span.column));
                 }
-                let value = self.emit_expression(value)?;
+                let value = self.emit_expression_expected(value, local.ty)?;
                 if local.ty != value.ty {
                     return Err(format!(
                         "line {}:{}: cannot assign {} to `{name}` of type {}",
@@ -302,7 +294,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 let (target_pointer, target_type) =
                     self.emit_place_pointer(target, name, local.pointer, local.ty)?;
-                let value = self.emit_expression(value)?;
+                let value = self.emit_expression_expected(value, target_type)?;
                 if value.ty != target_type {
                     return Err(format!(
                         "line {}:{}: assignment target has type {}, expected {}",
@@ -327,7 +319,7 @@ impl<'ctx> Codegen<'ctx> {
             }
             Stmt::Return { value, .. } => {
                 let value = if let Some(expr) = value {
-                    let value = self.emit_expression(expr)?;
+                    let value = self.emit_expression_expected(expr, self.return_type)?;
                     if value.ty != self.return_type {
                         return Err(format!(
                             "return type mismatch: expected {}, got {}",
@@ -603,12 +595,13 @@ impl<'ctx> Codegen<'ctx> {
         span: Span,
     ) -> Result<bool, String> {
         let array = self.emit_expression(array_expr)?;
-        let ValueType::Array(element, length) = array.ty else {
+        let ValueType::Array(array_id) = array.ty else {
             return Err(format!(
                 "line {}:{}: array iteration requires an array",
                 span.line, span.column
             ));
         };
+        let shape = self.array_shapes[array_id];
         let array_type = array.ty;
         let array_slot = self.create_entry_alloca(array_type, "for.array")?;
         self.builder
@@ -618,13 +611,14 @@ impl<'ctx> Codegen<'ctx> {
         self.builder
             .build_store(index_slot, self.i64_type().const_zero())
             .map_err(|e| e.to_string())?;
-        let value_slot = self.create_entry_alloca(ValueType::from(element), name)?;
+        let element_type = ValueType::from(shape.element);
+        let value_slot = self.create_entry_alloca(element_type, name)?;
 
         self.scopes.push(HashMap::from([(
             name.to_owned(),
             Local {
                 pointer: value_slot,
-                ty: ValueType::from(element),
+                ty: element_type,
                 immutable: true,
                 loop_variable: true,
             },
@@ -650,7 +644,7 @@ impl<'ctx> Codegen<'ctx> {
             .build_int_compare(
                 IntPredicate::SLT,
                 index,
-                self.i64_type().const_int(u64::from(length), false),
+                self.i64_type().const_int(u64::from(shape.length), false),
                 "for.array.test",
             )
             .map_err(|e| e.to_string())?;
@@ -668,7 +662,7 @@ impl<'ctx> Codegen<'ctx> {
         let element_value = self
             .builder
             .build_load(
-                self.llvm_type(ValueType::from(element))
+                self.llvm_element_type(shape.element)
                     .ok_or("array element has no LLVM type")?,
                 element_pointer,
                 "for.array.value",

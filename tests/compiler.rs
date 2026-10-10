@@ -1078,6 +1078,86 @@ fn fixed_arrays_support_annotations_and_function_parameters_and_returns() {
 }
 
 #[test]
+fn nested_fixed_arrays_support_literals_mutation_functions_and_struct_fields() {
+    let result = compile_and_run(
+        r#"
+        struct Grid { cells: [[i64; 2]; 2] }
+
+        fn adjust(values: [[i64; 2]; 2]) -> [[i64; 2]; 2] {
+            values[0][1] = values[0][1] + 10;
+            values
+        }
+
+        fn main() -> i64 {
+            let rows = [[1, 2], [3, 4]];
+            let changed = adjust(rows);
+            changed[1][0] = 8;
+            for row in changed {
+                print_i64(row[1]);
+            }
+            let grid = Grid { cells: changed };
+            print_i64(grid.cells[0][0]);
+            print_i64(grid.cells[0][1]);
+            print_i64(grid.cells[1][0]);
+            print_i64(len(grid.cells));
+            0
+        }
+        "#,
+        "nested-fixed-arrays",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "12\n4\n1\n12\n8\n2\n"
+    );
+}
+
+#[test]
+fn nested_zero_length_arrays_are_supported_as_elements() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let values: [[i64; 0]; 2] = [[], []];
+            print_i64(len(values));
+            print_i64(len(values[0]));
+            0
+        }
+        "#,
+        "nested-zero-length-arrays",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "2\n0\n");
+}
+
+#[test]
+fn nested_empty_arrays_use_expected_types_in_calls_structs_and_returns() {
+    let result = compile_and_run(
+        r#"
+        struct Grid { cells: [[i64; 0]; 2] }
+
+        fn make(values: [[i64; 0]; 2]) -> [[i64; 0]; 2] {
+            values
+        }
+
+        fn empty() -> [[i64; 0]; 2] {
+            [[], []]
+        }
+
+        fn main() -> i64 {
+            let grid = Grid { cells: make([[], []]) };
+            let copy = empty();
+            print_i64(len(grid.cells));
+            print_i64(len(copy[0]));
+            0
+        }
+        "#,
+        "nested-empty-contexts",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "2\n0\n");
+}
+
+#[test]
 fn arrays_of_structs_and_enums_support_value_operations_and_iteration() {
     let result = compile_and_run(
         r#"
@@ -1172,7 +1252,7 @@ fn structs_can_contain_arrays_of_structs_and_enums() {
 }
 
 #[test]
-fn aggregate_arrays_reject_mixed_unknown_nested_and_unit_elements() {
+fn aggregate_arrays_reject_mixed_unknown_and_unit_elements() {
     for (source, name, diagnostic) in [
         (
             "struct A { value: i64 } struct B { value: i64 } fn main() -> i64 { let values = [A { value: 1 }, B { value: 2 }]; 0 }\n",
@@ -1190,19 +1270,9 @@ fn aggregate_arrays_reject_mixed_unknown_nested_and_unit_elements() {
             "unknown type `Missing`",
         ),
         (
-            "fn main() -> i64 { let values: [[i64; 2]; 1] = []; 0 }\n",
-            "aggregate-array-nested-type",
-            "nested arrays are not supported",
-        ),
-        (
             "fn main() -> i64 { let values: [unit; 1] = []; 0 }\n",
             "aggregate-array-unit-type",
             "array elements cannot have type `unit`",
-        ),
-        (
-            "fn main() -> i64 { let values = [[1, 2]]; 0 }\n",
-            "aggregate-array-nested-literal",
-            "array elements cannot have type `unit` or be arrays",
         ),
         (
             "struct Item { value: i64 } fn main() -> i64 { const items = [Item { value: 1 }]; items[0].value = 2; 0 }\n",
@@ -1704,6 +1774,45 @@ fn enums_support_exhaustive_matching_and_primitive_payloads() {
 }
 
 #[test]
+fn enums_support_multiple_primitive_payloads_and_independent_match_bindings() {
+    let result = compile_and_run(
+        r#"
+        enum Event {
+            Empty,
+            Record(i64, bool, str, i64),
+            Mixed(str, i64, str, bool),
+        }
+
+        fn total(event: Event) -> i64 {
+            match event {
+                Event::Empty => { 0 },
+                Event::Record(id, active, name, extra) => {
+                    println(name);
+                    id + extra + if active { 1 } else { 0 }
+                },
+                Event::Mixed(_, number, label, flag) => {
+                    println(label);
+                    number + if flag { 10 } else { 0 }
+                },
+            }
+        }
+
+        fn main() -> i64 {
+            print_i64(total(Event::Record(20, true, "record", 3)));
+            print_i64(total(Event::Mixed("ignored", 5, "mixed", true)));
+            total(Event::Empty)
+        }
+        "#,
+        "enum-multiple-payloads",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "record\n24\nmixed\n15\n"
+    );
+}
+
+#[test]
 fn enum_match_supports_wildcards_and_ignored_payloads() {
     let result = compile_and_run(
         r#"
@@ -1789,6 +1898,26 @@ fn enums_reject_non_exhaustive_duplicate_and_invalid_payload_matches() {
             "enum Choice { Some(i64), None } fn main() -> i64 { match Choice::None { Choice::Some => { 1 }, Choice::None => { 0 } } }\n",
             "enum-match-missing-payload-binding",
             "must bind its payload",
+        ),
+        (
+            "enum Choice { Some(i64, bool), None } fn main() -> i64 { Choice::Some(1); 0 }\n",
+            "enum-payload-arity",
+            "expects 2 payload value(s), got 1",
+        ),
+        (
+            "enum Choice { Some(i64, bool), None } fn main() -> i64 { Choice::Some(1, 2); 0 }\n",
+            "enum-payload-type-in-tuple",
+            "enum payload has type i64, expected bool",
+        ),
+        (
+            "enum Choice { Some(i64, bool), None } fn main() -> i64 { match Choice::Some(1, true) { Choice::Some(value) => { value }, Choice::None => { 0 } } }\n",
+            "enum-match-payload-arity",
+            "expects 2 payload binding(s), got 1",
+        ),
+        (
+            "enum Choice { Some(i64, bool), None } fn main() -> i64 { match Choice::Some(1, true) { Choice::Some(value, value) => { value }, Choice::None => { 0 } } }\n",
+            "enum-match-duplicate-payload-binding",
+            "`value` is already declared in this scope",
         ),
     ] {
         assert_compile_error(source, test_name, diagnostic);

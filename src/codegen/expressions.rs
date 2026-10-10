@@ -34,7 +34,7 @@ impl<'ctx> Codegen<'ctx> {
             }
             Expr::Index { array, index, span } => {
                 let array_value = self.emit_expression(array)?;
-                let ValueType::Array(element, length) = array_value.ty else {
+                let ValueType::Array(array_id) = array_value.ty else {
                     return Err(format!(
                         "line {}:{}: indexing requires an array",
                         span.line, span.column
@@ -42,8 +42,9 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let index = self.emit_expression(index)?;
                 let index = self.expect_i64(index, "array index")?;
-                self.emit_bounds_check(index, length)?;
-                let array_type = ValueType::Array(element, length);
+                let shape = self.array_shapes[array_id];
+                self.emit_bounds_check(index, shape.length)?;
+                let array_type = array_value.ty;
                 let scratch = self.create_entry_alloca(array_type, "array.index.base")?;
                 self.builder
                     .build_store(scratch, array_value.value.ok_or("array has no value")?)
@@ -52,7 +53,7 @@ impl<'ctx> Codegen<'ctx> {
                 let value = self
                     .builder
                     .build_load(
-                        self.llvm_type(ValueType::from(element))
+                        self.llvm_element_type(shape.element)
                             .ok_or("array element has no LLVM type")?,
                         pointer,
                         "array.element",
@@ -60,7 +61,7 @@ impl<'ctx> Codegen<'ctx> {
                     .map_err(|e| e.to_string())?;
                 Ok(TypedValue {
                     value: Some(value),
-                    ty: ValueType::from(element),
+                    ty: ValueType::from(shape.element),
                 })
             }
             Expr::Field { value, name, span } => {
@@ -81,10 +82,10 @@ impl<'ctx> Codegen<'ctx> {
                             span.line, span.column, self.structs[struct_id].name
                         )
                     })?;
-                let field_ty = self.resolve_type(
-                    &self.structs[struct_id].fields[field_index].ty,
-                    self.structs[struct_id].fields[field_index].span,
-                )?;
+                let field_declaration = &self.structs[struct_id].fields[field_index];
+                let field_type = field_declaration.ty.clone();
+                let field_span = field_declaration.span;
+                let field_ty = self.resolve_type(&field_type, field_span)?;
                 let value = self
                     .builder
                     .build_extract_value(

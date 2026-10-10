@@ -23,9 +23,15 @@ enum ValueType {
     Bool,
     Str,
     Unit,
-    Array(ArrayElementType, u32),
+    Array(usize),
     Enum(usize),
     Struct(usize),
+}
+
+#[derive(Clone, Copy)]
+struct ArrayShape {
+    element: ArrayElementType,
+    length: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -53,6 +59,8 @@ struct Codegen<'ctx> {
     structs: Vec<StructDecl>,
     struct_ids: HashMap<String, usize>,
     struct_types: Vec<StructType<'ctx>>,
+    array_shapes: Vec<ArrayShape>,
+    array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
     scopes: Vec<HashMap<String, Local<'ctx>>>,
     string_literals: HashMap<String, PointerValue<'ctx>>,
     loop_targets: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
@@ -94,10 +102,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Bool => "bool".into(),
             ValueType::Str => "str".into(),
             ValueType::Unit => "unit".into(),
-            ValueType::Array(element, length) => {
-                let element = self.array_element_type_name(element);
-                format!("[{element}; {length}]")
-            }
+            ValueType::Array(index) => self.array_shape_name(index),
             ValueType::Enum(index) => self.enums[index].name.clone(),
             ValueType::Struct(index) => self.structs[index].name.clone(),
         }
@@ -110,6 +115,13 @@ impl<'ctx> Codegen<'ctx> {
             ArrayElementType::Str => "str".into(),
             ArrayElementType::Enum(index) => self.enums[index].name.clone(),
             ArrayElementType::Struct(index) => self.structs[index].name.clone(),
+            ArrayElementType::Array(index) => self.array_shape_name(index),
         }
+    }
+
+    fn array_shape_name(&self, index: usize) -> String {
+        let shape = self.array_shapes[index];
+        let element = self.array_element_type_name(shape.element);
+        format!("[{element}; {}]", shape.length)
     }
 }
