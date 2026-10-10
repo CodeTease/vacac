@@ -1,0 +1,742 @@
+use crate::lexer::{Token, TokenKind, unexpected};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Type {
+    I64,
+    Bool,
+    Str,
+    Unit,
+    Array(ArrayElementType, u32),
+    Enum(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrayElementType {
+    I64,
+    Bool,
+    Str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Span {
+    pub line: usize,
+    pub column: usize,
+    pub end_column: usize,
+}
+
+impl From<&Token> for Span {
+    fn from(token: &Token) -> Self {
+        Self {
+            line: token.line,
+            column: token.column,
+            end_column: token.end_column,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Program {
+    pub enums: Vec<EnumDecl>,
+    pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumDecl {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub payload: Option<Type>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Function {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Type,
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub statements: Vec<Stmt>,
+    pub tail: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Stmt {
+    Let {
+        name: String,
+        ty: Option<Type>,
+        value: Expr,
+        span: Span,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+        span: Span,
+    },
+    If {
+        condition: Expr,
+        then_block: Block,
+        else_block: Option<Block>,
+    },
+    While {
+        condition: Expr,
+        body: Block,
+    },
+    For {
+        name: String,
+        start: Expr,
+        end: Expr,
+        body: Block,
+    },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
+    Return {
+        value: Option<Expr>,
+        span: Span,
+    },
+    AssignIndex {
+        name: String,
+        index: Expr,
+        value: Expr,
+        span: Span,
+    },
+    Expr(Expr),
+}
+
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Integer(u64, Span),
+    Bool(bool, Span),
+    String(String, Span),
+    Array(Vec<Expr>, Span),
+    Variable(String, Span),
+    Index {
+        array: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
+    Unary {
+        op: UnaryOp,
+        value: Box<Expr>,
+        span: Span,
+    },
+    Binary {
+        op: BinaryOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+        span: Span,
+    },
+    Call {
+        name: String,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    If {
+        condition: Box<Expr>,
+        then_block: Box<Block>,
+        else_block: Box<Block>,
+        span: Span,
+    },
+    Match {
+        value: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    Variant {
+        enum_name: String,
+        variant_name: String,
+        payload: Option<Box<Expr>>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub span: Span,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone)]
+pub enum MatchPattern {
+    Wildcard,
+    Variant {
+        enum_name: String,
+        variant_name: String,
+        binding: Option<String>,
+        ignore_payload: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnaryOp {
+    Negate,
+    Not,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    And,
+    Or,
+}
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    current: usize,
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, current: 0 }
+    }
+
+    pub fn parse_program(mut self) -> Result<Program, String> {
+        let mut enums = Vec::new();
+        let mut functions = Vec::new();
+        while !self.at(&TokenKind::Eof) {
+            if self.at(&TokenKind::Enum) {
+                enums.push(self.parse_enum()?);
+            } else {
+                functions.push(self.parse_function()?);
+            }
+        }
+        if functions.is_empty() && enums.is_empty() {
+            return Err("program must contain at least one declaration".into());
+        }
+        Ok(Program { enums, functions })
+    }
+
+    fn parse_enum(&mut self) -> Result<EnumDecl, String> {
+        let start = self.consume(&TokenKind::Enum, "`enum`")?;
+        let name = self.take_ident("enum name")?;
+        self.consume(&TokenKind::LBrace, "`{` after enum name")?;
+        let mut variants = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+            let variant_token = self.peek().clone();
+            let variant_name = self.take_ident("enum variant name")?;
+            let payload = if self.take(&TokenKind::LParen) {
+                let payload = self.parse_type()?;
+                self.consume(&TokenKind::RParen, "`)` after enum payload type")?;
+                Some(payload)
+            } else {
+                None
+            };
+            variants.push(EnumVariant {
+                name: variant_name,
+                payload,
+                span: Span::from(&variant_token),
+            });
+            if !self.take(&TokenKind::Comma) && !self.at(&TokenKind::RBrace) {
+                return Err(unexpected(self.peek(), "`,` or `}` after enum variant"));
+            }
+        }
+        if variants.is_empty() {
+            return Err(unexpected(self.peek(), "at least one enum variant"));
+        }
+        self.consume(&TokenKind::RBrace, "`}` after enum variants")?;
+        Ok(EnumDecl {
+            name,
+            variants,
+            span: Span::from(&start),
+        })
+    }
+
+    fn parse_function(&mut self) -> Result<Function, String> {
+        let start = self.consume(&TokenKind::Fn, "`fn`")?;
+        let name = self.take_ident("function name")?;
+        self.consume(&TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.at(&TokenKind::RParen) {
+            loop {
+                let param_name = self.take_ident("parameter name")?;
+                let param_span = Span::from(self.previous());
+                self.consume(&TokenKind::Colon, "`:`")?;
+                let ty = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                    span: param_span,
+                });
+                if !self.take(&TokenKind::Comma) {
+                    break;
+                }
+                if self.at(&TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RParen, "`)`")?;
+        self.consume(&TokenKind::Arrow, "`->`")?;
+        let return_type = self.parse_type()?;
+        let body = self.parse_block()?;
+        Ok(Function {
+            name,
+            params,
+            return_type,
+            body,
+            span: Span::from(&start),
+        })
+    }
+
+    fn parse_type(&mut self) -> Result<Type, String> {
+        if self.take(&TokenKind::I64) {
+            Ok(Type::I64)
+        } else if self.take(&TokenKind::Bool) {
+            Ok(Type::Bool)
+        } else if self.take(&TokenKind::Str) {
+            Ok(Type::Str)
+        } else if self.take(&TokenKind::Unit) {
+            Ok(Type::Unit)
+        } else if self.take(&TokenKind::LBracket) {
+            let element = if self.take(&TokenKind::I64) {
+                ArrayElementType::I64
+            } else if self.take(&TokenKind::Bool) {
+                ArrayElementType::Bool
+            } else if self.take(&TokenKind::Str) {
+                ArrayElementType::Str
+            } else {
+                return Err(unexpected(
+                    self.peek(),
+                    "array element type `i64`, `bool`, or `str`",
+                ));
+            };
+            self.consume(&TokenKind::Semicolon, "`;` in array type")?;
+            let length = match self.advance().kind {
+                TokenKind::Integer(length) if length > 0 && length <= u32::MAX as u64 => {
+                    length as u32
+                }
+                TokenKind::Integer(0) => {
+                    return Err(unexpected(self.previous(), "positive array length"));
+                }
+                TokenKind::Integer(_) => {
+                    return Err(unexpected(
+                        self.previous(),
+                        "array length no greater than 4294967295",
+                    ));
+                }
+                _ => return Err(unexpected(self.previous(), "array length")),
+            };
+            self.consume(&TokenKind::RBracket, "`]`")?;
+            Ok(Type::Array(element, length))
+        } else if let TokenKind::Ident(name) = &self.peek().kind {
+            let name = name.clone();
+            self.advance();
+            Ok(Type::Enum(name))
+        } else {
+            Err(unexpected(
+                self.peek(),
+                "type `i64`, `bool`, `str`, `unit`, an enum name, or `[element; length]`",
+            ))
+        }
+    }
+
+    fn parse_block(&mut self) -> Result<Block, String> {
+        self.consume(&TokenKind::LBrace, "`{`")?;
+        let mut statements = Vec::new();
+        let mut tail = None;
+        while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+            if self.at(&TokenKind::Let) {
+                let start = self.advance().clone();
+                let name = self.take_ident("binding name")?;
+                let ty = if self.take(&TokenKind::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                self.consume(&TokenKind::Equal, "`=`")?;
+                let value = self.parse_expression(0)?;
+                self.consume(&TokenKind::Semicolon, "`;`")?;
+                statements.push(Stmt::Let {
+                    name,
+                    ty,
+                    value,
+                    span: Span::from(&start),
+                });
+            } else if self.at(&TokenKind::If) {
+                let if_token = self.advance().clone();
+                let condition = self.parse_expression(0)?;
+                let then_block = self.parse_block()?;
+                let else_block = if self.take(&TokenKind::Else) {
+                    Some(self.parse_block()?)
+                } else {
+                    None
+                };
+                if else_block
+                    .as_ref()
+                    .is_some_and(|block| then_block.tail.is_some() && block.tail.is_some())
+                    && (self.at(&TokenKind::RBrace) || self.at(&TokenKind::Semicolon))
+                {
+                    let else_block = else_block.expect("checked above");
+                    let expression = Expr::If {
+                        condition: Box::new(condition),
+                        then_block: Box::new(then_block),
+                        else_block: Box::new(else_block),
+                        span: Span::from(&if_token),
+                    };
+                    if self.take(&TokenKind::Semicolon) {
+                        statements.push(Stmt::Expr(expression));
+                    } else {
+                        tail = Some(expression);
+                        break;
+                    }
+                } else {
+                    statements.push(Stmt::If {
+                        condition,
+                        then_block,
+                        else_block,
+                    });
+                }
+            } else if self.take(&TokenKind::While) {
+                let condition = self.parse_expression(0)?;
+                let body = self.parse_block()?;
+                statements.push(Stmt::While { condition, body });
+            } else if self.take(&TokenKind::For) {
+                let name = self.take_ident("loop variable")?;
+                self.consume(&TokenKind::In, "`in`")?;
+                let start = self.parse_expression(0)?;
+                self.consume(&TokenKind::DotDot, "`..`")?;
+                let end = self.parse_expression(0)?;
+                let body = self.parse_block()?;
+                statements.push(Stmt::For {
+                    name,
+                    start,
+                    end,
+                    body,
+                });
+            } else if self.take(&TokenKind::Break) {
+                let span = Span::from(self.previous());
+                self.consume(&TokenKind::Semicolon, "`;`")?;
+                statements.push(Stmt::Break { span });
+            } else if self.take(&TokenKind::Continue) {
+                let span = Span::from(self.previous());
+                self.consume(&TokenKind::Semicolon, "`;`")?;
+                statements.push(Stmt::Continue { span });
+            } else if self.take(&TokenKind::Return) {
+                let span = Span::from(self.previous());
+                let value = if self.at(&TokenKind::Semicolon) {
+                    None
+                } else {
+                    Some(self.parse_expression(0)?)
+                };
+                self.consume(&TokenKind::Semicolon, "`;`")?;
+                statements.push(Stmt::Return { value, span });
+            } else if let (TokenKind::Ident(name), TokenKind::Equal) =
+                (&self.peek().kind, &self.peek_n(1).kind)
+            {
+                let name = name.clone();
+                let assignment = self.advance().clone();
+                let span = Span::from(&assignment);
+                self.advance();
+                let value = self.parse_expression(0)?;
+                self.consume(&TokenKind::Semicolon, "`;`")?;
+                statements.push(Stmt::Assign { name, value, span });
+            } else {
+                let expr = self.parse_expression(0)?;
+                if self.take(&TokenKind::Equal) {
+                    let (name, index, span) = match expr {
+                        Expr::Index { array, index, span } => match *array {
+                            Expr::Variable(name, _) => (name, *index, span),
+                            _ => {
+                                return Err(unexpected(
+                                    self.previous(),
+                                    "assignable array variable before `[`",
+                                ));
+                            }
+                        },
+                        _ => return Err(unexpected(self.previous(), "assignment target")),
+                    };
+                    let value = self.parse_expression(0)?;
+                    self.consume(&TokenKind::Semicolon, "`;`")?;
+                    statements.push(Stmt::AssignIndex {
+                        name,
+                        index,
+                        value,
+                        span,
+                    });
+                } else if self.take(&TokenKind::Semicolon) {
+                    statements.push(Stmt::Expr(expr));
+                } else if self.at(&TokenKind::RBrace) {
+                    tail = Some(expr);
+                    break;
+                } else {
+                    return Err(unexpected(self.peek(), "`;` or `}` after expression"));
+                }
+            }
+        }
+        self.consume(&TokenKind::RBrace, "`}`")?;
+        Ok(Block { statements, tail })
+    }
+
+    fn parse_expression(&mut self, min_precedence: u8) -> Result<Expr, String> {
+        let mut left = self.parse_prefix()?;
+        loop {
+            if self.at(&TokenKind::LBracket) {
+                let span = Span::from(self.advance());
+                let index = self.parse_expression(0)?;
+                self.consume(&TokenKind::RBracket, "`]` after array index")?;
+                left = Expr::Index {
+                    array: Box::new(left),
+                    index: Box::new(index),
+                    span,
+                };
+                continue;
+            }
+            let Some((op, precedence)) = self.binary_operator() else {
+                break;
+            };
+            if precedence < min_precedence {
+                break;
+            }
+            let operator = self.advance().clone();
+            let right = self.parse_expression(precedence + 1)?;
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+                span: Span::from(&operator),
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_prefix(&mut self) -> Result<Expr, String> {
+        if self.at(&TokenKind::Minus) {
+            let operator = self.advance().clone();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Negate,
+                value: Box::new(self.parse_expression(7)?),
+                span: Span::from(&operator),
+            });
+        }
+        if self.at(&TokenKind::Bang) {
+            let operator = self.advance().clone();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Not,
+                value: Box::new(self.parse_expression(7)?),
+                span: Span::from(&operator),
+            });
+        }
+        let token = self.advance().clone();
+        let span = Span::from(&token);
+        match token.kind {
+            TokenKind::Integer(n) => Ok(Expr::Integer(n, span)),
+            TokenKind::True => Ok(Expr::Bool(true, span)),
+            TokenKind::False => Ok(Expr::Bool(false, span)),
+            TokenKind::StringLit(value) => Ok(Expr::String(value, span)),
+            TokenKind::LBracket => {
+                let mut elements = Vec::new();
+                if !self.at(&TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.parse_expression(0)?);
+                        if !self.take(&TokenKind::Comma) {
+                            break;
+                        }
+                        if self.at(&TokenKind::RBracket) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(&TokenKind::RBracket, "`]` after array literal")?;
+                Ok(Expr::Array(elements, span))
+            }
+            TokenKind::If => {
+                let condition = self.parse_expression(0)?;
+                let then_block = self.parse_block()?;
+                self.consume(&TokenKind::Else, "`else` in an `if` expression")?;
+                let else_block = self.parse_block()?;
+                Ok(Expr::If {
+                    condition: Box::new(condition),
+                    then_block: Box::new(then_block),
+                    else_block: Box::new(else_block),
+                    span,
+                })
+            }
+            TokenKind::Match => self.parse_match(span),
+            TokenKind::Ident(enum_name) if self.at(&TokenKind::DoubleColon) => {
+                self.advance();
+                let variant_name = self.take_ident("enum variant after `::`")?;
+                let payload = if self.take(&TokenKind::LParen) {
+                    let value = self.parse_expression(0)?;
+                    self.consume(&TokenKind::RParen, "`)` after enum payload")?;
+                    Some(Box::new(value))
+                } else {
+                    None
+                };
+                Ok(Expr::Variant {
+                    enum_name,
+                    variant_name,
+                    payload,
+                    span,
+                })
+            }
+            TokenKind::Ident(name) if self.take(&TokenKind::LParen) => {
+                let mut args = Vec::new();
+                if !self.at(&TokenKind::RParen) {
+                    loop {
+                        args.push(self.parse_expression(0)?);
+                        if !self.take(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(&TokenKind::RParen, "`)`")?;
+                Ok(Expr::Call { name, args, span })
+            }
+            TokenKind::Ident(name) => Ok(Expr::Variable(name, span)),
+            TokenKind::LParen => {
+                let expr = self.parse_expression(0)?;
+                self.consume(&TokenKind::RParen, "`)`")?;
+                Ok(expr)
+            }
+            _ => Err(unexpected(&token, "expression")),
+        }
+    }
+
+    fn parse_match(&mut self, span: Span) -> Result<Expr, String> {
+        let value = self.parse_expression(7)?;
+        self.consume(&TokenKind::LBrace, "`{` before match arms")?;
+        let mut arms = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+            let start = self.peek().clone();
+            let pattern = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "_") {
+                self.advance();
+                MatchPattern::Wildcard
+            } else {
+                let enum_name = self.take_ident("enum name in match pattern")?;
+                self.consume(&TokenKind::DoubleColon, "`::` in match pattern")?;
+                let variant_name = self.take_ident("enum variant in match pattern")?;
+                let (binding, ignore_payload) = if self.take(&TokenKind::LParen) {
+                    let (binding, ignore_payload) = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "_")
+                    {
+                        self.advance();
+                        (None, true)
+                    } else {
+                        (Some(self.take_ident("payload binding or `_`")?), false)
+                    };
+                    self.consume(&TokenKind::RParen, "`)` after payload pattern")?;
+                    (binding, ignore_payload)
+                } else {
+                    (None, false)
+                };
+                MatchPattern::Variant {
+                    enum_name,
+                    variant_name,
+                    binding,
+                    ignore_payload,
+                }
+            };
+            self.consume(&TokenKind::Equal, "`=` in match arm")?;
+            self.consume(&TokenKind::Greater, "`>` in match arm (`=>`)")?;
+            let body = self.parse_block()?;
+            arms.push(MatchArm {
+                pattern,
+                span: Span::from(&start),
+                body,
+            });
+            if !self.take(&TokenKind::Comma) && !self.at(&TokenKind::RBrace) {
+                return Err(unexpected(self.peek(), "`,` or `}` after match arm"));
+            }
+        }
+        if arms.is_empty() {
+            return Err(unexpected(self.peek(), "at least one match arm"));
+        }
+        self.consume(&TokenKind::RBrace, "`}` after match arms")?;
+        Ok(Expr::Match {
+            value: Box::new(value),
+            arms,
+            span,
+        })
+    }
+
+    fn binary_operator(&self) -> Option<(BinaryOp, u8)> {
+        Some(match self.peek().kind {
+            TokenKind::OrOr => (BinaryOp::Or, 1),
+            TokenKind::AndAnd => (BinaryOp::And, 2),
+            TokenKind::EqualEqual => (BinaryOp::Equal, 3),
+            TokenKind::BangEqual => (BinaryOp::NotEqual, 3),
+            TokenKind::Less => (BinaryOp::Less, 4),
+            TokenKind::LessEqual => (BinaryOp::LessEqual, 4),
+            TokenKind::Greater => (BinaryOp::Greater, 4),
+            TokenKind::GreaterEqual => (BinaryOp::GreaterEqual, 4),
+            TokenKind::Plus => (BinaryOp::Add, 5),
+            TokenKind::Minus => (BinaryOp::Subtract, 5),
+            TokenKind::Star => (BinaryOp::Multiply, 6),
+            TokenKind::Slash => (BinaryOp::Divide, 6),
+            TokenKind::Percent => (BinaryOp::Remainder, 6),
+            _ => return None,
+        })
+    }
+
+    fn take_ident(&mut self, expected: &str) -> Result<String, String> {
+        match self.advance().kind.clone() {
+            TokenKind::Ident(name) => Ok(name),
+            _ => Err(unexpected(self.previous(), expected)),
+        }
+    }
+    fn at(&self, kind: &TokenKind) -> bool {
+        std::mem::discriminant(&self.peek().kind) == std::mem::discriminant(kind)
+    }
+    fn take(&mut self, kind: &TokenKind) -> bool {
+        if self.at(kind) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+    fn consume(&mut self, kind: &TokenKind, expected: &str) -> Result<Token, String> {
+        if self.at(kind) {
+            Ok(self.advance().clone())
+        } else {
+            Err(unexpected(self.peek(), expected))
+        }
+    }
+    fn advance(&mut self) -> &Token {
+        if !self.at(&TokenKind::Eof) {
+            self.current += 1;
+        }
+        self.previous()
+    }
+    fn peek(&self) -> &Token {
+        &self.tokens[self.current]
+    }
+    fn peek_n(&self, n: usize) -> &Token {
+        self.tokens
+            .get(self.current + n)
+            .unwrap_or_else(|| self.tokens.last().unwrap())
+    }
+    fn previous(&self) -> &Token {
+        &self.tokens[self.current.saturating_sub(1)]
+    }
+}

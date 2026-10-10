@@ -1,0 +1,19 @@
+// Read one integer from stdin and report whether it is negative, zero, or positive.
+fn main() -> i64 {
+    print("Enter an integer: ");
+    let number: i64 = read_i64();
+
+    if number < 0 {
+        println("negative");
+    } else {
+        if number == 0 {
+            println("zero");
+        } else {
+            println("positive");
+        }
+    }
+
+    print("you entered ");
+    print_i64(number);
+    0
+}

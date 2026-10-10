@@ -1,0 +1,18 @@
+// Euclid's algorithm: gcd(84, 30) is 6.
+fn gcd(left: i64, right: i64) -> i64 {
+    let a: i64 = left;
+    let b: i64 = right;
+
+    while b != 0 {
+        let remainder: i64 = a % b;
+        a = b;
+        b = remainder;
+    }
+
+    a
+}
+
+fn main() -> i64 {
+    print_i64(gcd(84, 30));
+    0
+}

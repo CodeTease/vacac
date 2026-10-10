@@ -1,0 +1,13 @@
+// Sum the half-open range 1..101, then print 5050.
+fn sum_to(limit: i64) -> i64 {
+    let total: i64 = 0;
+    for value in 1..(limit + 1) {
+        total = total + value;
+    }
+    total
+}
+
+fn main() -> i64 {
+    print_i64(sum_to(100));
+    0
+}

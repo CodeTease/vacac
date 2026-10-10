@@ -1,0 +1,20 @@
+// Walk a fixed-size array and print its sum and largest value.
+fn main() -> i64 {
+    let values = [12, 7, 25, 4, 18];
+    let total: i64 = 0;
+    let largest: i64 = values[0];
+
+    for index in 0..len(values) {
+        let value: i64 = values[index];
+        total = total + value;
+        if value > largest {
+            largest = value;
+        }
+    }
+
+    print("sum = ");
+    print_i64(total);
+    print("largest = ");
+    print_i64(largest);
+    0
+}

@@ -1,0 +1,25 @@
+// Print whether a number is prime (1 means true, 0 means false).
+fn is_prime(number: i64) -> bool {
+    if number < 2 {
+        return false;
+    }
+
+    let divisor: i64 = 2;
+    while divisor * divisor <= number {
+        if number % divisor == 0 {
+            return false;
+        }
+        divisor = divisor + 1;
+    }
+
+    true
+}
+
+fn main() -> i64 {
+    if is_prime(29) {
+        print_i64(1);
+    } else {
+        print_i64(0);
+    }
+    0
+}

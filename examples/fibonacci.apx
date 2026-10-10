@@ -1,0 +1,17 @@
+// Print the first twelve Fibonacci numbers using an iterative loop.
+fn main() -> i64 {
+    let previous: i64 = 0;
+    let current: i64 = 1;
+    let index: i64 = 0;
+
+    while index < 12 {
+        print_i64(previous);
+
+        let next: i64 = previous + current;
+        previous = current;
+        current = next;
+        index = index + 1;
+    }
+
+    0
+}

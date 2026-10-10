@@ -1,0 +1,23 @@
+fn greeting(formal: bool) -> str {
+    if formal {
+        return "Good day";
+    }
+    "Hello"
+}
+
+fn main() -> i64 {
+    let name: str = "Apex";
+    print(greeting(false));
+    print(", ");
+    println(name);
+
+    for i in 1..4 {
+        print("line ");
+        print_i64(i);
+    }
+
+    if greeting(true) == "Good day" {
+        println("strings compare by content");
+    }
+    0
+}
