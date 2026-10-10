@@ -1,4 +1,5 @@
 use crate::ast::{EnumDecl, Span, StructDecl, Type};
+use crate::diagnostic::Diagnostic;
 use std::collections::HashMap;
 
 /// Reject aggregate layouts that recursively contain themselves by value.
@@ -6,7 +7,7 @@ use std::collections::HashMap;
 pub(crate) fn validate_aggregate_cycles(
     enums: &[EnumDecl],
     structs: &[StructDecl],
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let mut type_ids = HashMap::new();
     for (index, declaration) in enums.iter().enumerate() {
         type_ids.insert(declaration.name.as_str(), index);
@@ -29,7 +30,7 @@ pub(crate) fn validate_aggregate_cycles(
         structs: &[StructDecl],
         type_ids: &HashMap<&str, usize>,
         states: &mut [u8],
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         states[id] = 1;
         let dependencies: Vec<(usize, Span, String)> = if id < enums.len() {
             let declaration = &enums[id];
@@ -73,7 +74,7 @@ pub(crate) fn validate_aggregate_cycles(
 
         for (target, span, message) in dependencies {
             if states[target] == 1 {
-                return Err(format!("line {}:{}: {message}", span.line, span.column));
+                return Err(Diagnostic::at(span.into(), message));
             }
             if states[target] == 0 {
                 visit(target, enums, structs, type_ids, states)?;

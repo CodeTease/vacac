@@ -1,7 +1,7 @@
 use super::*;
 
 impl Checker {
-    pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, String> {
+    pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, Diagnostic> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
             Type::Bool => ValueType::Bool,
@@ -80,7 +80,7 @@ impl Checker {
         &mut self,
         element: &Type,
         span: Span,
-    ) -> Result<ArrayElementType, String> {
+    ) -> Result<ArrayElementType, Diagnostic> {
         Ok(match element {
             Type::I64 => ArrayElementType::I64,
             Type::Bool => ArrayElementType::Bool,
@@ -109,7 +109,7 @@ impl Checker {
         &mut self,
         block: &Block,
         span: Span,
-    ) -> Result<ValueType, String> {
+    ) -> Result<ValueType, Diagnostic> {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
@@ -150,7 +150,7 @@ impl Checker {
         expected: ValueType,
         span: Span,
         context: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         if actual == expected {
             Ok(())
         } else {
@@ -224,11 +224,8 @@ pub(super) fn assignment_root(expr: &Expr) -> Option<&str> {
     }
 }
 
-pub(super) fn at(span: Span, message: impl std::fmt::Display) -> String {
-    format!(
-        "line {}:{}:{}: {message}",
-        span.line, span.column, span.end_column
-    )
+pub(super) fn at(span: Span, message: impl std::fmt::Display) -> Diagnostic {
+    Diagnostic::at(span.into(), message.to_string())
 }
 
 impl From<ArrayElementType> for ValueType {

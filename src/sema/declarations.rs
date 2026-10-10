@@ -1,7 +1,7 @@
 use super::*;
 
 impl Checker {
-    pub(super) fn collect_signatures(&mut self, program: &Program) -> Result<(), String> {
+    pub(super) fn collect_signatures(&mut self, program: &Program) -> Result<(), Diagnostic> {
         for (enum_id, declaration) in program.enums.iter().enumerate() {
             if enum_id > u32::MAX as usize {
                 return Err(at(
@@ -173,7 +173,7 @@ impl Checker {
         Ok(())
     }
 
-    pub(super) fn check_function(&mut self, function: &Function) -> Result<(), String> {
+    pub(super) fn check_function(&mut self, function: &Function) -> Result<(), Diagnostic> {
         self.scopes.clear();
         self.immutable_scopes.clear();
         self.loop_scopes.clear();

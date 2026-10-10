@@ -289,7 +289,8 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
         }
-        crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)?;
+        crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)
+            .map_err(|error| error.to_string())?;
         for declaration in program.structs.iter() {
             let mut field_types = Vec::with_capacity(declaration.fields.len());
             let mut names = std::collections::HashSet::new();

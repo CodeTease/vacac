@@ -1,3 +1,4 @@
+use crate::diagnostic::Diagnostic;
 use crate::parser::{
     ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchPattern, Program, Span, Stmt,
     StructDecl, Type, UnaryOp,
@@ -41,7 +42,7 @@ struct Checker {
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
 }
 
-pub fn check(program: &Program) -> Result<(), String> {
+pub fn check(program: &Program) -> Result<(), Diagnostic> {
     let mut checker = Checker {
         signatures: HashMap::new(),
         scopes: Vec::new(),

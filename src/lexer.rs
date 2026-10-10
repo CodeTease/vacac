@@ -1,3 +1,5 @@
+use crate::diagnostic::{Diagnostic, SourceSpan};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Ident(String),
@@ -130,7 +132,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
     }
 }
 
-pub fn lex(input: &str) -> Result<Vec<Token>, String> {
+pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
     let bytes = input.as_bytes();
     let (mut i, mut line, mut column) = (0usize, 1usize, 1usize);
     let mut tokens = Vec::new();
@@ -176,8 +178,13 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                 }
             }
             if !closed {
-                return Err(format!(
-                    "line {start_line}:{start_column}:{column}: unterminated block comment"
+                return Err(Diagnostic::at(
+                    SourceSpan {
+                        line: start_line,
+                        column: start_column,
+                        end_column: column,
+                    },
+                    "unterminated block comment",
                 ));
             }
             continue;
@@ -223,8 +230,13 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
             }
             let text = &input[start..i];
             TokenKind::Integer(text.parse::<u64>().map_err(|_| {
-                format!(
-                    "line {start_line}:{start_column}:{column}: integer literal is out of range"
+                Diagnostic::at(
+                    SourceSpan {
+                        line: start_line,
+                        column: start_column,
+                        end_column: column,
+                    },
+                    "integer literal is out of range",
                 )
             })?)
         } else if b == b'"' {
@@ -234,8 +246,13 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
             loop {
                 match bytes.get(i) {
                     None | Some(b'\n') => {
-                        return Err(format!(
-                            "line {start_line}:{start_column}:{column}: unterminated string literal"
+                        return Err(Diagnostic::at(
+                            SourceSpan {
+                                line: start_line,
+                                column: start_column,
+                                end_column: column,
+                            },
+                            "unterminated string literal",
                         ));
                     }
                     Some(b'"') => {
@@ -252,23 +269,37 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                             Some(b'\\') => b'\\',
                             Some(b'"') => b'"',
                             Some(b'0') => {
-                                return Err(format!(
-                                    "line {line}:{escape_column}:{}: NUL characters are not supported in string literals",
-                                    escape_column + 2
+                                return Err(Diagnostic::at(
+                                    SourceSpan {
+                                        line,
+                                        column: escape_column,
+                                        end_column: escape_column + 2,
+                                    },
+                                    "NUL characters are not supported in string literals",
                                 ));
                             }
                             None | Some(b'\n') => {
-                                return Err(format!(
-                                    "line {start_line}:{start_column}:{}: unterminated string literal",
-                                    column + 1
+                                return Err(Diagnostic::at(
+                                    SourceSpan {
+                                        line: start_line,
+                                        column: start_column,
+                                        end_column: column + 1,
+                                    },
+                                    "unterminated string literal",
                                 ));
                             }
                             Some(_) => {
                                 let escape = input[i + 1..].chars().next().unwrap_or('?');
-                                return Err(format!(
-                                    "line {line}:{escape_column}:{}: unknown escape sequence `\\{}`",
-                                    escape_column + 2,
-                                    escape.escape_debug()
+                                return Err(Diagnostic::at(
+                                    SourceSpan {
+                                        line,
+                                        column: escape_column,
+                                        end_column: escape_column + 2,
+                                    },
+                                    format!(
+                                        "unknown escape sequence `\\{}`",
+                                        escape.escape_debug()
+                                    ),
                                 ));
                             }
                         };
@@ -320,10 +351,13 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
                 b'&' if bytes.get(i + 1) == Some(&b'&') => (TokenKind::AndAnd, 2),
                 b'|' if bytes.get(i + 1) == Some(&b'|') => (TokenKind::OrOr, 2),
                 _ => {
-                    return Err(format!(
-                        "line {line}:{column}:{}: unexpected character `{}`",
-                        column + 1,
-                        b as char
+                    return Err(Diagnostic::at(
+                        SourceSpan {
+                            line,
+                            column,
+                            end_column: column + 1,
+                        },
+                        format!("unexpected character `{}`", b as char),
                     ));
                 }
             };
@@ -347,12 +381,13 @@ pub fn lex(input: &str) -> Result<Vec<Token>, String> {
     Ok(tokens)
 }
 
-pub fn unexpected(token: &Token, expected: &str) -> String {
-    format!(
-        "line {}:{}:{}: expected {expected}, found {}",
-        token.line,
-        token.column,
-        token.end_column,
-        token.describe()
+pub fn unexpected(token: &Token, expected: &str) -> Diagnostic {
+    Diagnostic::at(
+        SourceSpan {
+            line: token.line,
+            column: token.column,
+            end_column: token.end_column,
+        },
+        format!("expected {expected}, found {}", token.describe()),
     )
 }

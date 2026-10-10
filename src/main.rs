@@ -1,10 +1,12 @@
 mod aggregate_validation;
 mod ast;
 mod codegen;
+mod diagnostic;
 mod lexer;
 mod parser;
 mod sema;
 
+use diagnostic::Diagnostic;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -153,7 +155,7 @@ fn object_path(output: &Path) -> PathBuf {
     path
 }
 
-fn run() -> Result<i32, String> {
+fn run() -> Result<i32, Diagnostic> {
     let options = match parse_args()? {
         ParseArgs::Help => {
             print!("{HELP}");
@@ -171,20 +173,22 @@ fn run() -> Result<i32, String> {
         quiet,
         ..
     } = options;
-    let source = std::fs::read_to_string(&source_path)
-        .map_err(|e| format!("cannot read {}: {e}", source_path.display()))?;
+    let source = std::fs::read_to_string(&source_path).map_err(|e| {
+        Diagnostic::new(format!("cannot read source file: {e}"))
+            .with_file(source_path.display().to_string())
+    })?;
 
-    let tokens =
-        lexer::lex(&source).map_err(|e| format_source_diagnostic(&source_path, &source, &e))?;
+    let file = source_path.display().to_string();
+    let tokens = lexer::lex(&source).map_err(|e| e.with_source(&file, &source))?;
     let program = parser::Parser::new(tokens)
         .parse_program()
-        .map_err(|e| format_source_diagnostic(&source_path, &source, &e))?;
-    sema::check(&program).map_err(|e| format_source_diagnostic(&source_path, &source, &e))?;
+        .map_err(|e| e.with_source(&file, &source))?;
+    sema::check(&program).map_err(|e| e.with_source(&file, &source))?;
 
     match mode {
         OutputMode::Check => {
             codegen::check(&program).map_err(|e| {
-                format_backend_diagnostic(&source_path, &source, "code generation failed", &e)
+                backend_diagnostic(&source_path, &source, "code generation failed", &e)
             })?;
             if !quiet {
                 println!("checked {}", source_path.display());
@@ -192,7 +196,7 @@ fn run() -> Result<i32, String> {
         }
         OutputMode::EmitLlvm(path) => {
             codegen::emit_llvm(&program, &path).map_err(|e| {
-                format_backend_diagnostic(&source_path, &source, "LLVM IR emission failed", &e)
+                backend_diagnostic(&source_path, &source, "LLVM IR emission failed", &e)
             })?;
             if !quiet {
                 println!("wrote {}", path.display());
@@ -201,11 +205,13 @@ fn run() -> Result<i32, String> {
         OutputMode::Executable { output, object } => {
             let object = object.unwrap_or_else(|| object_path(&output));
             codegen::emit_object(&program, &object).map_err(|e| {
-                format_backend_diagnostic(&source_path, &source, "code generation failed", &e)
+                backend_diagnostic(&source_path, &source, "code generation failed", &e)
             })?;
             let status = link_object(&object, &output)?;
             if !status.success() {
-                return Err(format!("linker exited with status {status}"));
+                return Err(Diagnostic::new(format!(
+                    "linker exited with status {status}"
+                )));
             }
             if !quiet {
                 println!("built {}", output.display());
@@ -216,34 +222,36 @@ fn run() -> Result<i32, String> {
             let executable = temp.path().join("program");
             let object = temp.path().join("program.o");
             codegen::emit_object(&program, &object).map_err(|e| {
-                format_backend_diagnostic(&source_path, &source, "code generation failed", &e)
+                backend_diagnostic(&source_path, &source, "code generation failed", &e)
             })?;
             let status = link_object(&object, &executable)?;
             if !status.success() {
-                return Err(format!("linker exited with status {status}"));
+                return Err(Diagnostic::new(format!(
+                    "linker exited with status {status}"
+                )));
             }
             let status = Command::new(&executable)
                 .status()
-                .map_err(|e| format!("failed to run program: {e}"))?;
+                .map_err(|e| Diagnostic::new(format!("failed to run program: {e}")))?;
             return Ok(status.code().unwrap_or(1));
         }
     }
     Ok(0)
 }
 
-fn link_object(object: &Path, output: &Path) -> Result<std::process::ExitStatus, String> {
+fn link_object(object: &Path, output: &Path) -> Result<std::process::ExitStatus, Diagnostic> {
     Command::new("cc")
         .arg(object)
         .arg("-o")
         .arg(output)
         .status()
-        .map_err(|e| format!("failed to run cc: {e}"))
+        .map_err(|e| Diagnostic::new(format!("failed to run cc: {e}")))
 }
 
 struct TempBuildDir(PathBuf);
 
 impl TempBuildDir {
-    fn new() -> Result<Self, String> {
+    fn new() -> Result<Self, Diagnostic> {
         let base = std::env::temp_dir();
         for attempt in 0..100 {
             let path = base.join(format!("apexc-run-{}-{attempt}", std::process::id()));
@@ -251,11 +259,15 @@ impl TempBuildDir {
                 Ok(()) => return Ok(Self(path)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(error) => {
-                    return Err(format!("cannot create temporary build directory: {error}"));
+                    return Err(Diagnostic::new(format!(
+                        "cannot create temporary build directory: {error}"
+                    )));
                 }
             }
         }
-        Err("cannot create unique temporary build directory".into())
+        Err(Diagnostic::new(
+            "cannot create unique temporary build directory",
+        ))
     }
 
     fn path(&self) -> &Path {
@@ -269,54 +281,13 @@ impl Drop for TempBuildDir {
     }
 }
 
-fn format_backend_diagnostic(path: &Path, source: &str, context: &str, error: &str) -> String {
-    if error.starts_with("line ") {
-        format_source_diagnostic(path, source, error)
+fn backend_diagnostic(path: &Path, source: &str, context: &str, error: &str) -> Diagnostic {
+    let message = if error.starts_with("line ") {
+        error.to_owned()
     } else {
         format!("{context}: {error}")
-    }
-}
-
-fn format_source_diagnostic(path: &Path, source: &str, error: &str) -> String {
-    let Some(location) = error.strip_prefix("line ") else {
-        return format!("{}: {error}", path.display());
     };
-    let Some((line, rest)) = location.split_once(':') else {
-        return format!("{}: {error}", path.display());
-    };
-    let Some((column, location_tail)) = rest.split_once(':') else {
-        return format!("{}: {error}", path.display());
-    };
-    let (Ok(line), Ok(column)) = (line.parse::<usize>(), column.parse::<usize>()) else {
-        return format!("{}: {error}", path.display());
-    };
-    let (end_column, message) = if let Some((end_column, message)) = location_tail.split_once(": ")
-    {
-        if let Ok(end_column) = end_column.parse::<usize>() {
-            (end_column, message)
-        } else {
-            return format!("{}: {error}", path.display());
-        }
-    } else if let Some(message) = location_tail.strip_prefix(' ') {
-        (column.saturating_add(1), message)
-    } else {
-        return format!("{}: {error}", path.display());
-    };
-
-    let mut diagnostic = format!("{}:{line}:{column}: {message}", path.display());
-    if let Some(source_line) = source.lines().nth(line.saturating_sub(1)) {
-        let gutter_width = line.to_string().len();
-        let marker = format!(
-            "{}{}",
-            " ".repeat(column.saturating_sub(1)),
-            "^".repeat(end_column.saturating_sub(column).max(1))
-        );
-        diagnostic.push_str(&format!(
-            "\n {line:>gutter_width$} | {source_line}\n {:>gutter_width$} | {marker}",
-            ""
-        ));
-    }
-    diagnostic
+    Diagnostic::from_legacy(message, &path.display().to_string(), source)
 }
 
 fn main() -> ExitCode {
@@ -325,67 +296,11 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(code as u8),
         Err(error) => {
             if json_diagnostics {
-                eprintln!("{}", diagnostic_json(&error));
+                eprintln!("{}", error.render_json());
             } else {
-                eprintln!("apexc: {error}");
+                eprintln!("apexc: {}", error.render_human());
             }
             ExitCode::from(1)
         }
     }
-}
-
-fn diagnostic_json(error: &str) -> String {
-    let (file, line, column, message) = parse_diagnostic(error);
-    format!(
-        "{{\"severity\":\"error\",\"file\":{},\"line\":{},\"column\":{},\"message\":{}}}",
-        file.map_or_else(|| "null".to_string(), json_string),
-        line.map_or("null".to_string(), |n| n.to_string()),
-        column.map_or("null".to_string(), |n| n.to_string()),
-        json_string(message)
-    )
-}
-
-fn parse_diagnostic(error: &str) -> (Option<&str>, Option<usize>, Option<usize>, &str) {
-    let message = error.strip_prefix("apexc: ").unwrap_or(error);
-    let mut candidate = message;
-    while let Some((location, rest)) = candidate.rsplit_once(": ") {
-        let mut parts = location.rsplitn(3, ':');
-        let column_part = parts.next().unwrap_or_default();
-        let line_part = parts.next().unwrap_or_default();
-        let file = parts.next();
-        if let (Some(file), Ok(line), Ok(column)) = (
-            file,
-            line_part.parse::<usize>(),
-            column_part.parse::<usize>(),
-        ) {
-            return (
-                Some(file),
-                Some(line),
-                Some(column),
-                rest.split_once('\n').map_or(rest, |(message, _)| message),
-            );
-        }
-        candidate = location;
-    }
-    (None, None, None, message)
-}
-
-fn json_string(input: &str) -> String {
-    let mut output = String::with_capacity(input.len() + 2);
-    output.push('"');
-    for character in input.chars() {
-        match character {
-            '"' => output.push_str("\\\""),
-            '\\' => output.push_str("\\\\"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            character if character.is_control() => {
-                output.push_str(&format!("\\u{:04x}", character as u32));
-            }
-            character => output.push(character),
-        }
-    }
-    output.push('"');
-    output
 }

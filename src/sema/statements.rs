@@ -6,7 +6,7 @@ impl Checker {
         block: &Block,
         return_type: ValueType,
         function_body: bool,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
@@ -45,7 +45,7 @@ impl Checker {
         &mut self,
         statement: &Stmt,
         return_type: ValueType,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         match statement {
             Stmt::Let {
                 name,

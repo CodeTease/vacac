@@ -1,3 +1,4 @@
+use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind, unexpected};
 use std::collections::HashSet;
 
@@ -35,7 +36,7 @@ impl Parser {
         }
     }
 
-    pub fn parse_program(mut self) -> Result<Program, String> {
+    pub fn parse_program(mut self) -> Result<Program, Diagnostic> {
         let mut enums = Vec::new();
         let mut structs = Vec::new();
         let mut functions = Vec::new();
@@ -58,7 +59,7 @@ impl Parser {
         })
     }
 
-    fn parse_enum(&mut self) -> Result<EnumDecl, String> {
+    fn parse_enum(&mut self) -> Result<EnumDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Enum, "`enum`")?;
         let name = self.take_ident("enum name")?;
         self.consume(&TokenKind::LBrace, "`{` after enum name")?;
@@ -102,7 +103,7 @@ impl Parser {
         })
     }
 
-    fn parse_struct(&mut self) -> Result<StructDecl, String> {
+    fn parse_struct(&mut self) -> Result<StructDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Struct, "`struct`")?;
         let name = self.take_ident("struct name")?;
         self.consume(&TokenKind::LBrace, "`{` after struct name")?;
@@ -132,7 +133,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self) -> Result<Function, String> {
+    fn parse_function(&mut self) -> Result<Function, Diagnostic> {
         let start = self.consume(&TokenKind::Fn, "`fn`")?;
         let name = self.take_ident("function name")?;
         self.consume(&TokenKind::LParen, "`(`")?;
@@ -169,7 +170,7 @@ impl Parser {
         })
     }
 
-    fn parse_type(&mut self) -> Result<Type, String> {
+    fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.take(&TokenKind::I64) {
             Ok(Type::I64)
         } else if self.take(&TokenKind::Bool) {
@@ -206,7 +207,7 @@ impl Parser {
         }
     }
 
-    fn parse_block(&mut self) -> Result<Block, String> {
+    fn parse_block(&mut self) -> Result<Block, Diagnostic> {
         self.consume(&TokenKind::LBrace, "`{`")?;
         let mut statements = Vec::new();
         let mut tail = None;
@@ -343,7 +344,7 @@ impl Parser {
         Ok(Block { statements, tail })
     }
 
-    fn parse_expression(&mut self, min_precedence: u8) -> Result<Expr, String> {
+    fn parse_expression(&mut self, min_precedence: u8) -> Result<Expr, Diagnostic> {
         let mut left = self.parse_prefix()?;
         loop {
             if self.at(&TokenKind::LBracket) {
@@ -385,7 +386,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_prefix(&mut self) -> Result<Expr, String> {
+    fn parse_prefix(&mut self) -> Result<Expr, Diagnostic> {
         if self.at(&TokenKind::Minus) {
             let operator = self.advance().clone();
             return Ok(Expr::Unary {
@@ -511,7 +512,7 @@ impl Parser {
         }
     }
 
-    fn parse_match(&mut self, span: Span) -> Result<Expr, String> {
+    fn parse_match(&mut self, span: Span) -> Result<Expr, Diagnostic> {
         let value = self.parse_expression(7)?;
         self.consume(&TokenKind::LBrace, "`{` before match arms")?;
         let mut arms = Vec::new();
@@ -594,7 +595,7 @@ impl Parser {
         })
     }
 
-    fn take_ident(&mut self, expected: &str) -> Result<String, String> {
+    fn take_ident(&mut self, expected: &str) -> Result<String, Diagnostic> {
         match self.advance().kind.clone() {
             TokenKind::Ident(name) => Ok(name),
             _ => Err(unexpected(self.previous(), expected)),
@@ -611,7 +612,7 @@ impl Parser {
             false
         }
     }
-    fn consume(&mut self, kind: &TokenKind, expected: &str) -> Result<Token, String> {
+    fn consume(&mut self, kind: &TokenKind, expected: &str) -> Result<Token, Diagnostic> {
         if self.at(kind) {
             Ok(self.advance().clone())
         } else {

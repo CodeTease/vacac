@@ -5,7 +5,7 @@ impl Checker {
         &mut self,
         expr: &Expr,
         expected: ValueType,
-    ) -> Result<ValueType, String> {
+    ) -> Result<ValueType, Diagnostic> {
         let needs_context = match (expr, expected) {
             (Expr::Array(elements, _), ValueType::Array(index)) => {
                 elements.is_empty()
@@ -24,7 +24,7 @@ impl Checker {
         &mut self,
         expr: &Expr,
         expected: ValueType,
-    ) -> Result<ValueType, String> {
+    ) -> Result<ValueType, Diagnostic> {
         let Expr::Array(elements, span) = expr else {
             return self.check_expr(expr, false);
         };
@@ -62,7 +62,11 @@ impl Checker {
         Ok(expected)
     }
 
-    pub(super) fn check_place(&mut self, expr: &Expr, ty: ValueType) -> Result<ValueType, String> {
+    pub(super) fn check_place(
+        &mut self,
+        expr: &Expr,
+        ty: ValueType,
+    ) -> Result<ValueType, Diagnostic> {
         match expr {
             Expr::Variable(_, _) => Ok(ty),
             Expr::Field { value, name, span } => {
@@ -118,7 +122,7 @@ impl Checker {
         &mut self,
         expr: &Expr,
         allow_min_magnitude: bool,
-    ) -> Result<ValueType, String> {
+    ) -> Result<ValueType, Diagnostic> {
         match expr {
             Expr::Integer(value, span) => {
                 if *value <= i64::MAX as u64

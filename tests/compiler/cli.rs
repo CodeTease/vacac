@@ -67,6 +67,7 @@ fn json_diagnostics_include_source_location_and_escaped_message() {
     );
     assert!(stderr.contains("\"line\":2"), "{stderr}");
     assert!(stderr.contains("\"column\":5"), "{stderr}");
+    assert!(stderr.contains("\"end_column\":9"), "{stderr}");
     assert!(stderr.contains("function result has type bool"), "{stderr}");
     let source_path = dir.join("test.apx").to_string_lossy().into_owned();
     let escaped_path = source_path.replace('\\', "\\\\").replace('"', "\\\"");
@@ -75,6 +76,26 @@ fn json_diagnostics_include_source_location_and_escaped_message() {
         "{stderr}"
     );
     assert!(!stderr.contains("^"), "{stderr}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn json_diagnostics_include_lexer_spans() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 {\n    println(\"bad \\q\");\n    0\n}\n",
+        "json-lexer-span",
+        &["--json"],
+    );
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("\"line\":2"), "{stderr}");
+    assert!(stderr.contains("\"column\":18"), "{stderr}");
+    assert!(stderr.contains("\"end_column\":20"), "{stderr}");
+    assert!(stderr.contains("unknown escape sequence"), "{stderr}");
+    assert!(
+        !stderr.contains("\\n"),
+        "unexpected multiline JSON: {stderr}"
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
