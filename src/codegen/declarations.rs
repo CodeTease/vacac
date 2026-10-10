@@ -8,6 +8,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.declare_functions(program)?;
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
+        codegen.emit_string_concat_builtin()?;
         for function in &program.functions {
             codegen.emit_function(function)?;
         }
@@ -318,6 +319,10 @@ impl<'ctx> Codegen<'ctx> {
                     | "apex_main"
                     | "getchar"
                     | "exit"
+                    | "strlen"
+                    | "malloc"
+                    | "memcpy"
+                    | "apex_str_concat"
                     | "len"
             ) {
                 return Err(format!(

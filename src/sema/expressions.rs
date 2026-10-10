@@ -286,6 +286,7 @@ impl Checker {
                     ));
                 }
                 let result_type = match op {
+                    BinaryOp::Add if left_type == ValueType::Str => ValueType::Str,
                     BinaryOp::Add
                     | BinaryOp::Subtract
                     | BinaryOp::Multiply

@@ -94,6 +94,10 @@ impl Checker {
                     | "apex_main"
                     | "getchar"
                     | "exit"
+                    | "strlen"
+                    | "malloc"
+                    | "memcpy"
+                    | "apex_str_concat"
                     | "len"
             ) {
                 return Err(at(

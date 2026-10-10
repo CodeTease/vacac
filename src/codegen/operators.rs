@@ -45,6 +45,34 @@ impl<'ctx> Codegen<'ctx> {
                 });
             }
         }
+        if matches!(op, BinaryOp::Add) && left.ty == ValueType::Str {
+            let lhs = left
+                .value
+                .ok_or("left operand has no value")?
+                .into_pointer_value();
+            let rhs = right
+                .value
+                .ok_or("right operand has no value")?
+                .into_pointer_value();
+            let concat = self
+                .module
+                .get_function("apex_str_concat")
+                .ok_or("missing string concatenation runtime function")?;
+            let result = self
+                .builder
+                .build_call(concat, &[lhs.into(), rhs.into()], "str.concat")
+                .map_err(|e| e.to_string())?
+                .try_as_basic_value()
+                .basic()
+                .ok_or("internal error: string concatenation returned void")?;
+            return Ok(TypedValue {
+                value: Some(result),
+                ty: ValueType::Str,
+            });
+        }
+        if left.ty == ValueType::Str {
+            return Err("operator is not supported for str".into());
+        }
         let lhs = left
             .value
             .ok_or("left operand has no value")?

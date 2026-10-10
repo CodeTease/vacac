@@ -49,6 +49,6 @@ Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `t
 - `print_i64`, `print`, `println` return unit — their results cannot be bound with `let` or `const`.
 - Division/remainder by zero and `i64::MIN / -1` or `% -1` exit with status 1.
 - Structs support by-value fields containing arrays, enums, and other structs; recursive by-value struct layouts are rejected.
-- Reserved names: `print_i64`, `print`, `println`, `read_i64`, `len`, `printf`, `strcmp`, `apex_main`, `getchar`, `exit`. User may not define these.
-- `str` is lowered to an LLVM `ptr` to a NUL-terminated global constant (deduplicated per module). `==`/`!=` call `strcmp`; `\0` escapes are rejected in the lexer for this reason. All other operators on `str` are type errors.
+- Reserved names: `print_i64`, `print`, `println`, `read_i64`, `len`, `printf`, `strcmp`, `apex_main`, `getchar`, `exit`, `strlen`, `malloc`, `memcpy`, `apex_str_concat`. User may not define these.
+- `str` is lowered to an LLVM `ptr` to a NUL-terminated global constant (deduplicated per module); concatenation calls a generated runtime helper and returns a heap allocation retained until process exit. `==`/`!=` call `strcmp`; `\0` escapes are rejected in the lexer for this reason. Other operators on `str` are type errors.
 - Object files land next to the output executable by default (`target/release/apexc foo.apx -o bar` → `bar.o`). Use `--emit-obj` to override.

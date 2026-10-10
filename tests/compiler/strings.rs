@@ -39,6 +39,34 @@ fn strings_can_be_bound_passed_returned_and_printed() {
 }
 
 #[test]
+fn strings_can_be_concatenated() {
+    let result = compile_and_run(
+        r#"
+        fn punctuation() -> str { "!" }
+        fn greeting(name: str) -> str { "Hello, " + name + punctuation() }
+        fn main() -> i64 {
+            println(greeting("Apex"));
+            println("" + "empty");
+            println("tail" + "");
+            println("hé" + "llo ✓");
+            let repeated = "x";
+            for i in 0..3 {
+                repeated = repeated + "y";
+            }
+            println(repeated);
+            0
+        }
+        "#,
+        "string-concat",
+    );
+    assert!(result.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "Hello, Apex!\nempty\ntail\nhéllo ✓\nxyyy\n"
+    );
+}
+
+#[test]
 fn string_escapes_and_utf8_are_preserved() {
     let result = compile_and_run(
         "fn main() -> i64 {\n    print(\"a\\tb\\n\\\"q\\\" \\\\ \\r\");\n    println(\"héllo ✓\");\n    0\n}\n",
@@ -119,15 +147,27 @@ fn invalid_string_escapes_are_rejected() {
 }
 
 #[test]
-fn strings_do_not_support_arithmetic_or_ordering() {
+fn strings_only_support_addition_and_equality() {
     let (dir, compile) = compile_source(
-        "fn main() -> i64 {\n    let s = \"a\" + \"b\";\n    0\n}\n",
-        "string-add",
+        "fn main() -> i64 {\n    let s = \"a\" - \"b\";\n    0\n}\n",
+        "string-subtract",
     );
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
         stderr.contains("test.apx:2:17: arithmetic operands has type str, expected i64"),
+        "unexpected diagnostic: {stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+
+    let (dir, compile) = compile_source(
+        "fn main() -> i64 {\n    let is_less = \"a\" < \"b\";\n    0\n}\n",
+        "string-ordering",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("comparison operands has type str, expected i64"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);
