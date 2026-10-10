@@ -6,6 +6,21 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 APEXC="${APEXC:-$ROOT_DIR/target/release/apexc}"
 EXAMPLES_DIR="$ROOT_DIR/examples"
 
+# Use colors only for interactive output, and honor the NO_COLOR convention.
+if [[ -t 1 && "${TERM:-}" != "dumb" && -z "${NO_COLOR:-}" ]]; then
+    RESET=$'\033[0m'
+    BLUE=$'\033[34m'
+    YELLOW=$'\033[33m'
+    GREEN=$'\033[32m'
+    RED=$'\033[31m'
+else
+    RESET=''
+    BLUE=''
+    YELLOW=''
+    GREEN=''
+    RED=''
+fi
+
 if [[ ! -x "$APEXC" ]]; then
     printf 'error: apexc executable not found or not executable: %s\n' "$APEXC" >&2
     printf 'Build it first with: cargo build --release\n' >&2
@@ -23,32 +38,32 @@ failures=0
 for example in "${examples[@]}"; do
     name="${example##*/}"
 
-    printf '[CHECK] %s\n' "$name"
+    printf '%s[CHECK]%s %s\n' "$BLUE" "$RESET" "$name"
     if ! "$APEXC" "$example" --check; then
-        printf '[FAIL]  check: %s\n' "$name"
+        printf '%s[FAIL]%s  check: %s\n' "$RED" "$RESET" "$name"
         failures=$((failures + 1))
         continue
     fi
 
-    printf '[RUN]   %s\n' "$name"
+    printf '%s[RUN]%s   %s\n' "$YELLOW" "$RESET" "$name"
     if [[ "$name" == "read_number.apx" ]]; then
         if ! printf '42\n' | "$APEXC" "$example" --run; then
-            printf '[FAIL]  run: %s\n' "$name"
+            printf '%s[FAIL]%s  run: %s\n' "$RED" "$RESET" "$name"
             failures=$((failures + 1))
             continue
         fi
     elif ! "$APEXC" "$example" --run; then
-        printf '[FAIL]  run: %s\n' "$name"
+        printf '%s[FAIL]%s  run: %s\n' "$RED" "$RESET" "$name"
         failures=$((failures + 1))
         continue
     fi
 
-    printf '[PASS]  %s\n' "$name"
+    printf '%s[PASS]%s  %s\n' "$GREEN" "$RESET" "$name"
 done
 
 if (( failures > 0 )); then
-    printf '\n%d example check/run failure(s) out of %d.\n' "$failures" "${#examples[@]}"
+    printf '\n%s%d example check/run failure(s) out of %d.%s\n' "$RED" "$failures" "${#examples[@]}" "$RESET"
     exit 1
 fi
 
-printf '\nAll %d example(s) passed check and run.\n' "${#examples[@]}"
+printf '\n%sAll %d example(s) passed check and run.%s\n' "$GREEN" "${#examples[@]}" "$RESET"
