@@ -1122,6 +1122,88 @@ fn structs_support_return_values_and_if_expression_joins() {
 }
 
 #[test]
+fn structs_support_mutable_field_assignment() {
+    let result = compile_and_run(
+        r#"
+        struct User { id: i64, active: bool, name: str }
+        fn main() -> i64 {
+            let user = User { id: 41, active: true, name: "Ada" };
+            user.id = user.id + 1;
+            user.active = false;
+            user.name = "Grace";
+            print_i64(user.id);
+            println(user.name);
+            if user.active { 1 } else { 0 }
+        }
+        "#,
+        "struct-field-assignment",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "42\nGrace\n");
+}
+
+#[test]
+fn const_bindings_are_readable_but_cannot_be_mutated() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64 }
+        fn main() -> i64 {
+            const point = Point { x: 42 };
+            const answer: i64 = point.x;
+            print_i64(answer);
+            answer - 42
+        }
+        "#,
+        "const-binding",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "42\n");
+
+    for (source, diagnostic, name) in [
+        (
+            "fn main() -> i64 { const value = 1; value = 2; 0 }",
+            "cannot assign to immutable binding `value`",
+            "const-reassignment",
+        ),
+        (
+            "fn main() -> i64 { const values = [1, 2]; values[0] = 3; 0 }",
+            "cannot assign through immutable binding `values`",
+            "const-array-assignment",
+        ),
+        (
+            "struct Point { x: i64 } fn main() -> i64 { const point = Point { x: 1 }; point.x = 2; 0 }",
+            "cannot assign through immutable binding `point`",
+            "const-field-assignment",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn struct_field_assignment_checks_target_and_value_types() {
+    for (source, diagnostic, name) in [
+        (
+            "struct Point { x: i64 } fn main() -> i64 { let point = Point { x: 1 }; point.x = true; 0 }",
+            "assignment to field `x` has type bool, expected i64",
+            "struct-field-assignment-type",
+        ),
+        (
+            "struct Point { x: i64 } fn main() -> i64 { let point = Point { x: 1 }; point.y = 2; 0 }",
+            "struct `Point` has no field `y`",
+            "struct-field-assignment-unknown",
+        ),
+        (
+            "fn main() -> i64 { let value = 1; value.x = 2; 0 }",
+            "`value` is not a struct",
+            "non-struct-field-assignment",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
 fn structs_reject_duplicate_missing_unknown_and_wrongly_typed_fields() {
     for (source, expected, name) in [
         (

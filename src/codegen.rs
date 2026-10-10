@@ -33,6 +33,7 @@ struct Local<'ctx> {
     pointer: PointerValue<'ctx>,
     ty: ValueType,
     immutable: bool,
+    loop_variable: bool,
 }
 
 struct TypedValue<'ctx> {
@@ -881,6 +882,7 @@ impl<'ctx> Codegen<'ctx> {
                     pointer: alloca,
                     ty,
                     immutable: false,
+                    loop_variable: false,
                 },
             );
         }
@@ -962,6 +964,7 @@ impl<'ctx> Codegen<'ctx> {
                 name,
                 ty,
                 value,
+                immutable,
                 span,
             } => {
                 if self
@@ -1023,7 +1026,8 @@ impl<'ctx> Codegen<'ctx> {
                     Local {
                         pointer: alloca,
                         ty,
-                        immutable: false,
+                        immutable: *immutable,
+                        loop_variable: false,
                     },
                 );
                 Ok(false)
@@ -1036,10 +1040,12 @@ impl<'ctx> Codegen<'ctx> {
                     )
                 })?;
                 if local.immutable {
-                    return Err(format!(
-                        "line {}:{}: cannot assign to immutable loop variable `{name}`",
-                        span.line, span.column
-                    ));
+                    let reason = if local.loop_variable {
+                        format!("cannot assign to immutable loop variable `{name}`")
+                    } else {
+                        format!("cannot assign to immutable binding `{name}`")
+                    };
+                    return Err(format!("line {}:{}: {reason}", span.line, span.column));
                 }
                 let value = self.emit_expression(value)?;
                 if local.ty != value.ty {
@@ -1078,10 +1084,12 @@ impl<'ctx> Codegen<'ctx> {
                     ));
                 };
                 if local.immutable {
-                    return Err(format!(
-                        "line {}:{}: cannot assign through immutable loop variable `{name}`",
-                        span.line, span.column
-                    ));
+                    let reason = if local.loop_variable {
+                        format!("cannot assign through immutable loop variable `{name}`")
+                    } else {
+                        format!("cannot assign through immutable binding `{name}`")
+                    };
+                    return Err(format!("line {}:{}: {reason}", span.line, span.column));
                 }
                 let index = self.emit_expression(index)?;
                 let index = self.expect_i64(index, "array index")?;
@@ -1104,6 +1112,73 @@ impl<'ctx> Codegen<'ctx> {
                         value.value.ok_or("missing array element value")?,
                     )
                     .map_err(|e| e.to_string())?;
+                Ok(false)
+            }
+            Stmt::AssignField {
+                name,
+                field,
+                value,
+                span,
+            } => {
+                let local = self.lookup_local(name).ok_or_else(|| {
+                    format!(
+                        "line {}:{}: undefined variable `{name}`",
+                        span.line, span.column
+                    )
+                })?;
+                if local.immutable {
+                    let reason = if local.loop_variable {
+                        format!("cannot assign through immutable loop variable `{name}`")
+                    } else {
+                        format!("cannot assign through immutable binding `{name}`")
+                    };
+                    return Err(format!("line {}:{}: {reason}", span.line, span.column,));
+                }
+                let ValueType::Struct(struct_id) = local.ty else {
+                    return Err(format!(
+                        "line {}:{}: `{name}` is not a struct",
+                        span.line, span.column
+                    ));
+                };
+                let field_index = self.structs[struct_id]
+                    .fields
+                    .iter()
+                    .position(|declaration| declaration.name == *field)
+                    .ok_or_else(|| {
+                        format!(
+                            "line {}:{}: struct `{}` has no field `{field}`",
+                            span.line, span.column, self.structs[struct_id].name
+                        )
+                    })?;
+                let field_type = self.resolve_type(
+                    &self.structs[struct_id].fields[field_index].ty,
+                    self.structs[struct_id].fields[field_index].span,
+                )?;
+                let field_pointer = self
+                    .builder
+                    .build_struct_gep(
+                        self.struct_types[struct_id],
+                        local.pointer,
+                        field_index as u32,
+                        "struct.field.ptr",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let value = self.emit_expression(value)?;
+                if value.ty != field_type {
+                    return Err(format!(
+                        "line {}:{}: assignment to field `{field}` has type {}, expected {}",
+                        span.line,
+                        span.column,
+                        type_name(value.ty),
+                        type_name(field_type)
+                    ));
+                }
+                self.builder
+                    .build_store(
+                        field_pointer,
+                        value.value.ok_or("struct field assignment has no value")?,
+                    )
+                    .map_err(|error| error.to_string())?;
                 Ok(false)
             }
             Stmt::Expr(expr) => {
@@ -1316,6 +1391,7 @@ impl<'ctx> Codegen<'ctx> {
                 pointer: counter,
                 ty: ValueType::I64,
                 immutable: true,
+                loop_variable: true,
             },
         );
 
@@ -1411,6 +1487,7 @@ impl<'ctx> Codegen<'ctx> {
                 pointer: value_slot,
                 ty: ValueType::from(element),
                 immutable: true,
+                loop_variable: true,
             },
         )]));
 
@@ -1980,6 +2057,7 @@ impl<'ctx> Codegen<'ctx> {
                         pointer: alloca,
                         ty,
                         immutable: false,
+                        loop_variable: false,
                     },
                 );
             }

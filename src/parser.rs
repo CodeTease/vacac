@@ -98,6 +98,7 @@ pub enum Stmt {
         name: String,
         ty: Option<Type>,
         value: Expr,
+        immutable: bool,
         span: Span,
     },
     Assign {
@@ -139,6 +140,12 @@ pub enum Stmt {
     AssignIndex {
         name: String,
         index: Expr,
+        value: Expr,
+        span: Span,
+    },
+    AssignField {
+        name: String,
+        field: String,
         value: Expr,
         span: Span,
     },
@@ -443,7 +450,8 @@ impl Parser {
         let mut statements = Vec::new();
         let mut tail = None;
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
-            if self.at(&TokenKind::Let) {
+            if self.at(&TokenKind::Let) || self.at(&TokenKind::Const) {
+                let immutable = self.at(&TokenKind::Const);
                 let start = self.advance().clone();
                 let name = self.take_ident("binding name")?;
                 let ty = if self.take(&TokenKind::Colon) {
@@ -458,6 +466,7 @@ impl Parser {
                     name,
                     ty,
                     value,
+                    immutable,
                     span: Span::from(&start),
                 });
             } else if self.at(&TokenKind::If) {
@@ -551,6 +560,7 @@ impl Parser {
             } else {
                 let expr = self.parse_expression(0)?;
                 if self.take(&TokenKind::Equal) {
+                    let assignment_span = Span::from(self.previous());
                     let (name, index, span) = match expr {
                         Expr::Index { array, index, span } => match *array {
                             Expr::Variable(name, _) => (name, *index, span),
@@ -561,6 +571,25 @@ impl Parser {
                                 ));
                             }
                         },
+                        Expr::Field {
+                            value, name: field, ..
+                        } => {
+                            let Expr::Variable(name, _) = *value else {
+                                return Err(unexpected(
+                                    self.previous(),
+                                    "local struct field assignment target",
+                                ));
+                            };
+                            let value = self.parse_expression(0)?;
+                            self.consume(&TokenKind::Semicolon, "`;`")?;
+                            statements.push(Stmt::AssignField {
+                                name,
+                                field,
+                                value,
+                                span: assignment_span,
+                            });
+                            continue;
+                        }
                         _ => return Err(unexpected(self.previous(), "assignment target")),
                     };
                     let value = self.parse_expression(0)?;

@@ -25,6 +25,7 @@ struct Checker {
     signatures: HashMap<String, Signature>,
     scopes: Vec<HashMap<String, ValueType>>,
     immutable_scopes: Vec<std::collections::HashSet<String>>,
+    loop_scopes: Vec<std::collections::HashSet<String>>,
     loop_depth: usize,
     enum_ids: HashMap<String, usize>,
     enums: Vec<EnumDecl>,
@@ -37,6 +38,7 @@ pub fn check(program: &Program) -> Result<(), String> {
         signatures: HashMap::new(),
         scopes: Vec::new(),
         immutable_scopes: Vec::new(),
+        loop_scopes: Vec::new(),
         loop_depth: 0,
         enum_ids: HashMap::new(),
         enums: Vec::new(),
@@ -218,9 +220,11 @@ impl Checker {
     fn check_function(&mut self, function: &Function) -> Result<(), String> {
         self.scopes.clear();
         self.immutable_scopes.clear();
+        self.loop_scopes.clear();
         self.loop_depth = 0;
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
+        self.loop_scopes.push(std::collections::HashSet::new());
         for param in &function.params {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
@@ -248,6 +252,7 @@ impl Checker {
     ) -> Result<bool, String> {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
+        self.loop_scopes.push(std::collections::HashSet::new());
         let mut returns = false;
         for statement in &block.statements {
             let statement_returns = self.check_statement(statement, return_type)?;
@@ -271,6 +276,7 @@ impl Checker {
         }
         self.scopes.pop();
         self.immutable_scopes.pop();
+        self.loop_scopes.pop();
         Ok(returns)
     }
 
@@ -284,6 +290,7 @@ impl Checker {
                 name,
                 ty,
                 value,
+                immutable,
                 span,
             } => {
                 if self
@@ -332,16 +339,28 @@ impl Checker {
                     .last_mut()
                     .expect("block scope exists")
                     .insert(name.clone(), binding_type);
+                if *immutable {
+                    self.immutable_scopes
+                        .last_mut()
+                        .expect("block scope exists")
+                        .insert(name.clone());
+                }
                 Ok(false)
             }
             Stmt::Assign { name, value, span } => {
                 let binding_type = self
                     .lookup_local(name)
                     .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
-                if self.is_immutable_binding(name) {
+                if self.is_loop_variable(name) {
                     return Err(at(
                         *span,
                         format!("cannot assign to immutable loop variable `{name}`"),
+                    ));
+                }
+                if self.is_immutable_binding(name) {
+                    return Err(at(
+                        *span,
+                        format!("cannot assign to immutable binding `{name}`"),
                     ));
                 }
                 let value_type = self.check_expr(value, false)?;
@@ -362,10 +381,16 @@ impl Checker {
                 let binding_type = self
                     .lookup_local(name)
                     .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
-                if self.is_immutable_binding(name) {
+                if self.is_loop_variable(name) {
                     return Err(at(
                         *span,
                         format!("cannot assign through immutable loop variable `{name}`"),
+                    ));
+                }
+                if self.is_immutable_binding(name) {
+                    return Err(at(
+                        *span,
+                        format!("cannot assign through immutable binding `{name}`"),
                     ));
                 }
                 let ValueType::Array(element, _) = binding_type else {
@@ -384,6 +409,52 @@ impl Checker {
                     ValueType::from(element),
                     span_of_expr(value),
                     &format!("array element assignment to `{name}`"),
+                )?;
+                Ok(false)
+            }
+            Stmt::AssignField {
+                name,
+                field,
+                value,
+                span,
+            } => {
+                let binding_type = self
+                    .lookup_local(name)
+                    .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
+                if self.is_loop_variable(name) {
+                    return Err(at(
+                        *span,
+                        format!("cannot assign through immutable loop variable `{name}`"),
+                    ));
+                }
+                if self.is_immutable_binding(name) {
+                    return Err(at(
+                        *span,
+                        format!("cannot assign through immutable binding `{name}`"),
+                    ));
+                }
+                let ValueType::Struct(struct_id) = binding_type else {
+                    return Err(at(*span, format!("`{name}` is not a struct")));
+                };
+                let declaration = &self.structs[struct_id];
+                let field_declaration = declaration
+                    .fields
+                    .iter()
+                    .find(|declaration| declaration.name == *field)
+                    .ok_or_else(|| {
+                        at(
+                            *span,
+                            format!("struct `{}` has no field `{field}`", declaration.name),
+                        )
+                    })?;
+                let field_type =
+                    self.resolve_type(&field_declaration.ty, field_declaration.span)?;
+                let value_type = self.check_expr(value, false)?;
+                self.expect_type(
+                    value_type,
+                    field_type,
+                    span_of_expr(value),
+                    &format!("assignment to field `{field}`"),
                 )?;
                 Ok(false)
             }
@@ -445,12 +516,15 @@ impl Checker {
                     .push(HashMap::from([(name.clone(), ValueType::I64)]));
                 self.immutable_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
+                self.loop_scopes
+                    .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_depth += 1;
                 let body_result = self.check_block(body, return_type, false);
                 self.loop_depth -= 1;
                 body_result?;
                 self.scopes.pop();
                 self.immutable_scopes.pop();
+                self.loop_scopes.pop();
                 Ok(false)
             }
             Stmt::ForArray {
@@ -467,12 +541,15 @@ impl Checker {
                     .push(HashMap::from([(name.clone(), ValueType::from(element))]));
                 self.immutable_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
+                self.loop_scopes
+                    .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_depth += 1;
                 let body_result = self.check_block(body, return_type, false);
                 self.loop_depth -= 1;
                 body_result?;
                 self.scopes.pop();
                 self.immutable_scopes.pop();
+                self.loop_scopes.pop();
                 Ok(false)
             }
             Stmt::Break { span } => {
@@ -925,6 +1002,7 @@ impl Checker {
                     };
                     self.scopes.push(HashMap::new());
                     self.immutable_scopes.push(std::collections::HashSet::new());
+                    self.loop_scopes.push(std::collections::HashSet::new());
                     let binding = match &arm.pattern {
                         MatchPattern::Variant {
                             binding: Some(binding),
@@ -948,6 +1026,7 @@ impl Checker {
                     };
                     self.scopes.pop();
                     self.immutable_scopes.pop();
+                    self.loop_scopes.pop();
                     let actual = arm_result?;
                     if let Some(expected) = result_type {
                         self.expect_type(actual, expected, arm.span, "match arm result")?;
@@ -999,12 +1078,14 @@ impl Checker {
     fn check_block_result(&mut self, block: &Block, span: Span) -> Result<ValueType, String> {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
+        self.loop_scopes.push(std::collections::HashSet::new());
         let result = (|| {
             for statement in &block.statements {
                 match statement {
                     Stmt::Let { .. }
                     | Stmt::Assign { .. }
                     | Stmt::AssignIndex { .. }
+                    | Stmt::AssignField { .. }
                     | Stmt::Expr(_) => {
                         self.check_statement(statement, ValueType::Unit)?;
                     }
@@ -1026,6 +1107,7 @@ impl Checker {
         })();
         self.scopes.pop();
         self.immutable_scopes.pop();
+        self.loop_scopes.pop();
         result
     }
 
@@ -1064,6 +1146,19 @@ impl Checker {
             .rev()
             .find_map(|(scope, immutable)| {
                 scope.contains_key(name).then(|| immutable.contains(name))
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_loop_variable(&self, name: &str) -> bool {
+        self.scopes
+            .iter()
+            .zip(&self.loop_scopes)
+            .rev()
+            .find_map(|(scope, loop_variables)| {
+                scope
+                    .contains_key(name)
+                    .then(|| loop_variables.contains(name))
             })
             .unwrap_or(false)
     }
