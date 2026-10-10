@@ -87,21 +87,29 @@ mod output;
 mod runtime;
 mod statements;
 
-fn type_name(ty: ValueType) -> String {
-    match ty {
-        ValueType::I64 => "i64".into(),
-        ValueType::Bool => "bool".into(),
-        ValueType::Str => "str".into(),
-        ValueType::Unit => "unit".into(),
-        ValueType::Array(element, length) => {
-            let element = match element {
-                ArrayElementType::I64 => "i64",
-                ArrayElementType::Bool => "bool",
-                ArrayElementType::Str => "str",
-            };
-            format!("[{element}; {length}]")
+impl<'ctx> Codegen<'ctx> {
+    fn type_name(&self, ty: ValueType) -> String {
+        match ty {
+            ValueType::I64 => "i64".into(),
+            ValueType::Bool => "bool".into(),
+            ValueType::Str => "str".into(),
+            ValueType::Unit => "unit".into(),
+            ValueType::Array(element, length) => {
+                let element = self.array_element_type_name(element);
+                format!("[{element}; {length}]")
+            }
+            ValueType::Enum(index) => self.enums[index].name.clone(),
+            ValueType::Struct(index) => self.structs[index].name.clone(),
         }
-        ValueType::Enum(index) => format!("enum#{index}"),
-        ValueType::Struct(index) => format!("struct#{index}"),
+    }
+
+    fn array_element_type_name(&self, element: ArrayElementType) -> String {
+        match element {
+            ArrayElementType::I64 => "i64".into(),
+            ArrayElementType::Bool => "bool".into(),
+            ArrayElementType::Str => "str".into(),
+            ArrayElementType::Enum(index) => self.enums[index].name.clone(),
+            ArrayElementType::Struct(index) => self.structs[index].name.clone(),
+        }
     }
 }

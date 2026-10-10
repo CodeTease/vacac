@@ -15,8 +15,8 @@ impl<'ctx> Codegen<'ctx> {
         if left.ty != right.ty {
             return Err(format!(
                 "operator operands have different types: {} and {}",
-                type_name(left.ty),
-                type_name(right.ty)
+                self.type_name(left.ty),
+                self.type_name(right.ty)
             ));
         }
         if left.ty == ValueType::Unit {
@@ -52,7 +52,7 @@ impl<'ctx> Codegen<'ctx> {
                 if left.ty != ValueType::I64 {
                     return Err(format!(
                         "arithmetic operators require i64, got {}",
-                        type_name(left.ty)
+                        self.type_name(left.ty)
                     ));
                 }
                 if matches!(op, BinaryOp::Divide | BinaryOp::Remainder) {
@@ -92,7 +92,7 @@ impl<'ctx> Codegen<'ctx> {
                 if left.ty != ValueType::I64 {
                     return Err(format!(
                         "ordering comparisons require i64, got {}",
-                        type_name(left.ty)
+                        self.type_name(left.ty)
                     ));
                 }
                 let pred = match op {
@@ -193,7 +193,7 @@ impl<'ctx> Codegen<'ctx> {
             _ => {
                 return Err(format!(
                     "operator is not supported for {}",
-                    type_name(ValueType::Str)
+                    self.type_name(ValueType::Str)
                 ));
             }
         };

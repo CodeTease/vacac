@@ -57,4 +57,4 @@ mod expressions;
 mod statements;
 mod types;
 
-use types::{assignment_root, at, span_of_expr, type_name};
+use types::{assignment_root, at, span_of_expr};

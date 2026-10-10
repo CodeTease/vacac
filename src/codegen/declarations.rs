@@ -53,23 +53,14 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::I64 => Some(self.i64_type().into()),
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
-            ValueType::Array(element, length) => {
-                Some(self.llvm_element_type(element).array_type(length).into())
-            }
+            ValueType::Array(element, length) => Some(
+                self.llvm_type(ValueType::from(element))?
+                    .array_type(length)
+                    .into(),
+            ),
             ValueType::Enum(index) => self.enum_types.get(index).copied().map(Into::into),
             ValueType::Struct(index) => self.struct_types.get(index).copied().map(Into::into),
             ValueType::Unit => None,
-        }
-    }
-
-    pub(super) fn llvm_element_type(
-        &self,
-        element: ArrayElementType,
-    ) -> inkwell::types::BasicTypeEnum<'ctx> {
-        match element {
-            ArrayElementType::I64 => self.i64_type().into(),
-            ArrayElementType::Bool => self.bool_type().into(),
-            ArrayElementType::Str => self.context.ptr_type(AddressSpace::default()).into(),
         }
     }
 
@@ -98,7 +89,38 @@ impl<'ctx> Codegen<'ctx> {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
-            Type::Array(element, length) => ValueType::Array(*element, *length),
+            Type::Array(element, length) => {
+                let element = match element.as_ref() {
+                    Type::I64 => ArrayElementType::I64,
+                    Type::Bool => ArrayElementType::Bool,
+                    Type::Str => ArrayElementType::Str,
+                    Type::Named(name) if self.enum_ids.contains_key(name) => {
+                        ArrayElementType::Enum(self.enum_ids[name])
+                    }
+                    Type::Named(name) if self.struct_ids.contains_key(name) => {
+                        ArrayElementType::Struct(self.struct_ids[name])
+                    }
+                    Type::Named(name) => {
+                        return Err(format!(
+                            "line {}:{}: unknown type `{name}`",
+                            span.line, span.column
+                        ));
+                    }
+                    Type::Array(_, _) => {
+                        return Err(format!(
+                            "line {}:{}: nested arrays are not supported",
+                            span.line, span.column
+                        ));
+                    }
+                    Type::Unit => {
+                        return Err(format!(
+                            "line {}:{}: array elements cannot have type `unit`",
+                            span.line, span.column
+                        ));
+                    }
+                };
+                ValueType::Array(element, *length)
+            }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
                     ValueType::Enum(*index)
@@ -292,12 +314,17 @@ fn validate_struct_cycles(
         struct_ids: &HashMap<String, usize>,
         states: &mut [u8],
     ) -> Result<(), String> {
+        fn named_struct_id(ty: &Type, struct_ids: &HashMap<String, usize>) -> Option<usize> {
+            match ty {
+                Type::Named(name) => struct_ids.get(name).copied(),
+                Type::Array(element, _) => named_struct_id(element, struct_ids),
+                _ => None,
+            }
+        }
+
         states[id] = 1;
         for field in &structs[id].fields {
-            let Type::Named(name) = &field.ty else {
-                continue;
-            };
-            let Some(&child_id) = struct_ids.get(name) else {
+            let Some(child_id) = named_struct_id(&field.ty, struct_ids) else {
                 continue;
             };
             if states[child_id] == 1 {

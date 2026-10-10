@@ -7,7 +7,9 @@ impl Checker {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
-            Type::Array(element, length) => ValueType::Array(*element, *length),
+            Type::Array(element, length) => {
+                ValueType::Array(self.resolve_array_element(element, span)?, *length)
+            }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
                     ValueType::Enum(*index)
@@ -17,6 +19,63 @@ impl Checker {
                     return Err(at(span, format!("unknown type `{name}`")));
                 }
             }
+        })
+    }
+
+    pub(super) fn type_name(&self, ty: ValueType) -> String {
+        match ty {
+            ValueType::Array(element, length) => {
+                format!("[{}; {length}]", self.array_element_type_name(element))
+            }
+            ValueType::Enum(index) => self
+                .enums
+                .get(index)
+                .map(|declaration| declaration.name.clone())
+                .unwrap_or_else(|| "<invalid enum>".into()),
+            ValueType::Struct(index) => self
+                .structs
+                .get(index)
+                .map(|declaration| declaration.name.clone())
+                .unwrap_or_else(|| "<invalid struct>".into()),
+            ValueType::I64 => "i64".into(),
+            ValueType::Bool => "bool".into(),
+            ValueType::Str => "str".into(),
+            ValueType::Unit => "unit".into(),
+        }
+    }
+
+    fn array_element_type_name(&self, element: ArrayElementType) -> String {
+        match element {
+            ArrayElementType::I64 => "i64".into(),
+            ArrayElementType::Bool => "bool".into(),
+            ArrayElementType::Str => "str".into(),
+            ArrayElementType::Enum(index) => self.enums[index].name.clone(),
+            ArrayElementType::Struct(index) => self.structs[index].name.clone(),
+        }
+    }
+
+    fn resolve_array_element(
+        &self,
+        element: &Type,
+        span: Span,
+    ) -> Result<ArrayElementType, String> {
+        Ok(match element {
+            Type::I64 => ArrayElementType::I64,
+            Type::Bool => ArrayElementType::Bool,
+            Type::Str => ArrayElementType::Str,
+            Type::Named(name) => {
+                if let Some(index) = self.enum_ids.get(name) {
+                    ArrayElementType::Enum(*index)
+                } else if let Some(index) = self.struct_ids.get(name) {
+                    ArrayElementType::Struct(*index)
+                } else {
+                    return Err(at(span, format!("unknown type `{name}`")));
+                }
+            }
+            Type::Array(_, _) => {
+                return Err(at(span, "nested arrays are not supported"));
+            }
+            Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
         })
     }
 
@@ -73,8 +132,8 @@ impl Checker {
                 span,
                 format!(
                     "{context} has type {}, expected {}",
-                    type_name(actual, &self.enums),
-                    type_name(expected, &self.enums)
+                    self.type_name(actual),
+                    self.type_name(expected)
                 ),
             ))
         }
@@ -146,29 +205,14 @@ pub(super) fn at(span: Span, message: impl std::fmt::Display) -> String {
     )
 }
 
-pub(super) fn type_name(ty: ValueType, enums: &[EnumDecl]) -> String {
-    match ty {
-        ValueType::I64 => "i64".into(),
-        ValueType::Bool => "bool".into(),
-        ValueType::Str => "str".into(),
-        ValueType::Unit => "unit".into(),
-        ValueType::Array(element, length) => {
-            format!("[{}; {length}]", type_name(element.into(), enums))
-        }
-        ValueType::Enum(index) => enums
-            .get(index)
-            .map(|declaration| declaration.name.clone())
-            .unwrap_or_else(|| "<invalid enum>".into()),
-        ValueType::Struct(index) => format!("struct#{index}"),
-    }
-}
-
 impl From<ArrayElementType> for ValueType {
     fn from(element: ArrayElementType) -> Self {
         match element {
             ArrayElementType::I64 => Self::I64,
             ArrayElementType::Bool => Self::Bool,
             ArrayElementType::Str => Self::Str,
+            ArrayElementType::Enum(index) => Self::Enum(index),
+            ArrayElementType::Struct(index) => Self::Struct(index),
         }
     }
 }

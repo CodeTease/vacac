@@ -52,8 +52,8 @@ impl<'ctx> Codegen<'ctx> {
                     span.line,
                     span.column,
                     index + 1,
-                    type_name(*expected),
-                    type_name(value.ty)
+                    self.type_name(*expected),
+                    self.type_name(value.ty)
                 ));
             }
             values.push(value.value.ok_or("call argument has no value")?.into());

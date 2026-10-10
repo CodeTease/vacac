@@ -35,7 +35,7 @@ apexc <source.apx> [-o <executable>] [--emit-obj <object.o>]
 
 Entry point must be exactly `fn main() -> i64`. The emitted ELF wrapper returns its low 8 bits as the process exit status.
 
-Types: `i64`, `bool`, `str`, named enums, named structs, and fixed-size arrays of primitive types. Functions may also return `unit`. Built-ins are `print_i64(i64)`, `print(str)` (no newline), `println(str)`, `read_i64() -> i64` (signed decimal token from stdin; invalid or out-of-range input exits 1), and `len(array) -> i64`.
+Types: `i64`, `bool`, `str`, named enums, named structs, and fixed-size one-dimensional arrays of primitive, enum, or struct values. Functions may also return `unit`. Built-ins are `print_i64(i64)`, `print(str)` (no newline), `println(str)`, `read_i64() -> i64` (signed decimal token from stdin; invalid or out-of-range input exits 1), and `len(array) -> i64`.
 
 ## Testing
 
@@ -48,7 +48,7 @@ Tests are in `tests/compiler.rs`. Each integration test invokes the already-buil
 - Function bodies return via `return expr;` or final expression; all paths must produce a value.
 - `print_i64`, `print`, `println` return unit — their results cannot be bound with `let` or `const`.
 - Division/remainder by zero and `i64::MIN / -1` or `% -1` exit with status 1.
-- Structs support mutable local field assignment with `value.field = expression;`, but not nested structs or aggregate fields.
+- Structs support by-value fields containing arrays, enums, and other structs; recursive by-value struct layouts are rejected.
 - Reserved names: `print_i64`, `print`, `println`, `read_i64`, `len`, `printf`, `strcmp`, `apex_main`, `getchar`, `exit`. User may not define these.
 - `str` is lowered to an LLVM `ptr` to a NUL-terminated global constant (deduplicated per module). `==`/`!=` call `strcmp`; `\0` escapes are rejected in the lexer for this reason. All other operators on `str` are type errors.
 - Object files land next to the output executable by default (`target/release/apexc foo.apx -o bar` → `bar.o`). Use `--emit-obj` to override.

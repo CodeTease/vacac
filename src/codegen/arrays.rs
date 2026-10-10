@@ -29,7 +29,11 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::I64 => ArrayElementType::I64,
             ValueType::Bool => ArrayElementType::Bool,
             ValueType::Str => ArrayElementType::Str,
-            _ => return Err("array elements must have type `i64`, `bool`, or `str`".into()),
+            ValueType::Enum(index) => ArrayElementType::Enum(index),
+            ValueType::Struct(index) => ArrayElementType::Struct(index),
+            ValueType::Unit | ValueType::Array(_, _) => {
+                return Err("array elements cannot have type `unit` or be arrays".into());
+            }
         };
         let array_type = ValueType::Array(element, elements.len() as u32);
         let llvm_array_type = self
@@ -48,8 +52,8 @@ impl<'ctx> Codegen<'ctx> {
             if value.ty != ValueType::from(element) {
                 return Err(format!(
                     "array element has type {}, expected {}",
-                    type_name(value.ty),
-                    type_name(ValueType::from(element))
+                    self.type_name(value.ty),
+                    self.type_name(ValueType::from(element))
                 ));
             }
             aggregate = self

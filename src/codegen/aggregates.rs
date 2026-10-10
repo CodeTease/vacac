@@ -36,8 +36,8 @@ impl<'ctx> Codegen<'ctx> {
                 if payload.ty != expected {
                     return Err(format!(
                         "enum payload has type {}, expected {}",
-                        type_name(payload.ty),
-                        type_name(expected)
+                        self.type_name(payload.ty),
+                        self.type_name(expected)
                     ));
                 }
                 match payload.ty {
@@ -169,8 +169,8 @@ impl<'ctx> Codegen<'ctx> {
                     "line {}:{}: initializer for field `{field_name}` has type {}, expected {}",
                     field_span.line,
                     field_span.column,
-                    type_name(value.ty),
-                    type_name(expected)
+                    self.type_name(value.ty),
+                    self.type_name(expected)
                 ));
             }
             aggregate = self
@@ -348,8 +348,8 @@ impl<'ctx> Codegen<'ctx> {
                 if expected != result.ty {
                     return Err(format!(
                         "match arms have different types: {} and {}",
-                        type_name(expected),
-                        type_name(result.ty)
+                        self.type_name(expected),
+                        self.type_name(result.ty)
                     ));
                 }
             } else {

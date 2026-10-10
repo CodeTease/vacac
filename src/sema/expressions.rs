@@ -83,13 +83,12 @@ impl Checker {
                     ValueType::I64 => ArrayElementType::I64,
                     ValueType::Bool => ArrayElementType::Bool,
                     ValueType::Str => ArrayElementType::Str,
-                    ValueType::Unit
-                    | ValueType::Array(_, _)
-                    | ValueType::Enum(_)
-                    | ValueType::Struct(_) => {
+                    ValueType::Enum(index) => ArrayElementType::Enum(index),
+                    ValueType::Struct(index) => ArrayElementType::Struct(index),
+                    ValueType::Unit | ValueType::Array(_, _) => {
                         return Err(at(
                             *span,
-                            "array elements must have type `i64`, `bool`, or `str`",
+                            "array elements cannot have type `unit` or be arrays",
                         ));
                     }
                 };
@@ -210,8 +209,8 @@ impl Checker {
                         *span,
                         format!(
                             "operator operands have different types: {} and {}",
-                            type_name(left_type, &self.enums),
-                            type_name(right_type, &self.enums)
+                            self.type_name(left_type),
+                            self.type_name(right_type)
                         ),
                     ));
                 }
@@ -317,8 +316,8 @@ impl Checker {
                         *span,
                         format!(
                             "`if` expression branches have different types: {} and {}",
-                            type_name(then_type, &self.enums),
-                            type_name(else_type, &self.enums)
+                            self.type_name(then_type),
+                            self.type_name(else_type)
                         ),
                     ));
                 }
@@ -380,7 +379,7 @@ impl Checker {
                             *span,
                             format!(
                                 "match requires an enum value, got {}",
-                                type_name(actual, &self.enums)
+                                self.type_name(actual)
                             ),
                         ));
                     }

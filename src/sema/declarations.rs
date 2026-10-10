@@ -72,16 +72,8 @@ impl Checker {
         self.structs = program.structs.clone();
         for declaration in &self.structs {
             for field in &declaration.fields {
-                match &field.ty {
-                    Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
-                    Type::Named(name) if self.struct_ids.contains_key(name) => {}
-                    Type::Named(name) if self.enum_ids.contains_key(name) => {}
-                    Type::Named(name) => {
-                        return Err(at(field.span, format!("unknown type `{name}`")));
-                    }
-                    Type::Unit => {
-                        return Err(at(field.span, "struct fields cannot have type `unit`"));
-                    }
+                if self.resolve_type(&field.ty, field.span)? == ValueType::Unit {
+                    return Err(at(field.span, "struct fields cannot have type `unit`"));
                 }
             }
         }
@@ -214,12 +206,17 @@ fn validate_struct_cycles(
         struct_ids: &HashMap<String, usize>,
         states: &mut [u8],
     ) -> Result<(), String> {
+        fn named_struct_id(ty: &Type, struct_ids: &HashMap<String, usize>) -> Option<usize> {
+            match ty {
+                Type::Named(name) => struct_ids.get(name).copied(),
+                Type::Array(element, _) => named_struct_id(element, struct_ids),
+                _ => None,
+            }
+        }
+
         states[id] = 1;
         for field in &structs[id].fields {
-            let Type::Named(name) = &field.ty else {
-                continue;
-            };
-            let Some(&child_id) = struct_ids.get(name) else {
+            let Some(child_id) = named_struct_id(&field.ty, struct_ids) else {
                 continue;
             };
             if states[child_id] == 1 {

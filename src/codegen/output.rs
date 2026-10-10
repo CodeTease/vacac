@@ -40,6 +40,8 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::I64 => Self::I64,
             ArrayElementType::Bool => Self::Bool,
             ArrayElementType::Str => Self::Str,
+            ArrayElementType::Enum(index) => Self::Enum(index),
+            ArrayElementType::Struct(index) => Self::Struct(index),
         }
     }
 }

@@ -1,0 +1,49 @@
+// Fixed-size arrays can store struct and enum values.
+struct Product {
+    name: str,
+    price: i64,
+}
+
+enum StockStatus {
+    Available,
+    Backordered,
+}
+
+struct Inventory {
+    products: [Product; 2],
+    statuses: [StockStatus; 2],
+}
+
+fn sample_inventory() -> Inventory {
+    Inventory {
+        products: [
+            Product { name: "notebook", price: 4 },
+            Product { name: "pencil", price: 2 },
+        ],
+        statuses: [StockStatus::Available, StockStatus::Backordered],
+    }
+}
+
+fn total_price(products: [Product; 2]) -> i64 {
+    products[0].price + products[1].price
+}
+
+fn main() -> i64 {
+    let inventory = sample_inventory();
+
+    // Mutate a struct field through an array element.
+    inventory.products[1].price = inventory.products[1].price + 1;
+
+    print("inventory total = ");
+    print_i64(total_price(inventory.products));
+
+    // Iterate over enum array values and inspect each with match.
+    for status in inventory.statuses {
+        print(match status {
+            StockStatus::Available => { "available\n" },
+            StockStatus::Backordered => { "backordered\n" },
+        });
+    }
+
+    0
+}

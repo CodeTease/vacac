@@ -170,18 +170,7 @@ impl Parser {
         } else if self.take(&TokenKind::Unit) {
             Ok(Type::Unit)
         } else if self.take(&TokenKind::LBracket) {
-            let element = if self.take(&TokenKind::I64) {
-                ArrayElementType::I64
-            } else if self.take(&TokenKind::Bool) {
-                ArrayElementType::Bool
-            } else if self.take(&TokenKind::Str) {
-                ArrayElementType::Str
-            } else {
-                return Err(unexpected(
-                    self.peek(),
-                    "array element type `i64`, `bool`, or `str`",
-                ));
-            };
+            let element = self.parse_type()?;
             self.consume(&TokenKind::Semicolon, "`;` in array type")?;
             let length = match self.advance().kind {
                 TokenKind::Integer(length) if length <= u32::MAX as u64 => length as u32,
@@ -194,7 +183,7 @@ impl Parser {
                 _ => return Err(unexpected(self.previous(), "array length")),
             };
             self.consume(&TokenKind::RBracket, "`]`")?;
-            Ok(Type::Array(element, length))
+            Ok(Type::Array(Box::new(element), length))
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
             self.advance();

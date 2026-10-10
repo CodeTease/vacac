@@ -4,7 +4,7 @@ pub enum Type {
     Bool,
     Str,
     Unit,
-    Array(ArrayElementType, u32),
+    Array(Box<Type>, u32),
     Named(String),
 }
 
@@ -13,6 +13,8 @@ pub enum ArrayElementType {
     I64,
     Bool,
     Str,
+    Enum(usize),
+    Struct(usize),
 }
 
 #[derive(Debug, Clone, Copy)]

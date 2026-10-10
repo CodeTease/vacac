@@ -105,8 +105,8 @@ impl<'ctx> Codegen<'ctx> {
                         function.span.line,
                         function.span.column,
                         function.name,
-                        type_name(value.ty),
-                        type_name(self.return_type)
+                        self.type_name(value.ty),
+                        self.type_name(self.return_type)
                     ));
                 }
                 if let Some(returned) = value.value {
@@ -223,8 +223,8 @@ impl<'ctx> Codegen<'ctx> {
                         "line {}:{}: binding `{name}` has type {}, but its initializer has type {}",
                         span.line,
                         span.column,
-                        type_name(ty),
-                        type_name(value.ty)
+                        self.type_name(ty),
+                        self.type_name(value.ty)
                     ));
                 }
                 let alloca = self.create_entry_alloca(ty, name)?;
@@ -263,8 +263,8 @@ impl<'ctx> Codegen<'ctx> {
                         "line {}:{}: cannot assign {} to `{name}` of type {}",
                         span.line,
                         span.column,
-                        type_name(value.ty),
-                        type_name(local.ty)
+                        self.type_name(value.ty),
+                        self.type_name(local.ty)
                     ));
                 }
                 self.builder
@@ -308,8 +308,8 @@ impl<'ctx> Codegen<'ctx> {
                         "line {}:{}: assignment target has type {}, expected {}",
                         span.line,
                         span.column,
-                        type_name(value.ty),
-                        type_name(target_type)
+                        self.type_name(value.ty),
+                        self.type_name(target_type)
                     ));
                 }
                 self.builder
@@ -331,8 +331,8 @@ impl<'ctx> Codegen<'ctx> {
                     if value.ty != self.return_type {
                         return Err(format!(
                             "return type mismatch: expected {}, got {}",
-                            type_name(self.return_type),
-                            type_name(value.ty)
+                            self.type_name(self.return_type),
+                            self.type_name(value.ty)
                         ));
                     }
                     value.value
@@ -668,7 +668,8 @@ impl<'ctx> Codegen<'ctx> {
         let element_value = self
             .builder
             .build_load(
-                self.llvm_element_type(element),
+                self.llvm_type(ValueType::from(element))
+                    .ok_or("array element has no LLVM type")?,
                 element_pointer,
                 "for.array.value",
             )

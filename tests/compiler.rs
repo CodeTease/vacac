@@ -1078,6 +1078,148 @@ fn fixed_arrays_support_annotations_and_function_parameters_and_returns() {
 }
 
 #[test]
+fn arrays_of_structs_and_enums_support_value_operations_and_iteration() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64 }
+        enum State { Idle, Number(i64) }
+
+        fn adjust(points: [Point; 2]) -> [Point; 2] {
+            points[0].x = points[0].x + 3;
+            points[1] = Point { x: 9 };
+            points
+        }
+
+        fn update(states: [State; 2]) -> [State; 2] {
+            states[0] = State::Number(4);
+            states
+        }
+
+        fn main() -> i64 {
+            let points = adjust([Point { x: 2 }, Point { x: 5 }]);
+            for point in points {
+                print_i64(point.x);
+            }
+
+            let states: [State; 2] = update([State::Idle, State::Number(6)]);
+            for state in states {
+                print_i64(match state {
+                    State::Idle => { 0 },
+                    State::Number(value) => { value },
+                });
+            }
+            0
+        }
+        "#,
+        "aggregate-arrays-values-iteration",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "5\n9\n4\n6\n");
+}
+
+#[test]
+fn zero_length_struct_and_enum_arrays_are_supported() {
+    let result = compile_and_run(
+        r#"
+        struct Item { value: i64 }
+        enum State { Ready, Waiting }
+        fn main() -> i64 {
+            let items: [Item; 0] = [];
+            let states: [State; 0] = [];
+            print_i64(len(items));
+            print_i64(len(states));
+            for item in items { print_i64(item.value); }
+            for state in states { match state { State::Ready => { 0 }, State::Waiting => { 1 } }; }
+            0
+        }
+        "#,
+        "zero-length-aggregate-arrays",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "0\n0\n");
+}
+
+#[test]
+fn structs_can_contain_arrays_of_structs_and_enums() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64 }
+        enum State { Ready, Waiting }
+        struct Board { points: [Point; 2], states: [State; 2] }
+
+        fn make_board() -> Board {
+            Board {
+                points: [Point { x: 3 }, Point { x: 7 }],
+                states: [State::Waiting, State::Ready],
+            }
+        }
+
+        fn main() -> i64 {
+            let board = make_board();
+            board.points[1].x = board.points[1].x + 1;
+            print_i64(board.points[0].x + board.points[1].x);
+            print_i64(match board.states[0] {
+                State::Ready => { 0 },
+                State::Waiting => { 1 },
+            });
+            0
+        }
+        "#,
+        "struct-fields-aggregate-arrays",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "11\n1\n");
+}
+
+#[test]
+fn aggregate_arrays_reject_mixed_unknown_nested_and_unit_elements() {
+    for (source, name, diagnostic) in [
+        (
+            "struct A { value: i64 } struct B { value: i64 } fn main() -> i64 { let values = [A { value: 1 }, B { value: 2 }]; 0 }\n",
+            "aggregate-array-mixed-structs",
+            "array element has type B, expected A",
+        ),
+        (
+            "enum A { Ready } enum B { Ready } fn main() -> i64 { let values = [A::Ready, B::Ready]; 0 }\n",
+            "aggregate-array-mixed-enums",
+            "array element has type B, expected A",
+        ),
+        (
+            "fn main() -> i64 { let values: [Missing; 2] = []; 0 }\n",
+            "aggregate-array-unknown-type",
+            "unknown type `Missing`",
+        ),
+        (
+            "fn main() -> i64 { let values: [[i64; 2]; 1] = []; 0 }\n",
+            "aggregate-array-nested-type",
+            "nested arrays are not supported",
+        ),
+        (
+            "fn main() -> i64 { let values: [unit; 1] = []; 0 }\n",
+            "aggregate-array-unit-type",
+            "array elements cannot have type `unit`",
+        ),
+        (
+            "fn main() -> i64 { let values = [[1, 2]]; 0 }\n",
+            "aggregate-array-nested-literal",
+            "array elements cannot have type `unit` or be arrays",
+        ),
+        (
+            "struct Item { value: i64 } fn main() -> i64 { const items = [Item { value: 1 }]; items[0].value = 2; 0 }\n",
+            "aggregate-array-immutable-field",
+            "cannot assign through immutable binding `items`",
+        ),
+        (
+            "enum State { Ready } fn main() -> i64 { const states = [State::Ready]; states[0] = State::Ready; 0 }\n",
+            "aggregate-array-immutable-element",
+            "cannot assign through immutable binding `states`",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
 fn structs_support_construction_field_reads_and_value_passing() {
     let result = compile_and_run(
         r#"
@@ -1348,6 +1490,11 @@ fn structs_reject_duplicate_declarations_and_invalid_fields() {
         "struct First { second: Second } struct Second { first: First } fn main() -> i64 { 0 }",
         "struct-mutually-recursive-fields",
         "recursive by-value field `first`",
+    );
+    assert_compile_error(
+        "struct Node { children: [Node; 1] } fn main() -> i64 { 0 }",
+        "struct-recursive-array-field",
+        "recursive by-value field `children`",
     );
     assert_compile_error(
         "struct Item { id: i64, id: bool } fn main() -> i64 { 0 }",

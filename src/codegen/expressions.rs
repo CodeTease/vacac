@@ -51,7 +51,12 @@ impl<'ctx> Codegen<'ctx> {
                 let pointer = self.array_element_pointer(scratch, array_type, index)?;
                 let value = self
                     .builder
-                    .build_load(self.llvm_element_type(element), pointer, "array.element")
+                    .build_load(
+                        self.llvm_type(ValueType::from(element))
+                            .ok_or("array element has no LLVM type")?,
+                        pointer,
+                        "array.element",
+                    )
                     .map_err(|e| e.to_string())?;
                 Ok(TypedValue {
                     value: Some(value),
@@ -104,7 +109,7 @@ impl<'ctx> Codegen<'ctx> {
                         if value.ty != ValueType::I64 {
                             return Err(format!(
                                 "unary `-` requires i64, got {}",
-                                type_name(value.ty)
+                                self.type_name(value.ty)
                             ));
                         }
                         let result = self
@@ -120,7 +125,7 @@ impl<'ctx> Codegen<'ctx> {
                         if value.ty != ValueType::Bool {
                             return Err(format!(
                                 "unary `!` requires bool, got {}",
-                                type_name(value.ty)
+                                self.type_name(value.ty)
                             ));
                         }
                         let result = self
@@ -198,8 +203,8 @@ impl<'ctx> Codegen<'ctx> {
         if else_value.ty != then_value.ty {
             return Err(format!(
                 "if expression branches have different types: {} and {}",
-                type_name(then_value.ty),
-                type_name(else_value.ty)
+                self.type_name(then_value.ty),
+                self.type_name(else_value.ty)
             ));
         }
         let else_llvm_value = else_value
@@ -236,7 +241,7 @@ impl<'ctx> Codegen<'ctx> {
         if value.ty != ValueType::I64 {
             return Err(format!(
                 "{context} must be i64, got {}",
-                type_name(value.ty)
+                self.type_name(value.ty)
             ));
         }
         Ok(value
@@ -253,7 +258,7 @@ impl<'ctx> Codegen<'ctx> {
         if value.ty != ValueType::Bool {
             return Err(format!(
                 "{context} must be bool, got {}",
-                type_name(value.ty)
+                self.type_name(value.ty)
             ));
         }
         Ok(value
