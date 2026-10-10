@@ -168,36 +168,35 @@ impl<'ctx> Codegen<'ctx> {
             self.builder.position_at_end(block);
             let mut payload_equal = self.bool_type().const_int(1, false);
             for (payload_index, payload_type) in variant.payload.iter().enumerate() {
-                let field = self.enum_payload_field(enum_id, variant_index, payload_index);
-                let mut left_payload = self
+                let (variant_field, payload_field) =
+                    self.enum_payload_field(enum_id, variant_index, payload_index);
+                let left_tuple = self
                     .builder
-                    .build_extract_value(left.into_struct_value(), field, "enum.eq.left.payload")
+                    .build_extract_value(
+                        left.into_struct_value(),
+                        variant_field,
+                        "enum.eq.left.tuple",
+                    )
+                    .map_err(|e| e.to_string())?
+                    .into_struct_value();
+                let right_tuple = self
+                    .builder
+                    .build_extract_value(
+                        right.into_struct_value(),
+                        variant_field,
+                        "enum.eq.right.tuple",
+                    )
+                    .map_err(|e| e.to_string())?
+                    .into_struct_value();
+                let left_payload = self
+                    .builder
+                    .build_extract_value(left_tuple, payload_field, "enum.eq.left.payload")
                     .map_err(|e| e.to_string())?;
-                let mut right_payload = self
+                let right_payload = self
                     .builder
-                    .build_extract_value(right.into_struct_value(), field, "enum.eq.right.payload")
+                    .build_extract_value(right_tuple, payload_field, "enum.eq.right.payload")
                     .map_err(|e| e.to_string())?;
                 let payload_type = self.resolve_type(payload_type, variant.span)?;
-                if payload_type == ValueType::Bool {
-                    left_payload = self
-                        .builder
-                        .build_int_truncate(
-                            left_payload.into_int_value(),
-                            self.bool_type(),
-                            "enum.eq.left.bool",
-                        )
-                        .map_err(|e| e.to_string())?
-                        .into();
-                    right_payload = self
-                        .builder
-                        .build_int_truncate(
-                            right_payload.into_int_value(),
-                            self.bool_type(),
-                            "enum.eq.right.bool",
-                        )
-                        .map_err(|e| e.to_string())?
-                        .into();
-                }
                 let field_equal =
                     self.emit_value_equality(payload_type, left_payload, right_payload)?;
                 payload_equal = self

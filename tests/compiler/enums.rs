@@ -77,6 +77,65 @@ fn enums_support_multiple_primitive_payloads_and_independent_match_bindings() {
 }
 
 #[test]
+fn enum_payloads_support_arrays_structs_and_nested_enums() {
+    let result = compile_and_run(
+        r#"
+        enum MaybeInt { None, Some(i64) }
+
+        struct Pair { left: i64, right: bool }
+
+        enum Message {
+            Empty,
+            Bundle([i64; 2], Pair, MaybeInt),
+            Matrix([[bool; 2]; 2]),
+        }
+
+        fn total(message: Message) -> i64 {
+            match message {
+                Message::Empty => { 0 },
+                Message::Bundle(values, pair, maybe) => {
+                    let nested = match maybe {
+                        MaybeInt::None => { 0 },
+                        MaybeInt::Some(number) => { number },
+                    };
+                    values[0] + values[1] + pair.left + if pair.right { nested } else { 0 }
+                },
+                Message::Matrix(matrix) => {
+                    if matrix[0][0] && matrix[1][1] { 99 } else { 1 }
+                },
+            }
+        }
+
+        fn main() -> i64 {
+            let first = Message::Bundle(
+                [3, 4],
+                Pair { left: 5, right: true },
+                MaybeInt::Some(6),
+            );
+            let same = Message::Bundle(
+                [3, 4],
+                Pair { left: 5, right: true },
+                MaybeInt::Some(6),
+            );
+            if first != same { return 1; }
+            let changed = Message::Bundle(
+                [3, 4],
+                Pair { left: 5, right: false },
+                MaybeInt::Some(6),
+            );
+            if first == changed { return 2; }
+            print_i64(total(first));
+            print_i64(total(Message::Matrix([[true, false], [false, true]])));
+            total(Message::Empty)
+        }
+        "#,
+        "enum-aggregate-payloads",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "18\n99\n");
+}
+
+#[test]
 fn enum_match_supports_wildcards_and_ignored_payloads() {
     let result = compile_and_run(
         r#"
@@ -196,9 +255,19 @@ fn enums_reject_duplicate_declarations_and_unsupported_payloads() {
         "enum variant `A` is defined more than once",
     );
     assert_compile_error(
-        "enum Choice { Value([i64; 2]) } fn main() -> i64 { 0 }\n",
-        "enum-array-payload",
-        "enum payloads must have type `i64`, `bool`, or `str`",
+        "enum Choice { Value(unit) } fn main() -> i64 { 0 }\n",
+        "enum-unit-payload",
+        "enum payloads cannot have type `unit`",
+    );
+    assert_compile_error(
+        "enum Link { Next(Link) } fn main() -> i64 { 0 }\n",
+        "enum-recursive-payload",
+        "recursive by-value payload",
+    );
+    assert_compile_error(
+        "enum Link { Next(Node) } struct Node { link: Link } fn main() -> i64 { 0 }\n",
+        "enum-struct-recursive-payload",
+        "recursive by-value field `link`",
     );
     assert_compile_error(
         "enum Choice { A } enum Choice { B } fn main() -> i64 { 0 }\n",

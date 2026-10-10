@@ -56,6 +56,7 @@ struct Codegen<'ctx> {
     enums: Vec<EnumDecl>,
     enum_ids: HashMap<String, usize>,
     enum_types: Vec<StructType<'ctx>>,
+    enum_payload_types: Vec<Vec<StructType<'ctx>>>,
     structs: Vec<StructDecl>,
     struct_ids: HashMap<String, usize>,
     struct_types: Vec<StructType<'ctx>>,

@@ -56,7 +56,7 @@ fn quiet_suppresses_success_status_messages() {
 fn json_diagnostics_include_source_location_and_escaped_message() {
     let (dir, result) = run_compiler_with_args(
         "fn main() -> i64 {\n    true\n}\n",
-        "json-diagnostic",
+        r#"json: "diagnostic\path"#,
         &["--json"],
     );
     assert!(!result.status.success());
@@ -68,6 +68,12 @@ fn json_diagnostics_include_source_location_and_escaped_message() {
     assert!(stderr.contains("\"line\":2"), "{stderr}");
     assert!(stderr.contains("\"column\":5"), "{stderr}");
     assert!(stderr.contains("function result has type bool"), "{stderr}");
+    let source_path = dir.join("test.apx").to_string_lossy().into_owned();
+    let escaped_path = source_path.replace('\\', "\\\\").replace('"', "\\\"");
+    assert!(
+        stderr.contains(&format!("\"file\":\"{escaped_path}\"")),
+        "{stderr}"
+    );
     assert!(!stderr.contains("^"), "{stderr}");
     let _ = fs::remove_dir_all(dir);
 }

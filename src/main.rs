@@ -1,3 +1,4 @@
+mod aggregate_validation;
 mod ast;
 mod codegen;
 mod lexer;
@@ -345,28 +346,26 @@ fn diagnostic_json(error: &str) -> String {
 }
 
 fn parse_diagnostic(error: &str) -> (Option<&str>, Option<usize>, Option<usize>, &str) {
-    let mut message = error;
-    if let Some(rest) = message.strip_prefix("apexc: ") {
-        message = rest;
-    }
-    let Some((location, rest)) = message.split_once(": ") else {
-        return (None, None, None, message);
-    };
-    let mut parts = location.rsplitn(3, ':');
-    let column_part = parts.next().unwrap_or_default();
-    let line_part = parts.next().unwrap_or_default();
-    let file = parts.next();
-    if let (Some(file), Ok(line), Ok(column)) = (
-        file,
-        line_part.parse::<usize>(),
-        column_part.parse::<usize>(),
-    ) {
-        return (
-            Some(file),
-            Some(line),
-            Some(column),
-            rest.split_once('\n').map_or(rest, |(message, _)| message),
-        );
+    let message = error.strip_prefix("apexc: ").unwrap_or(error);
+    let mut candidate = message;
+    while let Some((location, rest)) = candidate.rsplit_once(": ") {
+        let mut parts = location.rsplitn(3, ':');
+        let column_part = parts.next().unwrap_or_default();
+        let line_part = parts.next().unwrap_or_default();
+        let file = parts.next();
+        if let (Some(file), Ok(line), Ok(column)) = (
+            file,
+            line_part.parse::<usize>(),
+            column_part.parse::<usize>(),
+        ) {
+            return (
+                Some(file),
+                Some(line),
+                Some(column),
+                rest.split_once('\n').map_or(rest, |(message, _)| message),
+            );
+        }
+        candidate = location;
     }
     (None, None, None, message)
 }

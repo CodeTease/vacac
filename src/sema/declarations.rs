@@ -27,17 +27,6 @@ impl Checker {
                         format!("enum variant `{}` is defined more than once", variant.name),
                     ));
                 }
-                for payload_type in &variant.payload {
-                    if matches!(
-                        payload_type,
-                        Type::Unit | Type::Array(_, _) | Type::Named(_)
-                    ) {
-                        return Err(at(
-                            variant.span,
-                            "enum payloads must have type `i64`, `bool`, or `str`",
-                        ));
-                    }
-                }
             }
         }
         self.enums = program.enums.clone();
@@ -72,6 +61,16 @@ impl Checker {
             }
         }
         self.structs = program.structs.clone();
+        let enum_declarations = self.enums.clone();
+        for declaration in &enum_declarations {
+            for variant in &declaration.variants {
+                for payload_type in &variant.payload {
+                    if self.resolve_type(payload_type, variant.span)? == ValueType::Unit {
+                        return Err(at(variant.span, "enum payloads cannot have type `unit`"));
+                    }
+                }
+            }
+        }
         let struct_fields = self.structs.clone();
         for declaration in &struct_fields {
             for field in &declaration.fields {
@@ -80,7 +79,7 @@ impl Checker {
                 }
             }
         }
-        validate_struct_cycles(&self.structs, &self.struct_ids)?;
+        crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)?;
         let mut saw_main = false;
         for function in &program.functions {
             if matches!(
@@ -201,53 +200,4 @@ impl Checker {
     }
 
     // Returns true if every path through this block returns from the function.
-}
-
-fn validate_struct_cycles(
-    structs: &[StructDecl],
-    struct_ids: &HashMap<String, usize>,
-) -> Result<(), String> {
-    fn visit(
-        id: usize,
-        structs: &[StructDecl],
-        struct_ids: &HashMap<String, usize>,
-        states: &mut [u8],
-    ) -> Result<(), String> {
-        fn named_struct_id(ty: &Type, struct_ids: &HashMap<String, usize>) -> Option<usize> {
-            match ty {
-                Type::Named(name) => struct_ids.get(name).copied(),
-                Type::Array(element, _) => named_struct_id(element, struct_ids),
-                _ => None,
-            }
-        }
-
-        states[id] = 1;
-        for field in &structs[id].fields {
-            let Some(child_id) = named_struct_id(&field.ty, struct_ids) else {
-                continue;
-            };
-            if states[child_id] == 1 {
-                return Err(at(
-                    field.span,
-                    format!(
-                        "struct `{}` has a recursive by-value field `{}`",
-                        structs[id].name, field.name
-                    ),
-                ));
-            }
-            if states[child_id] == 0 {
-                visit(child_id, structs, struct_ids, states)?;
-            }
-        }
-        states[id] = 2;
-        Ok(())
-    }
-
-    let mut states = vec![0; structs.len()];
-    for id in 0..structs.len() {
-        if states[id] == 0 {
-            visit(id, structs, struct_ids, &mut states)?;
-        }
-    }
-    Ok(())
 }

@@ -5,6 +5,7 @@ impl<'ctx> Codegen<'ctx> {
         let mut codegen = Self::new(context, "apex");
         codegen.declare_enums(program)?;
         codegen.declare_structs(program)?;
+        codegen.define_enums()?;
         codegen.declare_functions(program)?;
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
@@ -30,6 +31,7 @@ impl<'ctx> Codegen<'ctx> {
             enums: Vec::new(),
             enum_ids: HashMap::new(),
             enum_types: Vec::new(),
+            enum_payload_types: Vec::new(),
             structs: Vec::new(),
             struct_ids: HashMap::new(),
             struct_types: Vec::new(),
@@ -206,38 +208,43 @@ impl<'ctx> Codegen<'ctx> {
                     declaration.name
                 ));
             }
-            let max_integers = declaration
-                .variants
-                .iter()
-                .map(|variant| {
-                    variant
-                        .payload
-                        .iter()
-                        .filter(|ty| matches!(ty, Type::I64 | Type::Bool))
-                        .count()
-                })
-                .max()
-                .unwrap_or(0);
-            let max_strings = declaration
-                .variants
-                .iter()
-                .map(|variant| {
-                    variant
-                        .payload
-                        .iter()
-                        .filter(|ty| matches!(ty, Type::Str))
-                        .count()
-                })
-                .max()
-                .unwrap_or(0);
-            let mut fields: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()];
-            fields.extend((0..max_integers).map(|_| BasicTypeEnum::from(self.i64_type())));
-            fields.extend(
-                (0..max_strings)
-                    .map(|_| BasicTypeEnum::from(self.context.ptr_type(AddressSpace::default()))),
+            self.enum_types.push(
+                self.context
+                    .opaque_struct_type(&format!("apex.enum.{}", declaration.name)),
             );
-            self.enum_types
-                .push(self.context.struct_type(&fields, false));
+            self.enum_payload_types.push(Vec::new());
+        }
+        Ok(())
+    }
+
+    pub(super) fn define_enums(&mut self) -> Result<(), String> {
+        for enum_id in 0..self.enums.len() {
+            let declaration = self.enums[enum_id].clone();
+            let mut fields: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()];
+            let mut payload_types = Vec::with_capacity(declaration.variants.len());
+            for variant in &declaration.variants {
+                let mut payload_fields = Vec::with_capacity(variant.payload.len());
+                for ty in &variant.payload {
+                    let value_type = self.resolve_type(ty, variant.span)?;
+                    if value_type == ValueType::Unit {
+                        return Err(format!(
+                            "line {}:{}: enum payloads cannot have type `unit`",
+                            variant.span.line, variant.span.column
+                        ));
+                    }
+                    payload_fields.push(
+                        self.llvm_type(value_type)
+                            .ok_or("enum payload has no LLVM type")?,
+                    );
+                }
+                let payload_type = self.context.struct_type(&payload_fields, false);
+                fields.push(payload_type.into());
+                payload_types.push(payload_type);
+            }
+            if !self.enum_types[enum_id].set_body(&fields, false) {
+                return Err(format!("enum `{}` was already defined", declaration.name));
+            }
+            self.enum_payload_types[enum_id] = payload_types;
         }
         Ok(())
     }
@@ -282,7 +289,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
         }
-        validate_struct_cycles(&self.structs, &self.struct_ids)?;
+        crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)?;
         for declaration in program.structs.iter() {
             let mut field_types = Vec::with_capacity(declaration.fields.len());
             let mut names = std::collections::HashSet::new();
@@ -387,50 +394,4 @@ impl<'ctx> Codegen<'ctx> {
             .insert("read_i64".into(), (vec![], ValueType::I64));
         Ok(())
     }
-}
-
-fn validate_struct_cycles(
-    structs: &[StructDecl],
-    struct_ids: &HashMap<String, usize>,
-) -> Result<(), String> {
-    fn visit(
-        id: usize,
-        structs: &[StructDecl],
-        struct_ids: &HashMap<String, usize>,
-        states: &mut [u8],
-    ) -> Result<(), String> {
-        fn named_struct_id(ty: &Type, struct_ids: &HashMap<String, usize>) -> Option<usize> {
-            match ty {
-                Type::Named(name) => struct_ids.get(name).copied(),
-                Type::Array(element, _) => named_struct_id(element, struct_ids),
-                _ => None,
-            }
-        }
-
-        states[id] = 1;
-        for field in &structs[id].fields {
-            let Some(child_id) = named_struct_id(&field.ty, struct_ids) else {
-                continue;
-            };
-            if states[child_id] == 1 {
-                return Err(format!(
-                    "line {}:{}: struct `{}` has a recursive by-value field `{}`",
-                    field.span.line, field.span.column, structs[id].name, field.name
-                ));
-            }
-            if states[child_id] == 0 {
-                visit(child_id, structs, struct_ids, states)?;
-            }
-        }
-        states[id] = 2;
-        Ok(())
-    }
-
-    let mut states = vec![0; structs.len()];
-    for id in 0..structs.len() {
-        if states[id] == 0 {
-            visit(id, structs, struct_ids, &mut states)?;
-        }
-    }
-    Ok(())
 }

@@ -416,7 +416,7 @@ impl Checker {
                     (expected, Some(values)) if expected.len() == values.len() => {
                         for (expected, value) in expected.iter().zip(values) {
                             let expected = self.resolve_type(expected, variant.span)?;
-                            let actual = self.check_expr(value, false)?;
+                            let actual = self.check_expr_expected(value, expected)?;
                             self.expect_type(
                                 actual,
                                 expected,

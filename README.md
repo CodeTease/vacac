@@ -139,7 +139,7 @@ Struct values can be bound, passed to functions, and returned. A literal must in
 
 ## Enums and exhaustive matching
 
-Enums are top-level declarations with uniquely named variants. A variant has no payload or an ordered tuple of one or more primitive payloads (`i64`, `bool`, or `str`):
+Enums are top-level declarations with uniquely named variants. A variant has no payload or an ordered tuple of one or more non-`unit` value payloads (primitives, named structs and enums, or fixed-size arrays):
 
 ```apex
 enum MaybeInt {
@@ -163,7 +163,7 @@ fn main() -> i64 {
 }
 ```
 
-Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. `match` is an expression. Variant patterns use `EnumName::Variant`; payload variants bind or ignore each field independently, for example `Event::Record(id, _, label)`. The number and types of supplied payload values and pattern fields must match the declaration. A final `_` wildcard arm may handle all remaining variants; it is optional when every variant is otherwise covered. Wildcards must be unique and last, and duplicate or unreachable arms are rejected. Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same non-`unit` type. Enum values may be bound, assigned, passed to and returned from functions, stored in fixed-size arrays, inspected with `match`, and compared for equality or inequality. Two enums are equal when they have the same variant and equal payloads; payload strings compare by contents. Payloads remain restricted to primitive `i64`, `bool`, and `str` fields; nested enums, arrays, and structs are not supported as payloads.
+Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. `match` is an expression. Variant patterns use `EnumName::Variant`; payload variants bind or ignore each field independently, for example `Event::Record(id, _, label)`. The number and types of supplied payload values and pattern fields must match the declaration. A final `_` wildcard arm may handle all remaining variants; it is optional when every variant is otherwise covered. Wildcards must be unique and last, and duplicate or unreachable arms are rejected. Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same non-`unit` type. Enum values may be bound, assigned, passed to and returned from functions, stored in fixed-size arrays, inspected with `match`, and compared for equality or inequality. Two enums are equal when they have the same variant and equal payloads; payload strings compare by contents and aggregate payloads compare recursively. Payloads may be any non-`unit` value type, including arrays, structs, and other enums. Recursive by-value aggregate layouts are rejected.
 
 ## Apex v0.1 syntax
 

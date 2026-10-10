@@ -3,35 +3,11 @@ use super::*;
 impl<'ctx> Codegen<'ctx> {
     pub(super) fn enum_payload_field(
         &self,
-        enum_id: usize,
+        _enum_id: usize,
         variant_id: usize,
         payload_index: usize,
-    ) -> u32 {
-        let variant = &self.enums[enum_id].variants[variant_id];
-        if matches!(variant.payload[payload_index], Type::Str) {
-            let integer_slots = self.enums[enum_id]
-                .variants
-                .iter()
-                .map(|variant| {
-                    variant
-                        .payload
-                        .iter()
-                        .filter(|ty| matches!(ty, Type::I64 | Type::Bool))
-                        .count()
-                })
-                .max()
-                .unwrap_or(0);
-            (1 + integer_slots
-                + variant.payload[..payload_index]
-                    .iter()
-                    .filter(|ty| matches!(ty, Type::Str))
-                    .count()) as u32
-        } else {
-            (1 + variant.payload[..payload_index]
-                .iter()
-                .filter(|ty| matches!(ty, Type::I64 | Type::Bool))
-                .count()) as u32
-        }
+    ) -> (u32, u32) {
+        ((variant_id + 1) as u32, payload_index as u32)
     }
 
     pub(super) fn emit_enum_variant(
@@ -63,8 +39,8 @@ impl<'ctx> Codegen<'ctx> {
             (expected, Some(expressions)) if expected.len() == expressions.len() => {
                 let mut values = Vec::with_capacity(expected.len());
                 for (payload_type, expression) in expected.iter().zip(expressions) {
-                    let payload = self.emit_expression(expression)?;
                     let expected = self.resolve_type(payload_type, variant.span)?;
+                    let payload = self.emit_expression_expected(expression, expected)?;
                     if payload.ty != expected {
                         return Err(format!(
                             "enum payload has type {}, expected {}",
@@ -92,12 +68,26 @@ impl<'ctx> Codegen<'ctx> {
                 ));
             }
         };
+        let mut payload_value = self.enum_payload_types[enum_id][variant_index]
+            .const_zero()
+            .as_basic_value_enum();
+        for (payload_index, (_ty, payload)) in payload_values.into_iter().enumerate() {
+            payload_value = self
+                .builder
+                .build_insert_value(
+                    payload_value.into_struct_value(),
+                    payload,
+                    payload_index as u32,
+                    "enum.payload.field",
+                )
+                .map_err(|e| e.to_string())?
+                .as_basic_value_enum();
+        }
         let enum_type = self.enum_types[enum_id];
-        let mut value = enum_type.const_zero().as_basic_value_enum();
-        value = self
+        let mut value = self
             .builder
             .build_insert_value(
-                value.into_struct_value(),
+                enum_type.const_zero(),
                 self.context
                     .i32_type()
                     .const_int(variant_index as u64, false),
@@ -106,26 +96,16 @@ impl<'ctx> Codegen<'ctx> {
             )
             .map_err(|e| e.to_string())?
             .as_basic_value_enum();
-        for (payload_index, (ty, payload)) in payload_values.into_iter().enumerate() {
-            let field = self.enum_payload_field(enum_id, variant_index, payload_index);
-            let payload: BasicValueEnum<'ctx> = if ty == ValueType::Bool {
-                self.builder
-                    .build_int_z_extend(
-                        payload.into_int_value(),
-                        self.i64_type(),
-                        "enum.bool.payload",
-                    )
-                    .map_err(|e| e.to_string())?
-                    .into()
-            } else {
-                payload
-            };
-            value = self
-                .builder
-                .build_insert_value(value.into_struct_value(), payload, field, "enum.payload")
-                .map_err(|e| e.to_string())?
-                .as_basic_value_enum();
-        }
+        value = self
+            .builder
+            .build_insert_value(
+                value.into_struct_value(),
+                payload_value,
+                (variant_index + 1) as u32,
+                "enum.payload",
+            )
+            .map_err(|e| e.to_string())?
+            .as_basic_value_enum();
         Ok(TypedValue {
             value: Some(value),
             ty: ValueType::Enum(enum_id),
@@ -312,22 +292,17 @@ impl<'ctx> Codegen<'ctx> {
                 {
                     let Some(binding) = binding else { continue };
                     let ty = self.resolve_type(payload_type, arm.span)?;
-                    let field = self.enum_payload_field(enum_id, variant_index, payload_index);
-                    let mut payload = self
+                    let (variant_field, payload_field) =
+                        self.enum_payload_field(enum_id, variant_index, payload_index);
+                    let payload_tuple = self
                         .builder
-                        .build_extract_value(enum_value, field, "enum.match.payload")
+                        .build_extract_value(enum_value, variant_field, "enum.match.tuple")
+                        .map_err(|e| e.to_string())?
+                        .into_struct_value();
+                    let payload = self
+                        .builder
+                        .build_extract_value(payload_tuple, payload_field, "enum.match.payload")
                         .map_err(|e| e.to_string())?;
-                    if ty == ValueType::Bool {
-                        payload = self
-                            .builder
-                            .build_int_truncate(
-                                payload.into_int_value(),
-                                self.bool_type(),
-                                "enum.match.bool",
-                            )
-                            .map_err(|e| e.to_string())?
-                            .into();
-                    }
                     let alloca = self.create_entry_alloca(ty, binding)?;
                     self.builder
                         .build_store(alloca, payload)
