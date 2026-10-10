@@ -80,6 +80,88 @@ fn assert_compile_error(source: &str, test_name: &str, diagnostic: &str) {
 }
 
 #[test]
+fn help_and_version_are_available_without_a_source_file() {
+    let help = Command::new(env!("CARGO_BIN_EXE_apexc"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("Usage:"));
+    assert!(help.contains("--run"));
+    assert!(help.contains("--json"));
+
+    let version = Command::new(env!("CARGO_BIN_EXE_apexc"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(version.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("apexc {}", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn run_mode_runs_program_and_leaves_no_build_artifacts() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 { print_i64(23); 37 }\n",
+        "run-mode",
+        &["--run"],
+    );
+    assert_eq!(result.status.code(), Some(37));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "23\n");
+    assert!(!dir.join("a.out").exists());
+    assert!(!dir.join("a.o").exists());
+    assert!(!dir.join("program").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn quiet_suppresses_success_status_messages() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 { 0 }\n",
+        "quiet-mode",
+        &["--check", "--quiet"],
+    );
+    assert!(result.status.success());
+    assert!(result.stdout.is_empty());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn json_diagnostics_include_source_location_and_escaped_message() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 {\n    true\n}\n",
+        "json-diagnostic",
+        &["--json"],
+    );
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.starts_with("{\"severity\":\"error\",\"file\":"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\"line\":2"), "{stderr}");
+    assert!(stderr.contains("\"column\":5"), "{stderr}");
+    assert!(stderr.contains("function result has type bool"), "{stderr}");
+    assert!(!stderr.contains("^"), "{stderr}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn run_mode_rejects_output_paths() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 { 0 }\n",
+        "run-output-conflict",
+        &["--run", "-o", "program"],
+    );
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cannot be used with --run"));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn apex_main_result_becomes_process_exit_status() {
     let result = compile_and_run("fn main() -> i64 { 37 }\n", "main-exit-status");
     assert_eq!(result.status.code(), Some(37));

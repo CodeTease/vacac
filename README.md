@@ -21,6 +21,12 @@ target/release/apexc examples/factorial.apx -o factorial
 ./factorial
 ```
 
+For a quick compile-and-run without leaving build artifacts:
+
+```sh
+target/release/apexc examples/factorial.apx --run
+```
+
 Use `--emit-obj path.o` to choose the object-file path explicitly.
 
 Run the lexer, parser, and semantic checker without producing build artifacts:
@@ -36,8 +42,11 @@ target/release/apexc examples/factorial.apx --emit-llvm factorial.ll
 ```
 
 `--check` and `--emit-llvm` are exclusive output modes and cannot be combined
-with `-o` or `--emit-obj`. Check mode also builds and verifies the LLVM module,
-but writes no object or executable.
+with `-o` or `--emit-obj`. `--run` is also exclusive with other output modes and
+output paths. Check mode also builds and verifies the LLVM module, but writes no
+object or executable. Use `--quiet` (or `-q`) to suppress success messages, and
+`--json` to emit errors as JSON for tools. `--help` lists all options and
+`--version` prints the compiler version.
 
 ## Examples
 
