@@ -75,6 +75,8 @@ Some examples to explore:
   iteration to calculate a sum and maximum.
 - [`struct_inventory.apx`](examples/struct_inventory.apx) — define, construct,
   pass, and read named structs.
+- [`const_and_struct_fields.apx`](examples/const_and_struct_fields.apx) — use an
+  immutable `const` value and update fields of a mutable local struct.
 
 ## Expression conditionals
 

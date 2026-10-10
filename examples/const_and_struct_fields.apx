@@ -1,0 +1,21 @@
+// Demonstrate immutable const bindings and mutable struct-field assignment.
+struct Counter {
+    label: str,
+    value: i64,
+}
+
+fn main() -> i64 {
+    const increment = 3;
+
+    let counter = Counter { label: "total", value: 4 };
+    counter.value = counter.value + increment;
+
+    print(counter.label);
+    print(": ");
+    print_i64(counter.value);
+
+    // Const values can be read, but cannot be reassigned or mutated through.
+    counter.value = counter.value + increment;
+    print_i64(counter.value);
+    0
+}
