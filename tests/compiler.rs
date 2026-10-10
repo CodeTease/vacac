@@ -10,6 +10,8 @@ mod enums;
 mod equality;
 #[path = "compiler/language.rs"]
 mod language;
+#[path = "compiler/matching_loops.rs"]
+mod matching_loops;
 #[path = "compiler/runtime.rs"]
 mod runtime;
 #[path = "compiler/strings.rs"]

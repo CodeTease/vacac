@@ -191,9 +191,12 @@ impl Checker {
                     span_of_expr(condition),
                     "while condition",
                 )?;
-                self.loop_depth += 1;
+                self.loop_contexts.push(LoopContext {
+                    value_loop: false,
+                    result_type: None,
+                });
                 let body_result = self.check_block(body, return_type, false);
-                self.loop_depth -= 1;
+                self.loop_contexts.pop();
                 body_result?;
                 Ok(false)
             }
@@ -220,9 +223,12 @@ impl Checker {
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
-                self.loop_depth += 1;
+                self.loop_contexts.push(LoopContext {
+                    value_loop: false,
+                    result_type: None,
+                });
                 let body_result = self.check_block(body, return_type, false);
-                self.loop_depth -= 1;
+                self.loop_contexts.pop();
                 body_result?;
                 self.scopes.pop();
                 self.immutable_scopes.pop();
@@ -246,23 +252,56 @@ impl Checker {
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
-                self.loop_depth += 1;
+                self.loop_contexts.push(LoopContext {
+                    value_loop: false,
+                    result_type: None,
+                });
                 let body_result = self.check_block(body, return_type, false);
-                self.loop_depth -= 1;
+                self.loop_contexts.pop();
                 body_result?;
                 self.scopes.pop();
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 Ok(false)
             }
-            Stmt::Break { span } => {
-                if self.loop_depth == 0 {
+            Stmt::Break { value, span } => {
+                let Some(context) = self.loop_contexts.last() else {
                     return Err(at(*span, "`break` is only valid inside a loop"));
+                };
+                if context.value_loop != value.is_some() {
+                    return Err(at(
+                        *span,
+                        if context.value_loop {
+                            "a value-producing loop requires `break` with a value"
+                        } else {
+                            "`break` with a value is only valid inside a value-producing `loop`"
+                        },
+                    ));
+                }
+                if let Some(value) = value {
+                    let value_type = self.check_expr(value, false)?;
+                    if value_type == ValueType::Unit {
+                        return Err(at(*span, "a loop break value cannot have type `unit`"));
+                    }
+                    let expected = self
+                        .loop_contexts
+                        .last()
+                        .and_then(|context| context.result_type);
+                    if let Some(expected) = expected {
+                        self.expect_type(
+                            value_type,
+                            expected,
+                            span_of_expr(value),
+                            "loop break value",
+                        )?;
+                    } else {
+                        self.loop_contexts.last_mut().unwrap().result_type = Some(value_type);
+                    }
                 }
                 Ok(false)
             }
             Stmt::Continue { span } => {
-                if self.loop_depth == 0 {
+                if self.loop_contexts.is_empty() {
                     return Err(at(*span, "`continue` is only valid inside a loop"));
                 }
                 Ok(false)

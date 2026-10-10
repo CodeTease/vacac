@@ -1,7 +1,7 @@
 use crate::diagnostic::Diagnostic;
 use crate::parser::{
-    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchPattern, Program, Span, Stmt,
-    StructDecl, Type, UnaryOp,
+    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchArm, MatchPattern, Program,
+    Span, Stmt, StructDecl, Type, UnaryOp,
 };
 use std::collections::HashMap;
 
@@ -33,7 +33,8 @@ struct Checker {
     scopes: Vec<HashMap<String, ValueType>>,
     immutable_scopes: Vec<std::collections::HashSet<String>>,
     loop_scopes: Vec<std::collections::HashSet<String>>,
-    loop_depth: usize,
+    loop_contexts: Vec<LoopContext>,
+    current_return_type: ValueType,
     enum_ids: HashMap<String, usize>,
     enums: Vec<EnumDecl>,
     struct_ids: HashMap<String, usize>,
@@ -42,13 +43,19 @@ struct Checker {
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
 }
 
+struct LoopContext {
+    value_loop: bool,
+    result_type: Option<ValueType>,
+}
+
 pub fn check(program: &Program) -> Result<(), Diagnostic> {
     let mut checker = Checker {
         signatures: HashMap::new(),
         scopes: Vec::new(),
         immutable_scopes: Vec::new(),
         loop_scopes: Vec::new(),
-        loop_depth: 0,
+        loop_contexts: Vec::new(),
+        current_return_type: ValueType::Unit,
         enum_ids: HashMap::new(),
         enums: Vec::new(),
         struct_ids: HashMap::new(),

@@ -118,6 +118,7 @@ pub enum Stmt {
         span: Span,
     },
     Break {
+        value: Option<Expr>,
         span: Span,
     },
     Continue {
@@ -184,6 +185,10 @@ pub enum Expr {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    Loop {
+        body: Box<Block>,
+        span: Span,
+    },
     Variant {
         enum_name: String,
         variant_name: String,
@@ -202,6 +207,8 @@ pub struct MatchArm {
 #[derive(Debug, Clone)]
 pub enum MatchPattern {
     Wildcard,
+    Bool(bool),
+    I64(i64),
     Variant {
         enum_name: String,
         variant_name: String,

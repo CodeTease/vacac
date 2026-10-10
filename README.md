@@ -88,6 +88,38 @@ let larger = if left > right { left } else { right };
 
 Both branches must end with a value expression of the same non-`unit` type. Branches may contain local bindings or expression statements before their final value.
 
+## Scalar matching and value-producing loops
+
+`match` also accepts `bool` and `i64` values. Boolean matches must cover both
+`true` and `false`, or include a wildcard; integer matches require a wildcard
+because the integer domain is open-ended. Duplicate and unreachable patterns
+are rejected. Integer patterns are signed decimal literals, including
+`-9223372036854775808`:
+
+```apex
+let label = match code {
+    0 => { "success" },
+    -1 => { "failure" },
+    _ => { "unknown" },
+};
+```
+
+An unconditional `loop` expression produces the value carried by its
+`break expression;` statement. All reachable value breaks must have the same
+non-`unit` type. `continue;` restarts the innermost loop. Ordinary `while` and
+`for` loops still use bare `break;` and do not produce values:
+
+```apex
+let first_even = loop {
+    candidate = candidate + 1;
+    if candidate % 2 == 0 {
+        break candidate;
+    } else {
+        continue;
+    }
+};
+```
+
 ## Fixed-size arrays
 
 Fixed-size arrays contain `i64`, `bool`, `str`, values of a named struct or enum type, or other fixed-size arrays. Array literals infer their element type and length from their contents; annotations use `[element_type; length]`:
@@ -188,7 +220,7 @@ fn main() -> i64 {
 }
 ```
 
-Value types are `i64`, `bool`, `str`, named enums, named structs, and recursively nested fixed-size arrays `[element_type; length]`; functions may also return `unit`. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. A `let` type annotation is optional and inferred from its initializer. `let` bindings are mutable; `const` creates an immutable binding. Assignment uses `name = expression;`, array elements may be assigned with `array[index] = expression;`, and fields of mutable local structs may be updated with `name.field = expression;`. Immutable bindings cannot be reassigned or mutated through an array element or struct field. `if`/`else`, `while`, and `for` loops are statements. A range loop such as `for i in 0..6 { ... }` visits `0` through `5`; ranges are half-open, both bounds are evaluated once, and the loop variable is immutable and scoped to the loop. An array loop such as `for value in values { ... }` visits each copied element once, and its read-only binding is scoped to the loop. Functions returning a value must use `return expression;` or a final expression. All functions are top-level and have a declared return type. Operators include arithmetic (`+ - * / %`), signed comparisons, equality, boolean negation, and short-circuiting `&&` / `||`. Division and remainder by zero, as well as `i64::MIN / -1` and `i64::MIN % -1`, terminate the program with exit status 1. Line (`//`) and block (`/* ... */`) comments are supported. `print_i64(i64)` writes one decimal value and a newline to stdout; `read_i64() -> i64` reads one signed decimal integer token from stdin.
+Value types are `i64`, `bool`, `str`, named enums, named structs, and recursively nested fixed-size arrays `[element_type; length]`; functions may also return `unit`. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. A `let` type annotation is optional and inferred from its initializer. `let` bindings are mutable; `const` creates an immutable binding. Assignment uses `name = expression;`, array elements may be assigned with `array[index] = expression;`, and fields of mutable local structs may be updated with `name.field = expression;`. Immutable bindings cannot be reassigned or mutated through an array element or struct field. `if`/`else`, `while`, and `for` loops are statements; `loop { ... }` is an expression whose `break expression;` exits with a value, and all such breaks must agree on one non-`unit` type. `continue;` targets the innermost loop. A range loop such as `for i in 0..6 { ... }` visits `0` through `5`; ranges are half-open, both bounds are evaluated once, and the loop variable is immutable and scoped to the loop. An array loop such as `for value in values { ... }` visits each copied element once, and its read-only binding is scoped to the loop. Functions returning a value must use `return expression;` or a final expression. All functions are top-level and have a declared return type. `match` supports enums, booleans, and signed `i64` literals; boolean matches are exhaustive over both values, while `i64` matches require a wildcard arm. Operators include arithmetic (`+ - * / %`), signed comparisons, equality, boolean negation, and short-circuiting `&&` / `||`. Division and remainder by zero, as well as `i64::MIN / -1` and `i64::MIN % -1`, terminate the program with exit status 1. Line (`//`) and block (`/* ... */`) comments are supported. `print_i64(i64)` writes one decimal value and a newline to stdout; `read_i64() -> i64` reads one signed decimal integer token from stdin.
 
 Strings are immutable; they can be bound, assigned, passed, returned, and compared by content with `==` and `!=`. The `+` operator concatenates two strings. Concatenation copies both inputs into a newly allocated NUL-terminated string; these allocations remain alive until the process exits. Concatenation uses UTF-8 bytes without changing their encoding. Other arithmetic and ordering comparisons are not supported for `str`. `\0` is rejected because strings are NUL-terminated at runtime. `print(str)` writes a string to stdout as-is, and `println(str)` writes it followed by a newline; `print("x = "); print_i64(x);` prints a labelled value.
 

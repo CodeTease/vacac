@@ -210,6 +210,7 @@ pub(super) fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Struct { span, .. }
         | Expr::If { span, .. }
         | Expr::Match { span, .. }
+        | Expr::Loop { span, .. }
         | Expr::Variant { span, .. } => *span,
         Expr::Bool(_, span) | Expr::String(_, span) => *span,
     }

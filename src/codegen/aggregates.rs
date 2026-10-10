@@ -196,6 +196,9 @@ impl<'ctx> Codegen<'ctx> {
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
         let value = self.emit_expression(value_expr)?;
+        if matches!(value.ty, ValueType::Bool | ValueType::I64) {
+            return self.emit_scalar_match(value, arms, span);
+        }
         let ValueType::Enum(enum_id) = value.ty else {
             return Err(format!(
                 "line {}:{}: match requires an enum value",
@@ -357,6 +360,182 @@ impl<'ctx> Codegen<'ctx> {
                 "match.value",
             )
             .map_err(|e| e.to_string())?;
+        let incoming_refs: Vec<(&dyn BasicValue<'ctx>, BasicBlock<'ctx>)> = incoming
+            .iter()
+            .map(|(value, block)| (value as &dyn BasicValue<'ctx>, *block))
+            .collect();
+        phi.add_incoming(&incoming_refs);
+        Ok(TypedValue {
+            value: Some(phi.as_basic_value()),
+            ty,
+        })
+    }
+
+    fn emit_scalar_match(
+        &mut self,
+        value: TypedValue<'ctx>,
+        arms: &[crate::parser::MatchArm],
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let is_bool = value.ty == ValueType::Bool;
+        let scalar = value
+            .value
+            .ok_or("match value has no LLVM value")?
+            .into_int_value();
+        let function = self.current_function.ok_or("match outside function")?;
+        let end_bb = self.context.append_basic_block(function, "match.end");
+        let arm_blocks: Vec<_> = arms
+            .iter()
+            .map(|_| self.context.append_basic_block(function, "match.arm"))
+            .collect();
+        let fallback_bb = self.context.append_basic_block(function, "match.invalid");
+        let mut seen_bool = std::collections::HashSet::new();
+        let mut seen_i64 = std::collections::HashSet::new();
+        let mut wildcard_seen = false;
+        for (index, arm) in arms.iter().enumerate() {
+            let test_value = match &arm.pattern {
+                MatchPattern::Wildcard => {
+                    if wildcard_seen {
+                        return Err(format!(
+                            "line {}:{}: duplicate wildcard match arm",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    wildcard_seen = true;
+                    None
+                }
+                MatchPattern::Bool(pattern) if is_bool => {
+                    if wildcard_seen || !seen_bool.insert(*pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate or unreachable boolean match arm",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    Some(u64::from(*pattern))
+                }
+                MatchPattern::I64(pattern) if !is_bool => {
+                    if wildcard_seen || !seen_i64.insert(*pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate or unreachable integer match arm",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    Some(*pattern as u64)
+                }
+                MatchPattern::Bool(_) | MatchPattern::I64(_) => {
+                    return Err(format!(
+                        "line {}:{}: match pattern type does not match {} value",
+                        arm.span.line,
+                        arm.span.column,
+                        self.type_name(value.ty)
+                    ));
+                }
+                MatchPattern::Variant { .. } => {
+                    return Err(format!(
+                        "line {}:{}: enum variant patterns cannot match {} values",
+                        arm.span.line,
+                        arm.span.column,
+                        self.type_name(value.ty)
+                    ));
+                }
+            };
+            let next = if index + 1 == arms.len() {
+                fallback_bb
+            } else {
+                self.context.append_basic_block(function, "match.next")
+            };
+            if let Some(test_value) = test_value {
+                let test = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        scalar,
+                        scalar.get_type().const_int(test_value, false),
+                        "match.scalar.test",
+                    )
+                    .map_err(|error| error.to_string())?;
+                self.builder
+                    .build_conditional_branch(test, arm_blocks[index], next)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                self.builder
+                    .build_unconditional_branch(arm_blocks[index])
+                    .map_err(|error| error.to_string())?;
+            }
+            if test_value.is_some() && index + 1 != arms.len() {
+                self.builder.position_at_end(next);
+            } else if test_value.is_some() {
+                self.builder.position_at_end(fallback_bb);
+            }
+            if matches!(arm.pattern, MatchPattern::Wildcard) {
+                break;
+            }
+        }
+        if !wildcard_seen && (is_bool && seen_bool.len() == 2) {
+            // Both boolean values are covered, so the final conditional's false edge
+            // is impossible. It still needs a valid terminator for LLVM verification.
+            self.builder.position_at_end(fallback_bb);
+            self.builder
+                .build_unreachable()
+                .map_err(|error| error.to_string())?;
+        } else if !wildcard_seen {
+            return Err(format!(
+                "line {}:{}: non-exhaustive match on `{}`",
+                span.line,
+                span.column,
+                self.type_name(value.ty)
+            ));
+        } else {
+            self.builder.position_at_end(fallback_bb);
+            self.builder
+                .build_unreachable()
+                .map_err(|error| error.to_string())?;
+        }
+
+        let mut incoming = Vec::new();
+        let mut result_type = None;
+        for (index, arm) in arms.iter().enumerate() {
+            self.builder.position_at_end(arm_blocks[index]);
+            self.scopes.push(HashMap::new());
+            let result = self.emit_block(&arm.body, true);
+            self.scopes.pop();
+            let (terminated, result) = result?;
+            if terminated {
+                return Err("match arm unexpectedly terminated".into());
+            }
+            let result = result.ok_or("match arm must produce a value")?;
+            if result.ty == ValueType::Unit {
+                return Err("match arms must produce a value".into());
+            }
+            if let Some(expected) = result_type {
+                if expected != result.ty {
+                    return Err(format!(
+                        "match arms have different types: {} and {}",
+                        self.type_name(expected),
+                        self.type_name(result.ty)
+                    ));
+                }
+            } else {
+                result_type = Some(result.ty);
+            }
+            let result_end = self
+                .builder
+                .get_insert_block()
+                .ok_or("match arm has no block")?;
+            self.builder
+                .build_unconditional_branch(end_bb)
+                .map_err(|error| error.to_string())?;
+            incoming.push((result.value.ok_or("match arm has no value")?, result_end));
+        }
+        self.builder.position_at_end(end_bb);
+        let ty = result_type.ok_or("match expression has no arms")?;
+        let phi = self
+            .builder
+            .build_phi(
+                self.llvm_type(ty).ok_or("unit match result")?,
+                "match.value",
+            )
+            .map_err(|error| error.to_string())?;
         let incoming_refs: Vec<(&dyn BasicValue<'ctx>, BasicBlock<'ctx>)> = incoming
             .iter()
             .map(|(value, block)| (value as &dyn BasicValue<'ctx>, *block))

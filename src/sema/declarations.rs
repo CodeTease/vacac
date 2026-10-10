@@ -177,7 +177,7 @@ impl Checker {
         self.scopes.clear();
         self.immutable_scopes.clear();
         self.loop_scopes.clear();
-        self.loop_depth = 0;
+        self.loop_contexts.clear();
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
@@ -186,6 +186,7 @@ impl Checker {
             self.scopes[0].insert(param.name.clone(), ty);
         }
         let return_type = self.resolve_type(&function.return_type, function.span)?;
+        self.current_return_type = return_type;
         let returns = self.check_block(&function.body, return_type, true)?;
         if return_type != ValueType::Unit && !returns {
             return Err(at(

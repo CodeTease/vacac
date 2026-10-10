@@ -47,6 +47,14 @@ struct TypedValue<'ctx> {
     ty: ValueType,
 }
 
+struct LoopTarget<'ctx> {
+    continue_target: BasicBlock<'ctx>,
+    break_target: BasicBlock<'ctx>,
+    value_loop: bool,
+    result_type: Option<ValueType>,
+    incoming: Vec<(BasicValueEnum<'ctx>, BasicBlock<'ctx>)>,
+}
+
 struct Codegen<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
@@ -64,7 +72,7 @@ struct Codegen<'ctx> {
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
     scopes: Vec<HashMap<String, Local<'ctx>>>,
     string_literals: HashMap<String, PointerValue<'ctx>>,
-    loop_targets: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
+    loop_targets: Vec<LoopTarget<'ctx>>,
     current_function: Option<FunctionValue<'ctx>>,
     return_type: ValueType,
 }

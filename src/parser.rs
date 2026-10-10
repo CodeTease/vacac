@@ -294,8 +294,13 @@ impl Parser {
                 }
             } else if self.take(&TokenKind::Break) {
                 let span = Span::from(self.previous());
+                let value = if self.at(&TokenKind::Semicolon) {
+                    None
+                } else {
+                    Some(self.parse_expression(0)?)
+                };
                 self.consume(&TokenKind::Semicolon, "`;`")?;
-                statements.push(Stmt::Break { span });
+                statements.push(Stmt::Break { value, span });
             } else if self.take(&TokenKind::Continue) {
                 let span = Span::from(self.previous());
                 self.consume(&TokenKind::Semicolon, "`;`")?;
@@ -439,6 +444,10 @@ impl Parser {
                 })
             }
             TokenKind::Match => self.parse_match(span),
+            TokenKind::Loop => Ok(Expr::Loop {
+                body: Box::new(self.parse_block()?),
+                span,
+            }),
             TokenKind::Ident(enum_name) if self.at(&TokenKind::DoubleColon) => {
                 self.advance();
                 let variant_name = self.take_ident("enum variant after `::`")?;
@@ -521,6 +530,29 @@ impl Parser {
             let pattern = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "_") {
                 self.advance();
                 MatchPattern::Wildcard
+            } else if self.take(&TokenKind::True) {
+                MatchPattern::Bool(true)
+            } else if self.take(&TokenKind::False) {
+                MatchPattern::Bool(false)
+            } else if self.take(&TokenKind::Minus) {
+                let value = match self.advance().kind {
+                    TokenKind::Integer(value) if value <= (i64::MAX as u64) + 1 => {
+                        if value == (i64::MAX as u64) + 1 {
+                            i64::MIN
+                        } else {
+                            -(value as i64)
+                        }
+                    }
+                    _ => return Err(unexpected(self.previous(), "signed i64 match pattern")),
+                };
+                MatchPattern::I64(value)
+            } else if let TokenKind::Integer(value) = &self.peek().kind {
+                if *value > i64::MAX as u64 {
+                    return Err(unexpected(self.peek(), "i64 match pattern"));
+                }
+                let value = *value;
+                self.advance();
+                MatchPattern::I64(value as i64)
             } else {
                 let enum_name = self.take_ident("enum name in match pattern")?;
                 self.consume(&TokenKind::DoubleColon, "`::` in match pattern")?;
@@ -646,6 +678,7 @@ fn span_of_expr_parser(expr: &Expr) -> Span {
         | Expr::Array(_, span)
         | Expr::Variable(_, span)
         | Expr::Index { span, .. }
+        | Expr::Loop { span, .. }
         | Expr::Field { span, .. }
         | Expr::Struct { span, .. }
         | Expr::Unary { span, .. }

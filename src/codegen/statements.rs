@@ -1,6 +1,61 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    pub(super) fn emit_loop_expression(
+        &mut self,
+        body: &Block,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let function = self.current_function.ok_or("loop outside function")?;
+        let body_bb = self.context.append_basic_block(function, "loop.body");
+        let end_bb = self.context.append_basic_block(function, "loop.end");
+        self.builder
+            .build_unconditional_branch(body_bb)
+            .map_err(|error| error.to_string())?;
+        self.builder.position_at_end(body_bb);
+        self.loop_targets.push(LoopTarget {
+            continue_target: body_bb,
+            break_target: end_bb,
+            value_loop: true,
+            result_type: None,
+            incoming: Vec::new(),
+        });
+        let body_result = self.emit_block(body, false);
+        let target = self.loop_targets.pop().expect("loop target exists");
+        let (terminated, _) = body_result?;
+        let terminated = terminated
+            || self
+                .builder
+                .get_insert_block()
+                .and_then(|block| block.get_terminator())
+                .is_some();
+        if !terminated {
+            self.builder
+                .build_unconditional_branch(body_bb)
+                .map_err(|error| error.to_string())?;
+        }
+        self.builder.position_at_end(end_bb);
+        let ty = target
+            .result_type
+            .ok_or("value-producing loop must contain a `break` with a value")?;
+        if target.incoming.is_empty() {
+            return Err("value-producing loop has no reachable value-producing break".into());
+        }
+        let phi = self
+            .builder
+            .build_phi(self.llvm_type(ty).ok_or("unit loop result")?, "loop.value")
+            .map_err(|error| error.to_string())?;
+        let incoming_refs: Vec<(&dyn BasicValue<'ctx>, BasicBlock<'ctx>)> = target
+            .incoming
+            .iter()
+            .map(|(value, block)| (value as &dyn BasicValue<'ctx>, *block))
+            .collect();
+        phi.add_incoming(&incoming_refs);
+        Ok(TypedValue {
+            value: Some(phi.as_basic_value()),
+            ty,
+        })
+    }
+
     fn emit_place_pointer(
         &mut self,
         expr: &Expr,
@@ -343,25 +398,78 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(true)
             }
-            Stmt::Break { span } => {
-                let (_, break_target) = self.loop_targets.last().copied().ok_or_else(|| {
-                    format!(
+            Stmt::Break { value, span } => {
+                let is_value_loop = self
+                    .loop_targets
+                    .last()
+                    .is_some_and(|target| target.value_loop);
+                if is_value_loop != value.is_some() {
+                    return Err(format!(
+                        "line {}:{}: {}",
+                        span.line,
+                        span.column,
+                        if is_value_loop {
+                            "a value-producing loop requires `break` with a value"
+                        } else {
+                            "`break` with a value is only valid inside a value-producing `loop`"
+                        }
+                    ));
+                }
+                let emitted_value = value
+                    .as_ref()
+                    .map(|expr| self.emit_expression(expr))
+                    .transpose()?;
+                let break_block = self
+                    .builder
+                    .get_insert_block()
+                    .ok_or("break has no insertion block")?;
+                if self.loop_targets.is_empty() {
+                    return Err(format!(
                         "line {}:{}: `break` is only valid inside a loop",
                         span.line, span.column
-                    )
-                })?;
+                    ));
+                }
+                if let Some(value) = emitted_value {
+                    if value.ty == ValueType::Unit {
+                        return Err("a loop break value cannot have type `unit`".into());
+                    }
+                    let expected = self
+                        .loop_targets
+                        .last()
+                        .and_then(|target| target.result_type);
+                    if let Some(expected) = expected {
+                        if expected != value.ty {
+                            return Err(format!(
+                                "loop break values have different types: {} and {}",
+                                self.type_name(expected),
+                                self.type_name(value.ty)
+                            ));
+                        }
+                    } else {
+                        self.loop_targets.last_mut().unwrap().result_type = Some(value.ty);
+                    }
+                    self.loop_targets.last_mut().unwrap().incoming.push((
+                        value.value.ok_or("loop break value is missing")?,
+                        break_block,
+                    ));
+                }
+                let break_target = self.loop_targets.last().unwrap().break_target;
                 self.builder
                     .build_unconditional_branch(break_target)
                     .map_err(|e| e.to_string())?;
                 Ok(true)
             }
             Stmt::Continue { span } => {
-                let (continue_target, _) = self.loop_targets.last().copied().ok_or_else(|| {
-                    format!(
-                        "line {}:{}: `continue` is only valid inside a loop",
-                        span.line, span.column
-                    )
-                })?;
+                let continue_target = self
+                    .loop_targets
+                    .last()
+                    .map(|target| target.continue_target)
+                    .ok_or_else(|| {
+                        format!(
+                            "line {}:{}: `continue` is only valid inside a loop",
+                            span.line, span.column
+                        )
+                    })?;
                 self.builder
                     .build_unconditional_branch(continue_target)
                     .map_err(|e| e.to_string())?;
@@ -468,7 +576,13 @@ impl<'ctx> Codegen<'ctx> {
             .build_conditional_branch(cond_value, body_bb, end_bb)
             .map_err(|e| e.to_string())?;
         self.builder.position_at_end(body_bb);
-        self.loop_targets.push((cond_bb, end_bb));
+        self.loop_targets.push(LoopTarget {
+            continue_target: cond_bb,
+            break_target: end_bb,
+            value_loop: false,
+            result_type: None,
+            incoming: Vec::new(),
+        });
         let body_result = self.emit_block(body, false);
         self.loop_targets.pop();
         let (terminated, _) = body_result?;
@@ -549,7 +663,13 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(body_bb);
-        self.loop_targets.push((step_bb, end_bb));
+        self.loop_targets.push(LoopTarget {
+            continue_target: step_bb,
+            break_target: end_bb,
+            value_loop: false,
+            result_type: None,
+            incoming: Vec::new(),
+        });
         let body_result = self.emit_block(body, false);
         self.loop_targets.pop();
         let (terminated, _) = body_result?;
@@ -671,7 +791,13 @@ impl<'ctx> Codegen<'ctx> {
         self.builder
             .build_store(value_slot, element_value)
             .map_err(|e| e.to_string())?;
-        self.loop_targets.push((step_bb, end_bb));
+        self.loop_targets.push(LoopTarget {
+            continue_target: step_bb,
+            break_target: end_bb,
+            value_loop: false,
+            result_type: None,
+            incoming: Vec::new(),
+        });
         let body_result = self.emit_block(body, false);
         self.loop_targets.pop();
         let (terminated, _) = body_result?;

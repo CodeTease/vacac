@@ -157,6 +157,7 @@ impl<'ctx> Codegen<'ctx> {
                 span,
             } => self.emit_enum_variant(enum_name, variant_name, payload.as_deref(), *span),
             Expr::Match { value, arms, span } => self.emit_match(value, arms, *span),
+            Expr::Loop { body, .. } => self.emit_loop_expression(body),
         }
     }
 
