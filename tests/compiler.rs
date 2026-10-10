@@ -1122,6 +1122,38 @@ fn structs_support_return_values_and_if_expression_joins() {
 }
 
 #[test]
+fn structs_support_enum_fields_construction_assignment_and_matching() {
+    let result = compile_and_run(
+        r#"
+        enum Status { Ready, Failed(i64) }
+        struct Job { id: i64, status: Status }
+
+        fn fail(job: Job, code: i64) -> Job {
+            job.status = Status::Failed(code);
+            job
+        }
+
+        fn result(job: Job) -> i64 {
+            match job.status {
+                Status::Ready => { 0 },
+                Status::Failed(code) => { code },
+            }
+        }
+
+        fn main() -> i64 {
+            let ready = Job { status: Status::Ready, id: 17 };
+            let failed = fail(ready, 23);
+            print_i64(failed.id);
+            result(failed) - 23
+        }
+        "#,
+        "struct-enum-fields",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "17\n");
+}
+
+#[test]
 fn structs_support_mutable_field_assignment() {
     let result = compile_and_run(
         r#"
@@ -1291,16 +1323,11 @@ fn structs_reject_duplicate_missing_unknown_and_wrongly_typed_fields() {
 }
 
 #[test]
-fn structs_reject_duplicate_declarations_and_unsupported_fields() {
+fn structs_reject_duplicate_declarations_and_invalid_fields() {
     assert_compile_error(
         "struct Item { id: i64 } struct Item { name: str } fn main() -> i64 { 0 }",
         "struct-duplicate-declaration",
         "type `Item` is defined more than once",
-    );
-    assert_compile_error(
-        "enum Choice { First, Second } struct Item { choice: Choice } fn main() -> i64 { 0 }",
-        "struct-enum-field",
-        "struct fields cannot have enum type `Choice`",
     );
     assert_compile_error(
         "struct Item { value: unit } fn main() -> i64 { 0 }",

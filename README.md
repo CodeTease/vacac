@@ -135,7 +135,7 @@ fn lookup(id: i64) -> User {
 }
 ```
 
-Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `bool`, `str`, a one-dimensional fixed-size array of those primitive types, or another struct. Enums and `unit` are not valid struct-field types, and recursive by-value struct layouts are rejected. Struct comparison is not supported.
+Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `bool`, `str`, a one-dimensional fixed-size array of those primitive types, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct comparison is not supported.
 
 ## Enums and exhaustive matching
 

@@ -75,12 +75,7 @@ impl Checker {
                 match &field.ty {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
-                    Type::Named(name) if self.enum_ids.contains_key(name) => {
-                        return Err(at(
-                            field.span,
-                            format!("struct fields cannot have enum type `{name}`"),
-                        ));
-                    }
+                    Type::Named(name) if self.enum_ids.contains_key(name) => {}
                     Type::Named(name) => {
                         return Err(at(field.span, format!("unknown type `{name}`")));
                     }

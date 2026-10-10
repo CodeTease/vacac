@@ -163,12 +163,7 @@ impl<'ctx> Codegen<'ctx> {
                 match &field.ty {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
-                    Type::Named(name) if self.enum_ids.contains_key(name) => {
-                        return Err(format!(
-                            "line {}:{}: struct fields cannot have enum type `{name}`",
-                            field.span.line, field.span.column
-                        ));
-                    }
+                    Type::Named(name) if self.enum_ids.contains_key(name) => {}
                     Type::Named(name) => {
                         return Err(format!(
                             "line {}:{}: unknown type `{name}`",
