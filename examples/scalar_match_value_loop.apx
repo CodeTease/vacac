@@ -1,0 +1,28 @@
+// Classify values with scalar matches, then use a value-producing loop to
+// find the first positive score.
+fn score(value: i64) -> i64 {
+    match value {
+        -1 => { -10 },
+        0 => { 0 },
+        _ => { 10 },
+    }
+}
+
+fn main() -> i64 {
+    let enabled = true;
+    let starting_score = match enabled {
+        true => { score(3) },
+        false => { score(-1) },
+    };
+
+    let answer = loop {
+        if starting_score > 0 {
+            break starting_score + 32;
+        } else {
+            break score(0) + 42;
+        }
+    };
+
+    print_i64(answer);
+    0
+}
