@@ -1,0 +1,27 @@
+// Build strings from literals, variables, and function results.
+fn greeting(name: str) -> str {
+    "Hello, " + name + "!"
+}
+
+fn signature() -> str {
+    " — ApexC"
+}
+
+fn main() -> i64 {
+    let name = "Ada";
+    let message = greeting(name) + signature();
+    println(message);
+
+    // Empty strings and UTF-8 text work like any other string value.
+    println("" + "An empty left side.");
+    println("UTF-8: " + "héllo ✓");
+
+    // Concatenated strings can be built incrementally.
+    let progress = "Loading";
+    for i in 0..3 {
+        progress = progress + ".";
+    }
+    println(progress);
+
+    0
+}
