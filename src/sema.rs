@@ -1,6 +1,6 @@
 use crate::parser::{
     ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchPattern, Program, Span, Stmt,
-    Type, UnaryOp,
+    StructDecl, Type, UnaryOp,
 };
 use std::collections::HashMap;
 
@@ -12,6 +12,7 @@ enum ValueType {
     Unit,
     Array(ArrayElementType, u32),
     Enum(usize),
+    Struct(usize),
 }
 
 #[derive(Clone)]
@@ -27,6 +28,8 @@ struct Checker {
     loop_depth: usize,
     enum_ids: HashMap<String, usize>,
     enums: Vec<EnumDecl>,
+    struct_ids: HashMap<String, usize>,
+    structs: Vec<StructDecl>,
 }
 
 pub fn check(program: &Program) -> Result<(), String> {
@@ -37,6 +40,8 @@ pub fn check(program: &Program) -> Result<(), String> {
         loop_depth: 0,
         enum_ids: HashMap::new(),
         enums: Vec::new(),
+        struct_ids: HashMap::new(),
+        structs: Vec::new(),
     };
     checker.collect_signatures(program)?;
     for function in &program.functions {
@@ -74,7 +79,7 @@ impl Checker {
                 }
                 if matches!(
                     &variant.payload,
-                    Some(Type::Unit | Type::Array(_, _) | Type::Enum(_))
+                    Some(Type::Unit | Type::Array(_, _) | Type::Named(_))
                 ) {
                     return Err(at(
                         variant.span,
@@ -84,6 +89,43 @@ impl Checker {
             }
         }
         self.enums = program.enums.clone();
+        for (struct_id, declaration) in program.structs.iter().enumerate() {
+            if self.enum_ids.contains_key(&declaration.name)
+                || self
+                    .struct_ids
+                    .insert(declaration.name.clone(), struct_id)
+                    .is_some()
+            {
+                return Err(at(
+                    declaration.span,
+                    format!("type `{}` is defined more than once", declaration.name),
+                ));
+            }
+            let mut seen = std::collections::HashSet::new();
+            for field in &declaration.fields {
+                if !seen.insert(field.name.as_str()) {
+                    return Err(at(
+                        field.span,
+                        format!("struct field `{}` is defined more than once", field.name),
+                    ));
+                }
+                if !matches!(field.ty, Type::I64 | Type::Bool | Type::Str) {
+                    return Err(at(
+                        field.span,
+                        "struct fields must have type `i64`, `bool`, or `str`",
+                    ));
+                }
+            }
+        }
+        for declaration in &program.enums {
+            if self.struct_ids.contains_key(&declaration.name) {
+                return Err(at(
+                    declaration.span,
+                    format!("type `{}` is defined more than once", declaration.name),
+                ));
+            }
+        }
+        self.structs = program.structs.clone();
         let mut saw_main = false;
         for function in &program.functions {
             if matches!(
@@ -320,6 +362,12 @@ impl Checker {
                 let binding_type = self
                     .lookup_local(name)
                     .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
+                if self.is_immutable_binding(name) {
+                    return Err(at(
+                        *span,
+                        format!("cannot assign through immutable loop variable `{name}`"),
+                    ));
+                }
                 let ValueType::Array(element, _) = binding_type else {
                     return Err(at(*span, format!("`{name}` is not an array")));
                 };
@@ -405,6 +453,28 @@ impl Checker {
                 self.immutable_scopes.pop();
                 Ok(false)
             }
+            Stmt::ForArray {
+                name,
+                array,
+                body,
+                span,
+            } => {
+                let array_type = self.check_expr(array, false)?;
+                let ValueType::Array(element, _) = array_type else {
+                    return Err(at(*span, "array iteration requires an array"));
+                };
+                self.scopes
+                    .push(HashMap::from([(name.clone(), ValueType::from(element))]));
+                self.immutable_scopes
+                    .push(std::collections::HashSet::from([name.clone()]));
+                self.loop_depth += 1;
+                let body_result = self.check_block(body, return_type, false);
+                self.loop_depth -= 1;
+                body_result?;
+                self.scopes.pop();
+                self.immutable_scopes.pop();
+                Ok(false)
+            }
             Stmt::Break { span } => {
                 if self.loop_depth == 0 {
                     return Err(at(*span, "`break` is only valid inside a loop"));
@@ -467,7 +537,10 @@ impl Checker {
                     ValueType::I64 => ArrayElementType::I64,
                     ValueType::Bool => ArrayElementType::Bool,
                     ValueType::Str => ArrayElementType::Str,
-                    ValueType::Unit | ValueType::Array(_, _) | ValueType::Enum(_) => {
+                    ValueType::Unit
+                    | ValueType::Array(_, _)
+                    | ValueType::Enum(_)
+                    | ValueType::Struct(_) => {
                         return Err(at(
                             *span,
                             "array elements must have type `i64`, `bool`, or `str`",
@@ -496,6 +569,75 @@ impl Checker {
                     ValueType::Array(element, _) => Ok(element.into()),
                     _ => Err(at(*span, "indexing requires an array")),
                 }
+            }
+            Expr::Field { value, name, span } => {
+                let value_type = self.check_expr(value, false)?;
+                let ValueType::Struct(struct_id) = value_type else {
+                    return Err(at(*span, "field access requires a struct value"));
+                };
+                let field = self.structs[struct_id]
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *name)
+                    .ok_or_else(|| {
+                        at(
+                            *span,
+                            format!(
+                                "struct `{}` has no field `{name}`",
+                                self.structs[struct_id].name
+                            ),
+                        )
+                    })?;
+                self.resolve_type(&field.ty, field.span)
+            }
+            Expr::Struct { name, fields, span } => {
+                let struct_id = self
+                    .struct_ids
+                    .get(name)
+                    .copied()
+                    .ok_or_else(|| at(*span, format!("unknown struct `{name}`")))?;
+                let declaration = self.structs[struct_id].clone();
+                let mut seen = std::collections::HashSet::new();
+                for (field_name, value, field_span) in fields {
+                    if !seen.insert(field_name.as_str()) {
+                        return Err(at(
+                            *field_span,
+                            format!("struct field `{field_name}` is initialized more than once"),
+                        ));
+                    }
+                    let field = declaration
+                        .fields
+                        .iter()
+                        .find(|field| field.name == *field_name)
+                        .ok_or_else(|| {
+                            at(
+                                *field_span,
+                                format!("struct `{name}` has no field `{field_name}`"),
+                            )
+                        })?;
+                    let expected = self.resolve_type(&field.ty, field.span)?;
+                    let actual = self.check_expr(value, false)?;
+                    self.expect_type(
+                        actual,
+                        expected,
+                        span_of_expr(value),
+                        &format!("initializer for field `{field_name}`"),
+                    )?;
+                }
+                if fields.len() != declaration.fields.len() {
+                    let missing = declaration
+                        .fields
+                        .iter()
+                        .filter(|field| !seen.contains(field.name.as_str()))
+                        .map(|field| field.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(at(
+                        *span,
+                        format!("struct `{name}` is missing field(s): {missing}"),
+                    ));
+                }
+                Ok(ValueType::Struct(struct_id))
             }
             Expr::Unary { op, value, span } => {
                 let value_type = self.check_expr(
@@ -545,6 +687,9 @@ impl Checker {
                         }
                         if matches!(left_type, ValueType::Enum(_)) {
                             return Err(at(*span, "enum values cannot be compared"));
+                        }
+                        if matches!(left_type, ValueType::Struct(_)) {
+                            return Err(at(*span, "struct values cannot be compared"));
                         }
                         ValueType::Bool
                     }
@@ -839,12 +984,15 @@ impl Checker {
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
             Type::Array(element, length) => ValueType::Array(*element, *length),
-            Type::Enum(name) => ValueType::Enum(
-                *self
-                    .enum_ids
-                    .get(name)
-                    .ok_or_else(|| at(span, format!("unknown enum type `{name}`")))?,
-            ),
+            Type::Named(name) => {
+                if let Some(index) = self.enum_ids.get(name) {
+                    ValueType::Enum(*index)
+                } else if let Some(index) = self.struct_ids.get(name) {
+                    ValueType::Struct(*index)
+                } else {
+                    return Err(at(span, format!("unknown type `{name}`")));
+                }
+            }
         })
     }
 
@@ -930,6 +1078,8 @@ fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Binary { span, .. }
         | Expr::Array(_, span)
         | Expr::Index { span, .. }
+        | Expr::Field { span, .. }
+        | Expr::Struct { span, .. }
         | Expr::If { span, .. }
         | Expr::Match { span, .. }
         | Expr::Variant { span, .. } => *span,
@@ -957,6 +1107,7 @@ fn type_name(ty: ValueType, enums: &[EnumDecl]) -> String {
             .get(index)
             .map(|declaration| declaration.name.clone())
             .unwrap_or_else(|| "<invalid enum>".into()),
+        ValueType::Struct(index) => format!("struct#{index}"),
     }
 }
 

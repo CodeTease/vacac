@@ -996,6 +996,171 @@ fn fixed_arrays_support_annotations_and_function_parameters_and_returns() {
 }
 
 #[test]
+fn structs_support_construction_field_reads_and_value_passing() {
+    let result = compile_and_run(
+        r#"
+        struct User {
+            id: i64,
+            active: bool,
+            name: str,
+        }
+        fn rename(user: User) -> User {
+            User { id: user.id, active: user.active, name: "Apex" }
+        }
+        fn main() -> i64 {
+            let user = User { name: "Ada", active: true, id: 42 };
+            let renamed = rename(user);
+            print_i64(renamed.id);
+            println(renamed.name);
+            if renamed.active { 0 } else { 1 }
+        }
+        "#,
+        "structs-value-passing",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "42\nApex\n");
+}
+
+#[test]
+fn structs_support_return_values_and_if_expression_joins() {
+    let result = compile_and_run(
+        r#"
+        struct Pair { left: i64, right: i64 }
+        fn make_pair(value: i64) -> Pair {
+            Pair { left: value, right: value + 1 }
+        }
+        fn main() -> i64 {
+            let chosen = if true { make_pair(20) } else { make_pair(40) };
+            chosen.left + chosen.right - 41
+        }
+        "#,
+        "structs-return-if",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn structs_reject_duplicate_missing_unknown_and_wrongly_typed_fields() {
+    for (source, expected, name) in [
+        (
+            "struct Pair { left: i64, right: i64 } fn main() -> i64 { let p = Pair { left: 1, left: 2 }; 0 }",
+            "struct field `left` is initialized more than once",
+            "struct-duplicate-field-init",
+        ),
+        (
+            "struct Pair { left: i64, right: i64 } fn main() -> i64 { let p = Pair { left: 1 }; 0 }",
+            "struct `Pair` is missing field(s): right",
+            "struct-missing-field",
+        ),
+        (
+            "struct Pair { left: i64 } fn main() -> i64 { let p = Pair { other: 1 }; 0 }",
+            "struct `Pair` has no field `other`",
+            "struct-unknown-field",
+        ),
+        (
+            "struct Pair { left: i64 } fn main() -> i64 { let p = Pair { left: true }; 0 }",
+            "initializer for field `left` has type bool, expected i64",
+            "struct-field-type",
+        ),
+        (
+            "struct Pair { left: i64 } fn main() -> i64 { let p = Pair { left: 1 }; p.missing }",
+            "struct `Pair` has no field `missing`",
+            "struct-unknown-member",
+        ),
+        (
+            "struct Pair { left: i64 } fn main() -> i64 { let p = Pair { left: 1 }; let q = p; let bad = p == q; 0 }",
+            "struct values cannot be compared",
+            "struct-comparison",
+        ),
+    ] {
+        assert_compile_error(source, name, expected);
+    }
+}
+
+#[test]
+fn structs_reject_duplicate_declarations_and_non_primitive_fields() {
+    assert_compile_error(
+        "struct Item { id: i64 } struct Item { name: str } fn main() -> i64 { 0 }",
+        "struct-duplicate-declaration",
+        "type `Item` is defined more than once",
+    );
+    assert_compile_error(
+        "struct Item { id: [i64; 2] } fn main() -> i64 { 0 }",
+        "struct-nonprimitive-field",
+        "struct fields must have type `i64`, `bool`, or `str`",
+    );
+    assert_compile_error(
+        "struct Item { id: i64, id: bool } fn main() -> i64 { 0 }",
+        "struct-duplicate-field-declaration",
+        "struct field `id` is defined more than once",
+    );
+}
+
+#[test]
+fn arrays_can_be_iterated_by_immutable_value_with_break_and_continue() {
+    let result = compile_and_run(
+        r#"
+        fn values() -> [i64; 5] {
+            print_i64(99);
+            [2, 4, 6, 8, 10]
+        }
+        fn main() -> i64 {
+            let total = 0;
+            for value in values() {
+                if value == 4 { continue; }
+                if value == 10 { break; }
+                total = total + value;
+            }
+            print_i64(total);
+            0
+        }
+        "#,
+        "array-iteration-control-flow",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "99\n16\n");
+}
+
+#[test]
+fn arrays_can_be_iterated_for_all_primitive_element_types_and_empty_arrays() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let flags = [true, false];
+            let words = ["Apex", "rocks"];
+            for flag in flags { if flag { print("T"); } else { print("F"); } }
+            for word in words { print(word); }
+            let empty: [i64; 0] = [];
+            for number in empty { print_i64(number); }
+            0
+        }
+        "#,
+        "array-iteration-types",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "TFApexrocks");
+}
+
+#[test]
+fn array_iteration_rejects_non_arrays_and_mutation_of_the_element_binding() {
+    assert_compile_error(
+        "fn main() -> i64 { for value in 3 { print_i64(value); } 0 }",
+        "array-iteration-non-array",
+        "array iteration requires an array",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { for value in [1, 2] { value = 3; } 0 }",
+        "array-iteration-immutable",
+        "cannot assign to immutable loop variable `value`",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { for value in [1, 2] { } value }",
+        "array-iteration-binding-scope",
+        "undefined variable `value`",
+    );
+}
+
+#[test]
 fn zero_length_arrays_support_annotations_parameters_and_length() {
     let result = compile_and_run(
         r#"

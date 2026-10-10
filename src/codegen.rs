@@ -1,6 +1,6 @@
 use crate::parser::{
     ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchPattern, Program, Span, Stmt,
-    Type, UnaryOp,
+    StructDecl, Type, UnaryOp,
 };
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -25,12 +25,14 @@ enum ValueType {
     Unit,
     Array(ArrayElementType, u32),
     Enum(usize),
+    Struct(usize),
 }
 
 #[derive(Clone, Copy)]
 struct Local<'ctx> {
     pointer: PointerValue<'ctx>,
     ty: ValueType,
+    immutable: bool,
 }
 
 struct TypedValue<'ctx> {
@@ -47,6 +49,9 @@ struct Codegen<'ctx> {
     enums: Vec<EnumDecl>,
     enum_ids: HashMap<String, usize>,
     enum_types: Vec<StructType<'ctx>>,
+    structs: Vec<StructDecl>,
+    struct_ids: HashMap<String, usize>,
+    struct_types: Vec<StructType<'ctx>>,
     scopes: Vec<HashMap<String, Local<'ctx>>>,
     string_literals: HashMap<String, PointerValue<'ctx>>,
     loop_targets: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
@@ -75,6 +80,7 @@ impl<'ctx> Codegen<'ctx> {
     fn for_program(context: &'ctx Context, program: &Program) -> Result<Self, String> {
         let mut codegen = Self::new(context, "apex");
         codegen.declare_enums(program)?;
+        codegen.declare_structs(program)?;
         codegen.declare_functions(program)?;
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
@@ -99,6 +105,9 @@ impl<'ctx> Codegen<'ctx> {
             enums: Vec::new(),
             enum_ids: HashMap::new(),
             enum_types: Vec::new(),
+            structs: Vec::new(),
+            struct_ids: HashMap::new(),
+            struct_types: Vec::new(),
             scopes: Vec::new(),
             string_literals: HashMap::new(),
             loop_targets: Vec::new(),
@@ -123,6 +132,7 @@ impl<'ctx> Codegen<'ctx> {
                 Some(self.llvm_element_type(element).array_type(length).into())
             }
             ValueType::Enum(index) => self.enum_types.get(index).copied().map(Into::into),
+            ValueType::Struct(index) => self.struct_types.get(index).copied().map(Into::into),
             ValueType::Unit => None,
         }
     }
@@ -161,12 +171,18 @@ impl<'ctx> Codegen<'ctx> {
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
             Type::Array(element, length) => ValueType::Array(*element, *length),
-            Type::Enum(name) => ValueType::Enum(*self.enum_ids.get(name).ok_or_else(|| {
-                format!(
-                    "line {}:{}: unknown enum type `{name}`",
-                    span.line, span.column
-                )
-            })?),
+            Type::Named(name) => {
+                if let Some(index) = self.enum_ids.get(name) {
+                    ValueType::Enum(*index)
+                } else if let Some(index) = self.struct_ids.get(name) {
+                    ValueType::Struct(*index)
+                } else {
+                    return Err(format!(
+                        "line {}:{}: unknown type `{name}`",
+                        span.line, span.column
+                    ));
+                }
+            }
         })
     }
 
@@ -191,6 +207,39 @@ impl<'ctx> Codegen<'ctx> {
                 ],
                 false,
             ));
+        }
+        Ok(())
+    }
+
+    fn declare_structs(&mut self, program: &Program) -> Result<(), String> {
+        self.structs = program.structs.clone();
+        for (index, declaration) in program.structs.iter().enumerate() {
+            if self.enum_ids.contains_key(&declaration.name)
+                || self
+                    .struct_ids
+                    .insert(declaration.name.clone(), index)
+                    .is_some()
+            {
+                return Err(format!(
+                    "type `{}` is defined more than once",
+                    declaration.name
+                ));
+            }
+            let mut field_types = Vec::with_capacity(declaration.fields.len());
+            let mut names = std::collections::HashSet::new();
+            for field in &declaration.fields {
+                if !names.insert(field.name.as_str()) {
+                    return Err(format!(
+                        "line {}:{}: struct field `{}` is defined more than once",
+                        field.span.line, field.span.column, field.name
+                    ));
+                }
+                let ty = self.resolve_type(&field.ty, field.span)?;
+                let llvm_type = self.llvm_type(ty).ok_or("struct field has no LLVM type")?;
+                field_types.push(llvm_type);
+            }
+            self.struct_types
+                .push(self.context.struct_type(&field_types, false));
         }
         Ok(())
     }
@@ -831,6 +880,7 @@ impl<'ctx> Codegen<'ctx> {
                 Local {
                     pointer: alloca,
                     ty,
+                    immutable: false,
                 },
             );
         }
@@ -973,6 +1023,7 @@ impl<'ctx> Codegen<'ctx> {
                     Local {
                         pointer: alloca,
                         ty,
+                        immutable: false,
                     },
                 );
                 Ok(false)
@@ -984,6 +1035,12 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     )
                 })?;
+                if local.immutable {
+                    return Err(format!(
+                        "line {}:{}: cannot assign to immutable loop variable `{name}`",
+                        span.line, span.column
+                    ));
+                }
                 let value = self.emit_expression(value)?;
                 if local.ty != value.ty {
                     return Err(format!(
@@ -1020,6 +1077,12 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 };
+                if local.immutable {
+                    return Err(format!(
+                        "line {}:{}: cannot assign through immutable loop variable `{name}`",
+                        span.line, span.column
+                    ));
+                }
                 let index = self.emit_expression(index)?;
                 let index = self.expect_i64(index, "array index")?;
                 self.emit_bounds_check(index, length)?;
@@ -1114,6 +1177,12 @@ impl<'ctx> Codegen<'ctx> {
                 body,
                 ..
             } => self.emit_for(name, start, end, body),
+            Stmt::ForArray {
+                name,
+                array,
+                body,
+                span,
+            } => self.emit_for_array(name, array, body, *span),
         }
     }
 
@@ -1246,6 +1315,7 @@ impl<'ctx> Codegen<'ctx> {
             Local {
                 pointer: counter,
                 ty: ValueType::I64,
+                immutable: true,
             },
         );
 
@@ -1310,6 +1380,123 @@ impl<'ctx> Codegen<'ctx> {
         Ok(false)
     }
 
+    fn emit_for_array(
+        &mut self,
+        name: &str,
+        array_expr: &Expr,
+        body: &Block,
+        span: Span,
+    ) -> Result<bool, String> {
+        let array = self.emit_expression(array_expr)?;
+        let ValueType::Array(element, length) = array.ty else {
+            return Err(format!(
+                "line {}:{}: array iteration requires an array",
+                span.line, span.column
+            ));
+        };
+        let array_type = array.ty;
+        let array_slot = self.create_entry_alloca(array_type, "for.array")?;
+        self.builder
+            .build_store(array_slot, array.value.ok_or("array has no value")?)
+            .map_err(|e| e.to_string())?;
+        let index_slot = self.create_entry_alloca(ValueType::I64, "for.array.index")?;
+        self.builder
+            .build_store(index_slot, self.i64_type().const_zero())
+            .map_err(|e| e.to_string())?;
+        let value_slot = self.create_entry_alloca(ValueType::from(element), name)?;
+
+        self.scopes.push(HashMap::from([(
+            name.to_owned(),
+            Local {
+                pointer: value_slot,
+                ty: ValueType::from(element),
+                immutable: true,
+            },
+        )]));
+
+        let function = self.current_function.ok_or("array loop outside function")?;
+        let cond_bb = self.context.append_basic_block(function, "for.array.cond");
+        let body_bb = self.context.append_basic_block(function, "for.array.body");
+        let step_bb = self.context.append_basic_block(function, "for.array.step");
+        let end_bb = self.context.append_basic_block(function, "for.array.end");
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(cond_bb);
+        let index = self
+            .builder
+            .build_load(self.i64_type(), index_slot, "for.array.index")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let in_bounds = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SLT,
+                index,
+                self.i64_type().const_int(u64::from(length), false),
+                "for.array.test",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_conditional_branch(in_bounds, body_bb, end_bb)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(body_bb);
+        let index = self
+            .builder
+            .build_load(self.i64_type(), index_slot, "for.array.index")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let element_pointer = self.array_element_pointer(array_slot, array_type, index)?;
+        let element_value = self
+            .builder
+            .build_load(
+                self.llvm_element_type(element),
+                element_pointer,
+                "for.array.value",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(value_slot, element_value)
+            .map_err(|e| e.to_string())?;
+        self.loop_targets.push((step_bb, end_bb));
+        let body_result = self.emit_block(body, false);
+        self.loop_targets.pop();
+        let (terminated, _) = body_result?;
+        let terminated = terminated
+            || self
+                .builder
+                .get_insert_block()
+                .and_then(|block| block.get_terminator())
+                .is_some();
+        if !terminated {
+            self.builder
+                .build_unconditional_branch(step_bb)
+                .map_err(|e| e.to_string())?;
+        }
+
+        self.builder.position_at_end(step_bb);
+        let index = self
+            .builder
+            .build_load(self.i64_type(), index_slot, "for.array.index")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let next = self
+            .builder
+            .build_int_add(index, self.i64_type().const_int(1, false), "for.array.next")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(index_slot, next)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unconditional_branch(cond_bb)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(end_bb);
+        self.scopes.pop();
+        Ok(false)
+    }
+
     fn emit_expression(&mut self, expr: &Expr) -> Result<TypedValue<'ctx>, String> {
         match expr {
             Expr::Integer(n, _) => Ok(TypedValue {
@@ -1367,6 +1554,45 @@ impl<'ctx> Codegen<'ctx> {
                     ty: ValueType::from(element),
                 })
             }
+            Expr::Field { value, name, span } => {
+                let value = self.emit_expression(value)?;
+                let ValueType::Struct(struct_id) = value.ty else {
+                    return Err(format!(
+                        "line {}:{}: field access requires a struct value",
+                        span.line, span.column
+                    ));
+                };
+                let field_index = self.structs[struct_id]
+                    .fields
+                    .iter()
+                    .position(|field| field.name == *name)
+                    .ok_or_else(|| {
+                        format!(
+                            "line {}:{}: struct `{}` has no field `{name}`",
+                            span.line, span.column, self.structs[struct_id].name
+                        )
+                    })?;
+                let field_ty = self.resolve_type(
+                    &self.structs[struct_id].fields[field_index].ty,
+                    self.structs[struct_id].fields[field_index].span,
+                )?;
+                let value = self
+                    .builder
+                    .build_extract_value(
+                        value
+                            .value
+                            .ok_or("struct value has no LLVM value")?
+                            .into_struct_value(),
+                        field_index as u32,
+                        "struct.field",
+                    )
+                    .map_err(|e| e.to_string())?;
+                Ok(TypedValue {
+                    value: Some(value),
+                    ty: field_ty,
+                })
+            }
+            Expr::Struct { name, fields, span } => self.emit_struct_literal(name, fields, *span),
             Expr::Unary { op, value, .. } => {
                 let value = self.emit_expression(value)?;
                 match op {
@@ -1549,6 +1775,83 @@ impl<'ctx> Codegen<'ctx> {
         })
     }
 
+    fn emit_struct_literal(
+        &mut self,
+        name: &str,
+        fields: &[(String, Expr, Span)],
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let struct_id = *self.struct_ids.get(name).ok_or_else(|| {
+            format!(
+                "line {}:{}: unknown struct `{name}`",
+                span.line, span.column
+            )
+        })?;
+        let declaration = self.structs[struct_id].clone();
+        let struct_type = self.struct_types[struct_id];
+        let mut aggregate = struct_type.const_zero().as_basic_value_enum();
+        let mut initialized = std::collections::HashSet::new();
+        for (field_name, expression, field_span) in fields {
+            if !initialized.insert(field_name.as_str()) {
+                return Err(format!(
+                    "line {}:{}: struct field `{field_name}` is initialized more than once",
+                    field_span.line, field_span.column
+                ));
+            }
+            let Some(index) = declaration
+                .fields
+                .iter()
+                .position(|field| field.name == *field_name)
+            else {
+                return Err(format!(
+                    "line {}:{}: struct `{name}` has no field `{field_name}`",
+                    field_span.line, field_span.column
+                ));
+            };
+            let value = self.emit_expression(expression)?;
+            let expected = self.resolve_type(
+                &declaration.fields[index].ty,
+                declaration.fields[index].span,
+            )?;
+            if value.ty != expected {
+                return Err(format!(
+                    "line {}:{}: initializer for field `{field_name}` has type {}, expected {}",
+                    field_span.line,
+                    field_span.column,
+                    type_name(value.ty),
+                    type_name(expected)
+                ));
+            }
+            aggregate = self
+                .builder
+                .build_insert_value(
+                    aggregate.into_struct_value(),
+                    value.value.ok_or("struct field has no value")?,
+                    index as u32,
+                    "struct.field.init",
+                )
+                .map_err(|e| e.to_string())?
+                .as_basic_value_enum();
+        }
+        if fields.len() != declaration.fields.len() {
+            let missing = declaration
+                .fields
+                .iter()
+                .filter(|field| !initialized.contains(field.name.as_str()))
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "line {}:{}: struct `{name}` is missing field(s): {missing}",
+                span.line, span.column
+            ));
+        }
+        Ok(TypedValue {
+            value: Some(aggregate),
+            ty: ValueType::Struct(struct_id),
+        })
+    }
+
     fn emit_match(
         &mut self,
         value_expr: &Expr,
@@ -1676,6 +1979,7 @@ impl<'ctx> Codegen<'ctx> {
                     Local {
                         pointer: alloca,
                         ty,
+                        immutable: false,
                     },
                 );
             }
@@ -2393,6 +2697,7 @@ fn type_name(ty: ValueType) -> String {
             format!("[{element}; {length}]")
         }
         ValueType::Enum(index) => format!("enum#{index}"),
+        ValueType::Struct(index) => format!("struct#{index}"),
     }
 }
 

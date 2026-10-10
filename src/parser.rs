@@ -1,4 +1,5 @@
 use crate::lexer::{Token, TokenKind, unexpected};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -7,7 +8,7 @@ pub enum Type {
     Str,
     Unit,
     Array(ArrayElementType, u32),
-    Enum(String),
+    Named(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +38,22 @@ impl From<&Token> for Span {
 #[derive(Debug, Clone)]
 pub struct Program {
     pub enums: Vec<EnumDecl>,
+    pub structs: Vec<StructDecl>,
     pub functions: Vec<Function>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDecl {
+    pub name: String,
+    pub fields: Vec<StructField>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructField {
+    pub name: String,
+    pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +120,12 @@ pub enum Stmt {
         end: Expr,
         body: Block,
     },
+    ForArray {
+        name: String,
+        array: Expr,
+        body: Block,
+        span: Span,
+    },
     Break {
         span: Span,
     },
@@ -133,6 +155,16 @@ pub enum Expr {
     Index {
         array: Box<Expr>,
         index: Box<Expr>,
+        span: Span,
+    },
+    Field {
+        value: Box<Expr>,
+        name: String,
+        span: Span,
+    },
+    Struct {
+        name: String,
+        fields: Vec<(String, Expr, Span)>,
         span: Span,
     },
     Unary {
@@ -214,27 +246,46 @@ pub enum BinaryOp {
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    struct_names: HashSet<String>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+        let struct_names = tokens
+            .windows(2)
+            .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
+                (TokenKind::Struct, TokenKind::Ident(name)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        Self {
+            tokens,
+            current: 0,
+            struct_names,
+        }
     }
 
     pub fn parse_program(mut self) -> Result<Program, String> {
         let mut enums = Vec::new();
+        let mut structs = Vec::new();
         let mut functions = Vec::new();
         while !self.at(&TokenKind::Eof) {
             if self.at(&TokenKind::Enum) {
                 enums.push(self.parse_enum()?);
+            } else if self.at(&TokenKind::Struct) {
+                structs.push(self.parse_struct()?);
             } else {
                 functions.push(self.parse_function()?);
             }
         }
-        if functions.is_empty() && enums.is_empty() {
+        if functions.is_empty() && enums.is_empty() && structs.is_empty() {
             return Err("program must contain at least one declaration".into());
         }
-        Ok(Program { enums, functions })
+        Ok(Program {
+            enums,
+            structs,
+            functions,
+        })
     }
 
     fn parse_enum(&mut self) -> Result<EnumDecl, String> {
@@ -268,6 +319,36 @@ impl Parser {
         Ok(EnumDecl {
             name,
             variants,
+            span: Span::from(&start),
+        })
+    }
+
+    fn parse_struct(&mut self) -> Result<StructDecl, String> {
+        let start = self.consume(&TokenKind::Struct, "`struct`")?;
+        let name = self.take_ident("struct name")?;
+        self.consume(&TokenKind::LBrace, "`{` after struct name")?;
+        let mut fields = Vec::new();
+        while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+            let field_token = self.peek().clone();
+            let field_name = self.take_ident("struct field name")?;
+            self.consume(&TokenKind::Colon, "`:` after struct field name")?;
+            let ty = self.parse_type()?;
+            fields.push(StructField {
+                name: field_name,
+                ty,
+                span: Span::from(&field_token),
+            });
+            if !self.take(&TokenKind::Comma) && !self.at(&TokenKind::RBrace) {
+                return Err(unexpected(self.peek(), "`,` or `}` after struct field"));
+            }
+        }
+        if fields.is_empty() {
+            return Err(unexpected(self.peek(), "at least one struct field"));
+        }
+        self.consume(&TokenKind::RBrace, "`}` after struct fields")?;
+        Ok(StructDecl {
+            name,
+            fields,
             span: Span::from(&start),
         })
     }
@@ -347,11 +428,12 @@ impl Parser {
         } else if let TokenKind::Ident(name) = &self.peek().kind {
             let name = name.clone();
             self.advance();
-            Ok(Type::Enum(name))
+            // Named types are resolved after all declarations are collected.
+            Ok(Type::Named(name))
         } else {
             Err(unexpected(
                 self.peek(),
-                "type `i64`, `bool`, `str`, `unit`, an enum name, or `[element; length]`",
+                "type `i64`, `bool`, `str`, `unit`, a named type, or `[element; length]`",
             ))
         }
     }
@@ -419,16 +501,26 @@ impl Parser {
             } else if self.take(&TokenKind::For) {
                 let name = self.take_ident("loop variable")?;
                 self.consume(&TokenKind::In, "`in`")?;
-                let start = self.parse_expression(0)?;
-                self.consume(&TokenKind::DotDot, "`..`")?;
-                let end = self.parse_expression(0)?;
-                let body = self.parse_block()?;
-                statements.push(Stmt::For {
-                    name,
-                    start,
-                    end,
-                    body,
-                });
+                let iterable = self.parse_expression(0)?;
+                if self.take(&TokenKind::DotDot) {
+                    let end = self.parse_expression(0)?;
+                    let body = self.parse_block()?;
+                    statements.push(Stmt::For {
+                        name,
+                        start: iterable,
+                        end,
+                        body,
+                    });
+                } else {
+                    let span = span_of_expr_parser(&iterable);
+                    let body = self.parse_block()?;
+                    statements.push(Stmt::ForArray {
+                        name,
+                        array: iterable,
+                        body,
+                        span,
+                    });
+                }
             } else if self.take(&TokenKind::Break) {
                 let span = Span::from(self.previous());
                 self.consume(&TokenKind::Semicolon, "`;`")?;
@@ -503,6 +595,16 @@ impl Parser {
                 left = Expr::Index {
                     array: Box::new(left),
                     index: Box::new(index),
+                    span,
+                };
+                continue;
+            }
+            if self.at(&TokenKind::Dot) {
+                let span = Span::from(self.advance());
+                let name = self.take_ident("field name after `.`")?;
+                left = Expr::Field {
+                    value: Box::new(left),
+                    name,
                     span,
                 };
                 continue;
@@ -594,6 +696,29 @@ impl Parser {
                     payload,
                     span,
                 })
+            }
+            TokenKind::Ident(name)
+                if self.struct_names.contains(&name) && self.at(&TokenKind::LBrace) =>
+            {
+                self.advance();
+                let mut fields = Vec::new();
+                if !self.at(&TokenKind::RBrace) {
+                    loop {
+                        let field_token = self.peek().clone();
+                        let field_name = self.take_ident("field name")?;
+                        self.consume(&TokenKind::Colon, "`:` after field name")?;
+                        let value = self.parse_expression(0)?;
+                        fields.push((field_name, value, Span::from(&field_token)));
+                        if !self.take(&TokenKind::Comma) {
+                            break;
+                        }
+                        if self.at(&TokenKind::RBrace) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
+                Ok(Expr::Struct { name, fields, span })
             }
             TokenKind::Ident(name) if self.take(&TokenKind::LParen) => {
                 let mut args = Vec::new();
@@ -733,5 +858,24 @@ impl Parser {
     }
     fn previous(&self) -> &Token {
         &self.tokens[self.current.saturating_sub(1)]
+    }
+}
+
+fn span_of_expr_parser(expr: &Expr) -> Span {
+    match expr {
+        Expr::Integer(_, span)
+        | Expr::Bool(_, span)
+        | Expr::String(_, span)
+        | Expr::Array(_, span)
+        | Expr::Variable(_, span)
+        | Expr::Index { span, .. }
+        | Expr::Field { span, .. }
+        | Expr::Struct { span, .. }
+        | Expr::Unary { span, .. }
+        | Expr::Binary { span, .. }
+        | Expr::Call { span, .. }
+        | Expr::If { span, .. }
+        | Expr::Match { span, .. }
+        | Expr::Variant { span, .. } => *span,
     }
 }

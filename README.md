@@ -94,6 +94,34 @@ fn main() -> i64 {
 
 Arrays are copied as values when bound, passed, or returned. Zero-length arrays such as `[i64; 0]` are supported; their empty literal must have an explicit array type annotation (`let values: [i64; 0] = [];`) because no element type can be inferred. Indexes are signed `i64`; negative indexes and indexes greater than or equal to the array length terminate the program with status 1, so indexing a zero-length array always exits with status 1. `len(array)` returns the fixed length as an `i64`. Array equality, nested arrays, and dynamically sized arrays are not supported.
 
+Arrays may also be traversed directly with a read-only element binding:
+
+```apex
+for value in values {
+    print_i64(value);
+}
+```
+
+The array expression is evaluated once and copied before iteration. The binding is immutable and scoped to the loop body; `break` and `continue` work as they do in range loops. Iteration over a zero-length array executes the body zero times.
+
+## Named records
+
+Named records (structs) have top-level declarations and named fields of primitive type:
+
+```apex
+struct User {
+    id: i64,
+    active: bool,
+    name: str,
+}
+
+fn lookup(id: i64) -> User {
+    User { id: id, active: true, name: "Ada" }
+}
+```
+
+Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name`, but individual field assignment and struct comparison are not supported. Struct fields are limited to `i64`, `bool`, and `str` (no arrays, enums, or nested structs).
+
 ## Enums and exhaustive matching
 
 Enums are top-level declarations with uniquely named variants. A variant has no payload or one primitive payload (`i64`, `bool`, or `str`):
@@ -141,7 +169,7 @@ fn main() -> i64 {
 }
 ```
 
-Value types are `i64`, `bool`, `str`, named enums, and fixed-size arrays `[i64; length]`, `[bool; length]`, or `[str; length]`; functions may also return `unit`. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. A `let` type annotation is optional and inferred from its initializer. Bindings are mutable; assignment uses `name = expression;`, and array elements may be assigned with `array[index] = expression;`. `if`/`else`, `while`, and integer range `for` loops are statements. A loop such as `for i in 0..6 { ... }` visits `0` through `5`; ranges are half-open, both bounds are evaluated once, and the loop variable is immutable and scoped to the loop. Functions returning a value must use `return expression;` or a final expression. All functions are top-level and have a declared return type. Operators include arithmetic (`+ - * / %`), signed comparisons, equality, boolean negation, and short-circuiting `&&` / `||`. Division and remainder by zero, as well as `i64::MIN / -1` and `i64::MIN % -1`, terminate the program with exit status 1. Line (`//`) and block (`/* ... */`) comments are supported. `print_i64(i64)` writes one decimal value and a newline to stdout; `read_i64() -> i64` reads one signed decimal integer token from stdin.
+Value types are `i64`, `bool`, `str`, named enums, named structs, and fixed-size arrays `[i64; length]`, `[bool; length]`, or `[str; length]`; functions may also return `unit`. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. A `let` type annotation is optional and inferred from its initializer. Bindings are mutable; assignment uses `name = expression;`, and array elements may be assigned with `array[index] = expression;`. `if`/`else`, `while`, and `for` loops are statements. A range loop such as `for i in 0..6 { ... }` visits `0` through `5`; ranges are half-open, both bounds are evaluated once, and the loop variable is immutable and scoped to the loop. An array loop such as `for value in values { ... }` visits each copied element once, and its read-only binding is scoped to the loop. Functions returning a value must use `return expression;` or a final expression. All functions are top-level and have a declared return type. Operators include arithmetic (`+ - * / %`), signed comparisons, equality, boolean negation, and short-circuiting `&&` / `||`. Division and remainder by zero, as well as `i64::MIN / -1` and `i64::MIN % -1`, terminate the program with exit status 1. Line (`//`) and block (`/* ... */`) comments are supported. `print_i64(i64)` writes one decimal value and a newline to stdout; `read_i64() -> i64` reads one signed decimal integer token from stdin.
 
 String literals are written `"..."` and have type `str`. They support the escapes `\n`, `\t`, `\r`, `\\`, and `\"`, may contain UTF-8 text, and must end on the line they start. Strings are immutable; they can be bound, assigned, passed, returned, and compared by content with `==` and `!=`. Arithmetic, ordering comparisons, and concatenation are not supported for `str`. `\0` is rejected because strings are NUL-terminated at runtime. `print(str)` writes a string to stdout as-is, and `println(str)` writes it followed by a newline; `print("x = "); print_i64(x);` prints a labelled value.
 
