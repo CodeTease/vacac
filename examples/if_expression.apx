@@ -1,0 +1,15 @@
+// Choose the larger of two values with an if expression.
+fn larger(left: i64, right: i64) -> i64 {
+    if left > right { left } else { right }
+}
+
+fn main() -> i64 {
+    let first = larger(18, 42);
+    let second = larger(-5, -12);
+
+    print("larger value: ");
+    print_i64(first);
+    print("larger negative value: ");
+    print_i64(second);
+    0
+}

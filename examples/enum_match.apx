@@ -1,0 +1,26 @@
+// Represent simple commands as an enum and interpret them with match.
+enum Command {
+    Add(i64),
+    Multiply(i64),
+    Reset,
+}
+
+fn apply(command: Command, current: i64) -> i64 {
+    match command {
+        Command::Add(amount) => { current + amount },
+        Command::Multiply(factor) => { current * factor },
+        Command::Reset => { 0 },
+    }
+}
+
+fn main() -> i64 {
+    let after_add = apply(Command::Add(7), 5);
+    let after_multiply = apply(Command::Multiply(3), after_add);
+    let after_reset = apply(Command::Reset, after_multiply);
+
+    print("after add and multiply: ");
+    print_i64(after_multiply);
+    print("after reset: ");
+    print_i64(after_reset);
+    0
+}

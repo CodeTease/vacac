@@ -39,6 +39,30 @@ target/release/apexc examples/factorial.apx --emit-llvm factorial.ll
 with `-o` or `--emit-obj`. Check mode also builds and verifies the LLVM module,
 but writes no object or executable.
 
+## Examples
+
+The [`examples/`](examples/) directory contains complete programs that can be
+checked or compiled with `apexc`. For instance:
+
+```sh
+target/release/apexc examples/enum_match.apx --check
+target/release/apexc examples/enum_match.apx -o enum_match
+./enum_match
+```
+
+Some examples to explore:
+
+- [`if_expression.apx`](examples/if_expression.apx) — choose a value with an
+  expression conditional.
+- [`enum_match.apx`](examples/enum_match.apx) — construct enum variants and
+  handle each one with an exhaustive `match`.
+- [`loop_control.apx`](examples/loop_control.apx) — use `continue` and `break`
+  in a range loop.
+- [`read_number.apx`](examples/read_number.apx) — read and classify an integer
+  from standard input.
+- [`array_stats.apx`](examples/array_stats.apx) — iterate over a fixed-size
+  array.
+
 ## Expression conditionals
 
 In addition to statement-style `if`/`else`, an `if` with an `else` can produce a value:
