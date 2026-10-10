@@ -68,7 +68,7 @@ fn main() -> i64 {
 }
 ```
 
-Arrays are copied as values when bound, passed, or returned. Indexes are signed `i64`; negative indexes and indexes greater than or equal to the array length terminate the program with status 1. `len(array)` returns the fixed length as an `i64`. Array equality, nested arrays, zero-length arrays, and dynamically sized arrays are not supported.
+Arrays are copied as values when bound, passed, or returned. Zero-length arrays such as `[i64; 0]` are supported; their empty literal must have an explicit array type annotation (`let values: [i64; 0] = [];`) because no element type can be inferred. Indexes are signed `i64`; negative indexes and indexes greater than or equal to the array length terminate the program with status 1, so indexing a zero-length array always exits with status 1. `len(array)` returns the fixed length as an `i64`. Array equality, nested arrays, and dynamically sized arrays are not supported.
 
 ## Enums and exhaustive matching
 

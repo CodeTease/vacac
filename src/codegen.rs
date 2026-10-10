@@ -924,7 +924,27 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 }
-                let value = self.emit_expression(value)?;
+                let value = if let (Some(ty), Expr::Array(elements, _)) = (ty.as_ref(), value) {
+                    if elements.is_empty() {
+                        let array_type = self.resolve_type(ty, *span)?;
+                        if !matches!(array_type, ValueType::Array(_, 0)) {
+                            return Err(format!(
+                                "line {}:{}: empty array literal must have array length 0",
+                                span.line, span.column
+                            ));
+                        }
+                        let llvm_type =
+                            self.llvm_type(array_type).ok_or("array has no LLVM type")?;
+                        TypedValue {
+                            value: Some(llvm_type.const_zero()),
+                            ty: array_type,
+                        }
+                    } else {
+                        self.emit_expression(value)?
+                    }
+                } else {
+                    self.emit_expression(value)?
+                };
                 if value.ty == ValueType::Unit {
                     return Err(format!(
                         "line {}:{}: cannot bind a value of type `unit`",
@@ -1714,6 +1734,12 @@ impl<'ctx> Codegen<'ctx> {
         elements: &[Expr],
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
+        if elements.is_empty() {
+            return Err(format!(
+                "line {}:{}: empty array literals require an array type annotation",
+                span.line, span.column
+            ));
+        }
         let Some(first) = elements.first() else {
             return Err(format!(
                 "line {}:{}: array literals must contain at least one element",

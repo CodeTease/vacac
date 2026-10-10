@@ -333,12 +333,7 @@ impl Parser {
             };
             self.consume(&TokenKind::Semicolon, "`;` in array type")?;
             let length = match self.advance().kind {
-                TokenKind::Integer(length) if length > 0 && length <= u32::MAX as u64 => {
-                    length as u32
-                }
-                TokenKind::Integer(0) => {
-                    return Err(unexpected(self.previous(), "positive array length"));
-                }
+                TokenKind::Integer(length) if length <= u32::MAX as u64 => length as u32,
                 TokenKind::Integer(_) => {
                     return Err(unexpected(
                         self.previous(),

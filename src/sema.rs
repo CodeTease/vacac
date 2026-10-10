@@ -254,7 +254,25 @@ impl Checker {
                         format!("`{name}` is already declared in this scope"),
                     ));
                 }
-                let value_type = self.check_expr(value, false)?;
+                let value_type = if matches!(value, Expr::Array(elements, _) if elements.is_empty())
+                {
+                    let Some(ty) = ty else {
+                        return Err(at(
+                            span_of_expr(value),
+                            "empty array literals require an array type annotation",
+                        ));
+                    };
+                    let annotated = self.resolve_type(ty, *span)?;
+                    if !matches!(annotated, ValueType::Array(_, 0)) {
+                        return Err(at(
+                            span_of_expr(value),
+                            "empty array literal must have array length 0",
+                        ));
+                    }
+                    annotated
+                } else {
+                    self.check_expr(value, false)?
+                };
                 if value_type == ValueType::Unit {
                     return Err(at(*span, "cannot bind a value of type `unit`"));
                 }
@@ -432,11 +450,14 @@ impl Checker {
             Expr::Bool(_, _) => Ok(ValueType::Bool),
             Expr::String(_, _) => Ok(ValueType::Str),
             Expr::Array(elements, span) => {
-                let Some(first) = elements.first() else {
+                if elements.is_empty() {
                     return Err(at(
                         *span,
-                        "array literals must contain at least one element",
+                        "empty array literals require an array type annotation",
                     ));
+                }
+                let Some(first) = elements.first() else {
+                    unreachable!()
                 };
                 if elements.len() > u32::MAX as usize {
                     return Err(at(*span, "array literal is too large"));

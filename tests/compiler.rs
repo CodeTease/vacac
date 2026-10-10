@@ -996,6 +996,36 @@ fn fixed_arrays_support_annotations_and_function_parameters_and_returns() {
 }
 
 #[test]
+fn zero_length_arrays_support_annotations_parameters_and_length() {
+    let result = compile_and_run(
+        r#"
+        fn size(values: [i64; 0]) -> i64 {
+            len(values)
+        }
+        fn main() -> i64 {
+            let values: [i64; 0] = [];
+            let flags: [bool; 0] = [];
+            print_i64(size(values));
+            print_i64(len(flags));
+            0
+        }
+        "#,
+        "zero-length-arrays",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "0\n0\n");
+}
+
+#[test]
+fn indexing_a_zero_length_array_exits_with_status_one() {
+    let result = compile_and_run(
+        "fn main() -> i64 { let values: [i64; 0] = []; values[0]; 0 }\n",
+        "zero-length-array-bounds",
+    );
+    assert_eq!(result.status.code(), Some(1));
+}
+
+#[test]
 fn fixed_array_out_of_bounds_and_negative_indexes_exit_with_status_one() {
     for (index, test_name) in [("2", "array-index-high"), ("-1", "array-index-negative")] {
         let source = format!("fn main() -> i64 {{ let a = [4, 5]; a[{index}] }}\n");
@@ -1018,7 +1048,7 @@ fn arrays_reject_mixed_or_empty_literals_bad_indexes_and_wrong_annotations() {
         (
             "fn main() -> i64 { let values = []; 0 }\n",
             "array-empty-literal",
-            "array literals must contain at least one element",
+            "empty array literals require an array type annotation",
         ),
         (
             "fn main() -> i64 { let values = [1, 2]; values[true]; 0 }\n",
