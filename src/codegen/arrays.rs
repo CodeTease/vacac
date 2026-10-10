@@ -1,0 +1,145 @@
+use super::*;
+
+impl<'ctx> Codegen<'ctx> {
+    pub(super) fn emit_array_literal(
+        &mut self,
+        elements: &[Expr],
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, String> {
+        if elements.is_empty() {
+            return Err(format!(
+                "line {}:{}: empty array literals require an array type annotation",
+                span.line, span.column
+            ));
+        }
+        let Some(first) = elements.first() else {
+            return Err(format!(
+                "line {}:{}: array literals must contain at least one element",
+                span.line, span.column
+            ));
+        };
+        if elements.len() > u32::MAX as usize {
+            return Err(format!(
+                "line {}:{}: array literal is too large",
+                span.line, span.column
+            ));
+        }
+        let first = self.emit_expression(first)?;
+        let element = match first.ty {
+            ValueType::I64 => ArrayElementType::I64,
+            ValueType::Bool => ArrayElementType::Bool,
+            ValueType::Str => ArrayElementType::Str,
+            _ => return Err("array elements must have type `i64`, `bool`, or `str`".into()),
+        };
+        let array_type = ValueType::Array(element, elements.len() as u32);
+        let llvm_array_type = self
+            .llvm_type(array_type)
+            .ok_or("array has no LLVM type")?
+            .into_array_type();
+        let mut aggregate = llvm_array_type.const_zero().as_basic_value_enum();
+        let first_value = first.value.ok_or("array element has no value")?;
+        aggregate = self
+            .builder
+            .build_insert_value(aggregate.into_array_value(), first_value, 0, "array.init")
+            .map_err(|e| e.to_string())?
+            .as_basic_value_enum();
+        for (index, expression) in elements.iter().enumerate().skip(1) {
+            let value = self.emit_expression(expression)?;
+            if value.ty != ValueType::from(element) {
+                return Err(format!(
+                    "array element has type {}, expected {}",
+                    type_name(value.ty),
+                    type_name(ValueType::from(element))
+                ));
+            }
+            aggregate = self
+                .builder
+                .build_insert_value(
+                    aggregate.into_array_value(),
+                    value.value.ok_or("array element has no value")?,
+                    index as u32,
+                    "array.insert",
+                )
+                .map_err(|e| e.to_string())?
+                .as_basic_value_enum();
+        }
+        Ok(TypedValue {
+            value: Some(aggregate),
+            ty: array_type,
+        })
+    }
+
+    pub(super) fn array_element_pointer(
+        &self,
+        pointer: PointerValue<'ctx>,
+        array_type: ValueType,
+        index: IntValue<'ctx>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        let zero = self.i64_type().const_zero();
+        let llvm_array_type = self.llvm_type(array_type).ok_or("array has no LLVM type")?;
+        unsafe {
+            self.builder
+                .build_in_bounds_gep(
+                    llvm_array_type,
+                    pointer,
+                    &[zero, index],
+                    "array.element.ptr",
+                )
+                .map_err(|e| e.to_string())
+        }
+    }
+
+    pub(super) fn emit_bounds_check(
+        &mut self,
+        index: IntValue<'ctx>,
+        length: u32,
+    ) -> Result<(), String> {
+        let is_negative = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SLT,
+                index,
+                self.i64_type().const_zero(),
+                "index.negative",
+            )
+            .map_err(|e| e.to_string())?;
+        let too_large = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SGE,
+                index,
+                self.i64_type().const_int(u64::from(length), false),
+                "index.too.large",
+            )
+            .map_err(|e| e.to_string())?;
+        let invalid = self
+            .builder
+            .build_or(is_negative, too_large, "index.invalid")
+            .map_err(|e| e.to_string())?;
+        let function = self
+            .current_function
+            .ok_or("array index outside function")?;
+        let failure = self.context.append_basic_block(function, "bounds.error");
+        let valid = self.context.append_basic_block(function, "bounds.valid");
+        self.builder
+            .build_conditional_branch(invalid, failure, valid)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure);
+        let exit = self
+            .module
+            .get_function("exit")
+            .ok_or("missing runtime exit declaration")?;
+        self.builder
+            .build_call(
+                exit,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "bounds.exit",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unreachable()
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(valid);
+        Ok(())
+    }
+}
