@@ -39,7 +39,7 @@ Types: `i64`, `bool`, `str`, named enums, named structs, and fixed-size one-dime
 
 ## Testing
 
-Tests are in `tests/compiler.rs`. Each integration test invokes the already-built binary via `env!("CARGO_BIN_EXE_apexc")`, writes temporary `.apx` to `$TMPDIR`, compiles, runs, and asserts stdout/status. Clean up temp dirs on completion.
+Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `tests/compiler/` (`cli`, `runtime`, `language`, `strings`, `arrays`, `structs`, and `enums`). Shared compile/run helpers are in `tests/compiler/common/mod.rs`. Each test invokes the already-built binary via `env!("CARGO_BIN_EXE_apexc")`, writes temporary `.apx` to `$TMPDIR`, compiles, runs, and asserts stdout/status. Clean up temp dirs on completion.
 
 ## Gotchas
 
