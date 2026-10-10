@@ -1,0 +1,19 @@
+// Iterate directly over fixed-size arrays with read-only element bindings.
+fn main() -> i64 {
+    let values = [12, 7, 25, 4, 18];
+    let total = 0;
+    let largest = 0;
+
+    for value in values {
+        total = total + value;
+        if value > largest {
+            largest = value;
+        }
+    }
+
+    print("sum = ");
+    print_i64(total);
+    print("largest = ");
+    print_i64(largest);
+    0
+}

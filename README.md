@@ -62,6 +62,10 @@ Some examples to explore:
   from standard input.
 - [`array_stats.apx`](examples/array_stats.apx) — iterate over a fixed-size
   array.
+- [`array_iteration.apx`](examples/array_iteration.apx) — use read-only array
+  iteration to calculate a sum and maximum.
+- [`struct_inventory.apx`](examples/struct_inventory.apx) — define, construct,
+  pass, and read named structs.
 
 ## Expression conditionals
 

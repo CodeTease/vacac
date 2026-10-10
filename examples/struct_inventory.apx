@@ -1,0 +1,23 @@
+// Define and pass named struct values.
+struct Item {
+    name: str,
+    quantity: i64,
+    unit_price: i64,
+}
+
+fn item_value(item: Item) -> i64 {
+    item.quantity * item.unit_price
+}
+
+fn main() -> i64 {
+    let notebook = Item { name: "notebook", quantity: 4, unit_price: 3 };
+    let pencil = Item { name: "pencil", quantity: 10, unit_price: 1 };
+
+    print(notebook.name);
+    print(": ");
+    print_i64(item_value(notebook));
+    print(pencil.name);
+    print(": ");
+    print_i64(item_value(pencil));
+    0
+}
