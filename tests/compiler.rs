@@ -6,6 +6,8 @@ mod cli;
 mod common;
 #[path = "compiler/enums.rs"]
 mod enums;
+#[path = "compiler/equality.rs"]
+mod equality;
 #[path = "compiler/language.rs"]
 mod language;
 #[path = "compiler/runtime.rs"]

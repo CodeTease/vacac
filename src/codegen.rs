@@ -89,6 +89,7 @@ mod aggregates;
 mod arrays;
 mod calls;
 mod declarations;
+mod equality;
 mod expressions;
 mod operators;
 mod output;

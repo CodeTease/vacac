@@ -1,7 +1,12 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    fn enum_payload_field(&self, enum_id: usize, variant_id: usize, payload_index: usize) -> u32 {
+    pub(super) fn enum_payload_field(
+        &self,
+        enum_id: usize,
+        variant_id: usize,
+        payload_index: usize,
+    ) -> u32 {
         let variant = &self.enums[enum_id].variants[variant_id];
         if matches!(variant.payload[payload_index], Type::Str) {
             let integer_slots = self.enums[enum_id]

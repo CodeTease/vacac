@@ -22,18 +22,28 @@ impl<'ctx> Codegen<'ctx> {
         if left.ty == ValueType::Unit {
             return Err("void expressions cannot be used as operands".into());
         }
-        if matches!(left.ty, ValueType::Array(_))
-            && matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
-        {
-            return Err("array values cannot be compared".into());
-        }
-        if matches!(left.ty, ValueType::Enum(_))
-            && matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
-        {
-            return Err("enum values cannot be compared".into());
-        }
-        if left.ty == ValueType::Str {
-            return self.emit_string_equality(op, left, right);
+        if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
+            if left.ty == ValueType::Str {
+                return self.emit_string_equality(op, left, right);
+            }
+            if matches!(
+                left.ty,
+                ValueType::Array(_) | ValueType::Enum(_) | ValueType::Struct(_)
+            ) {
+                let lhs = left.value.ok_or("left operand has no value")?;
+                let rhs = right.value.ok_or("right operand has no value")?;
+                let mut equal = self.emit_value_equality(left.ty, lhs, rhs)?;
+                if matches!(op, BinaryOp::NotEqual) {
+                    equal = self
+                        .builder
+                        .build_not(equal, "aggregate.ne")
+                        .map_err(|e| e.to_string())?;
+                }
+                return Ok(TypedValue {
+                    value: Some(equal.into()),
+                    ty: ValueType::Bool,
+                });
+            }
         }
         let lhs = left
             .value

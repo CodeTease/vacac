@@ -298,15 +298,6 @@ impl Checker {
                         if left_type == ValueType::Unit {
                             return Err(at(*span, "void expressions cannot be compared"));
                         }
-                        if matches!(left_type, ValueType::Array(_)) {
-                            return Err(at(*span, "array values cannot be compared"));
-                        }
-                        if matches!(left_type, ValueType::Enum(_)) {
-                            return Err(at(*span, "enum values cannot be compared"));
-                        }
-                        if matches!(left_type, ValueType::Struct(_)) {
-                            return Err(at(*span, "struct values cannot be compared"));
-                        }
                         ValueType::Bool
                     }
                     BinaryOp::Less

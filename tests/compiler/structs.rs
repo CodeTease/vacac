@@ -186,11 +186,6 @@ fn structs_reject_duplicate_missing_unknown_and_wrongly_typed_fields() {
             "struct `Pair` has no field `missing`",
             "struct-unknown-member",
         ),
-        (
-            "struct Pair { left: i64 } fn main() -> i64 { let p = Pair { left: 1 }; let q = p; let bad = p == q; 0 }",
-            "struct values cannot be compared",
-            "struct-comparison",
-        ),
     ] {
         assert_compile_error(source, name, expected);
     }

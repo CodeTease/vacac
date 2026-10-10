@@ -353,11 +353,6 @@ fn arrays_reject_mixed_or_empty_literals_bad_indexes_and_wrong_annotations() {
             "initializer for `values` has type [i64; 2], expected [i64; 3]",
         ),
         (
-            "fn main() -> i64 { let values = [1, 2]; if values == values { 0 } else { 1 } }\n",
-            "array-comparison",
-            "array values cannot be compared",
-        ),
-        (
             "fn main() -> i64 { let values = [1, 2]; values[0] = true; 0 }\n",
             "array-assignment-type",
             "array element assignment to `values` has type bool, expected i64",
