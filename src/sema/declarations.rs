@@ -59,12 +59,6 @@ impl Checker {
                         format!("struct field `{}` is defined more than once", field.name),
                     ));
                 }
-                if !matches!(field.ty, Type::I64 | Type::Bool | Type::Str) {
-                    return Err(at(
-                        field.span,
-                        "struct fields must have type `i64`, `bool`, or `str`",
-                    ));
-                }
             }
         }
         for declaration in &program.enums {
@@ -76,6 +70,27 @@ impl Checker {
             }
         }
         self.structs = program.structs.clone();
+        for declaration in &self.structs {
+            for field in &declaration.fields {
+                match &field.ty {
+                    Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
+                    Type::Named(name) if self.struct_ids.contains_key(name) => {}
+                    Type::Named(name) if self.enum_ids.contains_key(name) => {
+                        return Err(at(
+                            field.span,
+                            format!("struct fields cannot have enum type `{name}`"),
+                        ));
+                    }
+                    Type::Named(name) => {
+                        return Err(at(field.span, format!("unknown type `{name}`")));
+                    }
+                    Type::Unit => {
+                        return Err(at(field.span, "struct fields cannot have type `unit`"));
+                    }
+                }
+            }
+        }
+        validate_struct_cycles(&self.structs, &self.struct_ids)?;
         let mut saw_main = false;
         for function in &program.functions {
             if matches!(
@@ -192,4 +207,48 @@ impl Checker {
     }
 
     // Returns true if every path through this block returns from the function.
+}
+
+fn validate_struct_cycles(
+    structs: &[StructDecl],
+    struct_ids: &HashMap<String, usize>,
+) -> Result<(), String> {
+    fn visit(
+        id: usize,
+        structs: &[StructDecl],
+        struct_ids: &HashMap<String, usize>,
+        states: &mut [u8],
+    ) -> Result<(), String> {
+        states[id] = 1;
+        for field in &structs[id].fields {
+            let Type::Named(name) = &field.ty else {
+                continue;
+            };
+            let Some(&child_id) = struct_ids.get(name) else {
+                continue;
+            };
+            if states[child_id] == 1 {
+                return Err(at(
+                    field.span,
+                    format!(
+                        "struct `{}` has a recursive by-value field `{}`",
+                        structs[id].name, field.name
+                    ),
+                ));
+            }
+            if states[child_id] == 0 {
+                visit(child_id, structs, struct_ids, states)?;
+            }
+        }
+        states[id] = 2;
+        Ok(())
+    }
+
+    let mut states = vec![0; structs.len()];
+    for id in 0..structs.len() {
+        if states[id] == 0 {
+            visit(id, structs, struct_ids, &mut states)?;
+        }
+    }
+    Ok(())
 }

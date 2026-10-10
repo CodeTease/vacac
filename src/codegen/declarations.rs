@@ -153,6 +153,39 @@ impl<'ctx> Codegen<'ctx> {
                     declaration.name
                 ));
             }
+            self.struct_types.push(
+                self.context
+                    .opaque_struct_type(&format!("apex.struct.{}", declaration.name)),
+            );
+        }
+        for declaration in &self.structs {
+            for field in &declaration.fields {
+                match &field.ty {
+                    Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
+                    Type::Named(name) if self.struct_ids.contains_key(name) => {}
+                    Type::Named(name) if self.enum_ids.contains_key(name) => {
+                        return Err(format!(
+                            "line {}:{}: struct fields cannot have enum type `{name}`",
+                            field.span.line, field.span.column
+                        ));
+                    }
+                    Type::Named(name) => {
+                        return Err(format!(
+                            "line {}:{}: unknown type `{name}`",
+                            field.span.line, field.span.column
+                        ));
+                    }
+                    Type::Unit => {
+                        return Err(format!(
+                            "line {}:{}: struct fields cannot have type `unit`",
+                            field.span.line, field.span.column
+                        ));
+                    }
+                }
+            }
+        }
+        validate_struct_cycles(&self.structs, &self.struct_ids)?;
+        for declaration in program.structs.iter() {
             let mut field_types = Vec::with_capacity(declaration.fields.len());
             let mut names = std::collections::HashSet::new();
             for field in &declaration.fields {
@@ -166,8 +199,10 @@ impl<'ctx> Codegen<'ctx> {
                 let llvm_type = self.llvm_type(ty).ok_or("struct field has no LLVM type")?;
                 field_types.push(llvm_type);
             }
-            self.struct_types
-                .push(self.context.struct_type(&field_types, false));
+            if !self.struct_types[self.struct_ids[&declaration.name]].set_body(&field_types, false)
+            {
+                return Err(format!("struct `{}` was already defined", declaration.name));
+            }
         }
         Ok(())
     }
@@ -250,4 +285,45 @@ impl<'ctx> Codegen<'ctx> {
             .insert("read_i64".into(), (vec![], ValueType::I64));
         Ok(())
     }
+}
+
+fn validate_struct_cycles(
+    structs: &[StructDecl],
+    struct_ids: &HashMap<String, usize>,
+) -> Result<(), String> {
+    fn visit(
+        id: usize,
+        structs: &[StructDecl],
+        struct_ids: &HashMap<String, usize>,
+        states: &mut [u8],
+    ) -> Result<(), String> {
+        states[id] = 1;
+        for field in &structs[id].fields {
+            let Type::Named(name) = &field.ty else {
+                continue;
+            };
+            let Some(&child_id) = struct_ids.get(name) else {
+                continue;
+            };
+            if states[child_id] == 1 {
+                return Err(format!(
+                    "line {}:{}: struct `{}` has a recursive by-value field `{}`",
+                    field.span.line, field.span.column, structs[id].name, field.name
+                ));
+            }
+            if states[child_id] == 0 {
+                visit(child_id, structs, struct_ids, states)?;
+            }
+        }
+        states[id] = 2;
+        Ok(())
+    }
+
+    let mut states = vec![0; structs.len()];
+    for id in 0..structs.len() {
+        if states[id] == 0 {
+            visit(id, structs, struct_ids, &mut states)?;
+        }
+    }
+    Ok(())
 }

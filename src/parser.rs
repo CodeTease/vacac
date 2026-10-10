@@ -324,44 +324,12 @@ impl Parser {
                 let expr = self.parse_expression(0)?;
                 if self.take(&TokenKind::Equal) {
                     let assignment_span = Span::from(self.previous());
-                    let (name, index, span) = match expr {
-                        Expr::Index { array, index, span } => match *array {
-                            Expr::Variable(name, _) => (name, *index, span),
-                            _ => {
-                                return Err(unexpected(
-                                    self.previous(),
-                                    "assignable array variable before `[`",
-                                ));
-                            }
-                        },
-                        Expr::Field {
-                            value, name: field, ..
-                        } => {
-                            let Expr::Variable(name, _) = *value else {
-                                return Err(unexpected(
-                                    self.previous(),
-                                    "local struct field assignment target",
-                                ));
-                            };
-                            let value = self.parse_expression(0)?;
-                            self.consume(&TokenKind::Semicolon, "`;`")?;
-                            statements.push(Stmt::AssignField {
-                                name,
-                                field,
-                                value,
-                                span: assignment_span,
-                            });
-                            continue;
-                        }
-                        _ => return Err(unexpected(self.previous(), "assignment target")),
-                    };
                     let value = self.parse_expression(0)?;
                     self.consume(&TokenKind::Semicolon, "`;`")?;
-                    statements.push(Stmt::AssignIndex {
-                        name,
-                        index,
+                    statements.push(Stmt::AssignPlace {
+                        target: expr,
                         value,
-                        span,
+                        span: assignment_span,
                     });
                 } else if self.take(&TokenKind::Semicolon) {
                     statements.push(Stmt::Expr(expr));

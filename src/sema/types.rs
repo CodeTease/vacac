@@ -33,8 +33,7 @@ impl Checker {
                 match statement {
                     Stmt::Let { .. }
                     | Stmt::Assign { .. }
-                    | Stmt::AssignIndex { .. }
-                    | Stmt::AssignField { .. }
+                    | Stmt::AssignPlace { .. }
                     | Stmt::Expr(_) => {
                         self.check_statement(statement, ValueType::Unit)?;
                     }
@@ -128,6 +127,15 @@ pub(super) fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Match { span, .. }
         | Expr::Variant { span, .. } => *span,
         Expr::Bool(_, span) | Expr::String(_, span) => *span,
+    }
+}
+
+pub(super) fn assignment_root(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Variable(name, _) => Some(name),
+        Expr::Field { value, .. } => assignment_root(value),
+        Expr::Index { array, .. } => assignment_root(array),
+        _ => None,
     }
 }
 

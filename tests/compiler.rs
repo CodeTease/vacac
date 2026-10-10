@@ -1143,6 +1143,55 @@ fn structs_support_mutable_field_assignment() {
 }
 
 #[test]
+fn structs_support_nested_struct_and_fixed_array_fields() {
+    let result = compile_and_run(
+        r#"
+        struct Envelope { payload: Payload, samples: [i64; 3] }
+        struct Payload { count: i64, enabled: bool, flags: [bool; 2] }
+
+        fn update(envelope: Envelope) -> Envelope {
+            envelope.payload.count = envelope.payload.count + 1;
+            envelope.payload.flags[1] = false;
+            envelope.samples[2] = envelope.samples[2] + 10;
+            envelope
+        }
+
+        fn main() -> i64 {
+            let original = Envelope {
+                samples: [3, 5, 7],
+                payload: Payload { count: 40, enabled: true, flags: [true, true] },
+            };
+            let updated = update(original);
+            print_i64(updated.payload.count);
+            print_i64(updated.samples[2]);
+            if updated.payload.enabled && updated.payload.flags[0] && !updated.payload.flags[1] { 0 } else { 1 }
+        }
+        "#,
+        "nested-struct-array-fields",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "41\n17\n");
+}
+
+#[test]
+fn nested_aggregate_fields_respect_immutable_bindings() {
+    for (source, diagnostic, name) in [
+        (
+            "struct Inner { value: i64 } struct Outer { inner: Inner } fn main() -> i64 { const outer = Outer { inner: Inner { value: 1 } }; outer.inner.value = 2; 0 }",
+            "cannot assign through immutable binding `outer`",
+            "const-nested-struct-field-assignment",
+        ),
+        (
+            "struct Outer { values: [i64; 2] } fn main() -> i64 { const outer = Outer { values: [1, 2] }; outer.values[0] = 3; 0 }",
+            "cannot assign through immutable binding `outer`",
+            "const-struct-array-field-assignment",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
 fn const_bindings_are_readable_but_cannot_be_mutated() {
     let result = compile_and_run(
         r#"
@@ -1242,16 +1291,36 @@ fn structs_reject_duplicate_missing_unknown_and_wrongly_typed_fields() {
 }
 
 #[test]
-fn structs_reject_duplicate_declarations_and_non_primitive_fields() {
+fn structs_reject_duplicate_declarations_and_unsupported_fields() {
     assert_compile_error(
         "struct Item { id: i64 } struct Item { name: str } fn main() -> i64 { 0 }",
         "struct-duplicate-declaration",
         "type `Item` is defined more than once",
     );
     assert_compile_error(
-        "struct Item { id: [i64; 2] } fn main() -> i64 { 0 }",
-        "struct-nonprimitive-field",
-        "struct fields must have type `i64`, `bool`, or `str`",
+        "enum Choice { First, Second } struct Item { choice: Choice } fn main() -> i64 { 0 }",
+        "struct-enum-field",
+        "struct fields cannot have enum type `Choice`",
+    );
+    assert_compile_error(
+        "struct Item { value: unit } fn main() -> i64 { 0 }",
+        "struct-unit-field",
+        "struct fields cannot have type `unit`",
+    );
+    assert_compile_error(
+        "struct Item { value: Missing } fn main() -> i64 { 0 }",
+        "struct-unknown-field-type",
+        "unknown type `Missing`",
+    );
+    assert_compile_error(
+        "struct Node { next: Node } fn main() -> i64 { 0 }",
+        "struct-recursive-field",
+        "recursive by-value field `next`",
+    );
+    assert_compile_error(
+        "struct First { second: Second } struct Second { first: First } fn main() -> i64 { 0 }",
+        "struct-mutually-recursive-fields",
+        "recursive by-value field `first`",
     );
     assert_compile_error(
         "struct Item { id: i64, id: bool } fn main() -> i64 { 0 }",

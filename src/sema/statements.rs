@@ -129,90 +129,37 @@ impl Checker {
                 )?;
                 Ok(false)
             }
-            Stmt::AssignIndex {
-                name,
-                index,
+            Stmt::AssignPlace {
+                target,
                 value,
                 span,
             } => {
+                let root = assignment_root(target).ok_or_else(|| {
+                    at(*span, "assignment target must start with a local variable")
+                })?;
                 let binding_type = self
-                    .lookup_local(name)
-                    .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
-                if self.is_loop_variable(name) {
+                    .lookup_local(root)
+                    .ok_or_else(|| at(*span, format!("undefined variable `{root}`")))?;
+                if self.is_loop_variable(root) {
                     return Err(at(
                         *span,
-                        format!("cannot assign through immutable loop variable `{name}`"),
+                        format!("cannot assign through immutable loop variable `{root}`"),
                     ));
                 }
-                if self.is_immutable_binding(name) {
+                if self.is_immutable_binding(root) {
                     return Err(at(
                         *span,
-                        format!("cannot assign through immutable binding `{name}`"),
+                        format!("cannot assign through immutable binding `{root}`"),
                     ));
                 }
-                let ValueType::Array(element, _) = binding_type else {
-                    return Err(at(*span, format!("`{name}` is not an array")));
-                };
-                let index_type = self.check_expr(index, false)?;
-                self.expect_type(
-                    index_type,
-                    ValueType::I64,
-                    span_of_expr(index),
-                    "array index",
-                )?;
+                let target_type = self.check_place(target, binding_type)?;
                 let value_type = self.check_expr(value, false)?;
-                self.expect_type(
-                    value_type,
-                    ValueType::from(element),
-                    span_of_expr(value),
-                    &format!("array element assignment to `{name}`"),
-                )?;
-                Ok(false)
-            }
-            Stmt::AssignField {
-                name,
-                field,
-                value,
-                span,
-            } => {
-                let binding_type = self
-                    .lookup_local(name)
-                    .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
-                if self.is_loop_variable(name) {
-                    return Err(at(
-                        *span,
-                        format!("cannot assign through immutable loop variable `{name}`"),
-                    ));
-                }
-                if self.is_immutable_binding(name) {
-                    return Err(at(
-                        *span,
-                        format!("cannot assign through immutable binding `{name}`"),
-                    ));
-                }
-                let ValueType::Struct(struct_id) = binding_type else {
-                    return Err(at(*span, format!("`{name}` is not a struct")));
+                let context = match target {
+                    Expr::Field { name, .. } => format!("assignment to field `{name}`"),
+                    Expr::Index { .. } => format!("array element assignment to `{root}`"),
+                    _ => format!("assignment to `{root}`"),
                 };
-                let declaration = &self.structs[struct_id];
-                let field_declaration = declaration
-                    .fields
-                    .iter()
-                    .find(|declaration| declaration.name == *field)
-                    .ok_or_else(|| {
-                        at(
-                            *span,
-                            format!("struct `{}` has no field `{field}`", declaration.name),
-                        )
-                    })?;
-                let field_type =
-                    self.resolve_type(&field_declaration.ty, field_declaration.span)?;
-                let value_type = self.check_expr(value, false)?;
-                self.expect_type(
-                    value_type,
-                    field_type,
-                    span_of_expr(value),
-                    &format!("assignment to field `{field}`"),
-                )?;
+                self.expect_type(value_type, target_type, span_of_expr(value), &context)?;
                 Ok(false)
             }
             Stmt::If {

@@ -124,15 +124,8 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
-    AssignIndex {
-        name: String,
-        index: Expr,
-        value: Expr,
-        span: Span,
-    },
-    AssignField {
-        name: String,
-        field: String,
+    AssignPlace {
+        target: Expr,
         value: Expr,
         span: Span,
     },

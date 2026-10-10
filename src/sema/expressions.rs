@@ -1,6 +1,53 @@
 use super::*;
 
 impl Checker {
+    pub(super) fn check_place(&mut self, expr: &Expr, ty: ValueType) -> Result<ValueType, String> {
+        match expr {
+            Expr::Variable(_, _) => Ok(ty),
+            Expr::Field { value, name, span } => {
+                let ty = self.check_place(value, ty)?;
+                let ValueType::Struct(struct_id) = ty else {
+                    if let Expr::Variable(name, _) = value.as_ref() {
+                        return Err(at(*span, format!("`{name}` is not a struct")));
+                    }
+                    return Err(at(*span, "field access requires a struct value"));
+                };
+                let field = self.structs[struct_id]
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *name)
+                    .ok_or_else(|| {
+                        at(
+                            *span,
+                            format!(
+                                "struct `{}` has no field `{name}`",
+                                self.structs[struct_id].name
+                            ),
+                        )
+                    })?;
+                self.resolve_type(&field.ty, field.span)
+            }
+            Expr::Index { array, index, span } => {
+                let ty = self.check_place(array, ty)?;
+                let index_type = self.check_expr(index, false)?;
+                self.expect_type(
+                    index_type,
+                    ValueType::I64,
+                    span_of_expr(index),
+                    "array index",
+                )?;
+                match ty {
+                    ValueType::Array(element, _) => Ok(ValueType::from(element)),
+                    _ => Err(at(*span, "indexing requires an array")),
+                }
+            }
+            _ => Err(at(
+                span_of_expr(expr),
+                "assignment target must be a local variable, field, or array element",
+            )),
+        }
+    }
+
     pub(super) fn check_expr(
         &mut self,
         expr: &Expr,
