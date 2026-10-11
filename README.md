@@ -1,6 +1,6 @@
-# Vaca compiler
+# Vaca compiler 🐄
 
-`vacac` is a handwritten, statically compiled compiler for Vaca v0.1. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
+`vacac` is a handwritten, statically compiled compiler for Vaca v0.1 🐮. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
 
 A **CodeTease** project.
 
