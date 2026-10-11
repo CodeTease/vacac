@@ -1,0 +1,10 @@
+mod geometry;
+
+fn main() -> i64 {
+    if geometry::distance_squared() == 25 {
+        println("distance squared: 25");
+        0
+    } else {
+        1
+    }
+}

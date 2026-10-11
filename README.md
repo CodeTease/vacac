@@ -77,6 +77,34 @@ Some examples to explore:
   pass, and read named structs.
 - [`const_and_struct_fields.apx`](examples/const_and_struct_fields.apx) — use an
   immutable `const` value and update fields of a mutable local struct.
+- [`modules/`](examples/modules/) — split a program across nested source files
+  and use qualified public structs, enums, and functions.
+
+## Hierarchical modules
+
+Declare a child module with `mod name;`. The compiler loads its source relative
+to the declaring file, recursively checks all module files as one program, and
+resolves names such as `geometry::distance_squared()` or
+`geometry::point::Point`. Module files can use either `name.apx` or
+`name/mod.apx`; nested declarations are resolved relative to their containing
+module directory. For example, `mod geometry;` in `main.apx` can load
+`geometry.apx`, and a `mod point;` declared in `geometry.apx` can load
+`geometry/point.apx`.
+
+Declarations in another module are accessible only when marked `pub`; private
+functions, structs, and enums remain local to their declaring module. The root
+source file must define the required `fn main() -> i64` entry point. The
+[`modules/`](examples/modules/) example demonstrates nested modules, qualified
+type and function names, and enum matching. From the repository root, check,
+compile, or run it with:
+
+```sh
+target/release/apexc examples/modules/main.apx --check
+target/release/apexc examples/modules/main.apx -o modules-example
+./modules-example
+# Or compile and run without leaving artifacts:
+target/release/apexc examples/modules/main.apx --run
+```
 
 ## Expression conditionals
 
