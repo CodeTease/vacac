@@ -41,6 +41,8 @@ struct Checker {
     structs: Vec<StructDecl>,
     array_shapes: Vec<ArrayShape>,
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
+    module_context: String,
+    function_visibility: HashMap<String, (String, bool)>,
 }
 
 struct LoopContext {
@@ -62,9 +64,12 @@ pub fn check(program: &Program) -> Result<(), Diagnostic> {
         structs: Vec::new(),
         array_shapes: Vec::new(),
         array_shape_ids: HashMap::new(),
+        module_context: String::new(),
+        function_visibility: HashMap::new(),
     };
     checker.collect_signatures(program)?;
     for function in &program.functions {
+        checker.module_context = function.module.clone();
         checker.check_function(function)?;
     }
     Ok(())

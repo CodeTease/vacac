@@ -11,6 +11,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.emit_read_i64_builtin()?;
         codegen.emit_string_concat_builtin()?;
         for function in &program.functions {
+            codegen.module_context = function.module.clone();
             codegen.emit_function(function)?;
         }
         codegen.emit_c_main_wrapper()?;
@@ -42,6 +43,10 @@ impl<'ctx> Codegen<'ctx> {
             loop_targets: Vec::new(),
             current_function: None,
             return_type: ValueType::I64,
+            module_context: String::new(),
+            function_visibility: HashMap::new(),
+            enum_visibility: HashMap::new(),
+            struct_visibility: HashMap::new(),
         }
     }
 
@@ -198,6 +203,10 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn declare_enums(&mut self, program: &Program) -> Result<(), String> {
         self.enums = program.enums.clone();
         for (index, declaration) in program.enums.iter().enumerate() {
+            self.enum_visibility.insert(
+                declaration.name.clone(),
+                (declaration.module.clone(), declaration.is_public),
+            );
             if self
                 .enum_ids
                 .insert(declaration.name.clone(), index)
@@ -213,6 +222,10 @@ impl<'ctx> Codegen<'ctx> {
                     .opaque_struct_type(&format!("apex.enum.{}", declaration.name)),
             );
             self.enum_payload_types.push(Vec::new());
+            self.enum_visibility.insert(
+                declaration.name.clone(),
+                (declaration.module.clone(), declaration.is_public),
+            );
         }
         Ok(())
     }
@@ -267,8 +280,13 @@ impl<'ctx> Codegen<'ctx> {
                 self.context
                     .opaque_struct_type(&format!("apex.struct.{}", declaration.name)),
             );
+            self.struct_visibility.insert(
+                declaration.name.clone(),
+                (declaration.module.clone(), declaration.is_public),
+            );
         }
         for declaration in &self.structs {
+            self.module_context = declaration.module.clone();
             for field in &declaration.fields {
                 match &field.ty {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
@@ -292,6 +310,8 @@ impl<'ctx> Codegen<'ctx> {
         crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)
             .map_err(|error| error.to_string())?;
         for declaration in program.structs.iter() {
+            self.module_context = declaration.module.clone();
+            self.module_context = declaration.module.clone();
             let mut field_types = Vec::with_capacity(declaration.fields.len());
             let mut names = std::collections::HashSet::new();
             for field in &declaration.fields {
@@ -316,6 +336,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn declare_functions(&mut self, program: &Program) -> Result<(), String> {
         let mut saw_main = false;
         for function in &program.functions {
+            self.module_context = function.module.clone();
             if matches!(
                 function.name.as_str(),
                 "print_i64"
@@ -367,6 +388,8 @@ impl<'ctx> Codegen<'ctx> {
             let ret: ValueType = self.resolve_type(&function.return_type, function.span)?;
             let llvm_name = if function.name == "main" {
                 "apex_main"
+            } else if program.functions_are_qualified {
+                &function.name
             } else {
                 &function.name
             };
@@ -381,6 +404,10 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 saw_main = true;
             }
+            self.function_visibility.insert(
+                function.name.clone(),
+                (function.module.clone(), function.is_public),
+            );
         }
         if !saw_main {
             return Err("program must define the required entry point `fn main() -> i64`".into());

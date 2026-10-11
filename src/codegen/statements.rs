@@ -121,6 +121,7 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub(super) fn emit_function(&mut self, function: &Function) -> Result<(), String> {
+        self.module_context = function.module.clone();
         let function_value = *self
             .functions
             .get(&function.name)

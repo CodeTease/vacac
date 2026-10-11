@@ -35,6 +35,16 @@ impl<'ctx> Codegen<'ctx> {
                 span.line, span.column
             )
         })?;
+        if self
+            .function_visibility
+            .get(name)
+            .is_some_and(|(owner, public)| owner != &self.module_context && !public)
+        {
+            return Err(format!(
+                "line {}:{}: function `{name}` is private",
+                span.line, span.column
+            ));
+        }
         if args.len() != params.len() {
             return Err(format!(
                 "line {}:{}: function `{name}` expects {} argument(s), got {}",

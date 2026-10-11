@@ -3,6 +3,7 @@ use super::*;
 impl Checker {
     pub(super) fn collect_signatures(&mut self, program: &Program) -> Result<(), Diagnostic> {
         for (enum_id, declaration) in program.enums.iter().enumerate() {
+            self.module_context = declaration.module.clone();
             if enum_id > u32::MAX as usize {
                 return Err(at(
                     declaration.span,
@@ -31,6 +32,7 @@ impl Checker {
         }
         self.enums = program.enums.clone();
         for (struct_id, declaration) in program.structs.iter().enumerate() {
+            self.module_context = declaration.module.clone();
             if self.enum_ids.contains_key(&declaration.name)
                 || self
                     .struct_ids
@@ -81,7 +83,18 @@ impl Checker {
         }
         crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)?;
         let mut saw_main = false;
+        let mut visibility = HashMap::<String, (String, bool)>::new();
         for function in &program.functions {
+            self.module_context = function.module.clone();
+            if program.functions_are_qualified
+                && function.name == "main"
+                && !function.module.is_empty()
+            {
+                return Err(at(
+                    function.span,
+                    "`main` may only be defined in the root source file",
+                ));
+            }
             if matches!(
                 function.name.as_str(),
                 "print_i64"
@@ -137,6 +150,10 @@ impl Checker {
                     return_type,
                 },
             );
+            visibility.insert(
+                function.name.clone(),
+                (function.module.clone(), function.is_public),
+            );
             if function.name == "main" {
                 if !function.params.is_empty() || return_type != ValueType::I64 {
                     return Err("entry point must have signature `fn main() -> i64`".into());
@@ -147,6 +164,7 @@ impl Checker {
         if !saw_main {
             return Err("program must define the required entry point `fn main() -> i64`".into());
         }
+        self.function_visibility = visibility;
         self.signatures.insert(
             "print_i64".into(),
             Signature {

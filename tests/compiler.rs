@@ -14,6 +14,8 @@ mod equality;
 mod language;
 #[path = "compiler/matching_loops.rs"]
 mod matching_loops;
+#[path = "compiler/modules.rs"]
+mod modules;
 #[path = "compiler/runtime.rs"]
 mod runtime;
 #[path = "compiler/strings.rs"]

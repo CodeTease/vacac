@@ -23,6 +23,16 @@ impl<'ctx> Codegen<'ctx> {
                 span.line, span.column
             )
         })?;
+        if self
+            .enum_visibility
+            .get(enum_name)
+            .is_some_and(|(owner, public)| owner != &self.module_context && !public)
+        {
+            return Err(format!(
+                "line {}:{}: enum `{enum_name}` is private",
+                span.line, span.column
+            ));
+        }
         let variant_index = self.enums[enum_id]
             .variants
             .iter()
@@ -124,6 +134,16 @@ impl<'ctx> Codegen<'ctx> {
                 span.line, span.column
             )
         })?;
+        if self
+            .struct_visibility
+            .get(name)
+            .is_some_and(|(owner, public)| owner != &self.module_context && !public)
+        {
+            return Err(format!(
+                "line {}:{}: struct `{name}` is private",
+                span.line, span.column
+            ));
+        }
         let declaration = self.structs[struct_id].clone();
         let struct_type = self.struct_types[struct_id];
         let mut aggregate = struct_type.const_zero().as_basic_value_enum();

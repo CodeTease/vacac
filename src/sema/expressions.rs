@@ -216,6 +216,11 @@ impl Checker {
                     .get(name)
                     .copied()
                     .ok_or_else(|| at(*span, format!("unknown struct `{name}`")))?;
+                if self.structs[struct_id].module != self.module_context
+                    && !self.structs[struct_id].is_public
+                {
+                    return Err(at(*span, format!("struct `{name}` is private")));
+                }
                 let declaration = self.structs[struct_id].clone();
                 let mut seen = std::collections::HashSet::new();
                 for (field_name, value, field_span) in fields {
@@ -348,6 +353,12 @@ impl Checker {
                     .signatures
                     .get(name)
                     .ok_or_else(|| at(*span, format!("unknown function `{name}`")))?;
+                if let Some((module, is_public)) = self.function_visibility.get(name)
+                    && module != &self.module_context
+                    && !is_public
+                {
+                    return Err(at(*span, format!("function `{name}` is private")));
+                }
                 if args.len() != signature.params.len() {
                     return Err(at(
                         *span,
@@ -412,6 +423,11 @@ impl Checker {
                     .get(enum_name)
                     .copied()
                     .ok_or_else(|| at(*span, format!("unknown enum `{enum_name}`")))?;
+                if self.enums[enum_id].module != self.module_context
+                    && !self.enums[enum_id].is_public
+                {
+                    return Err(at(*span, format!("enum `{enum_name}` is private")));
+                }
                 let variant = self.enums[enum_id]
                     .variants
                     .iter()

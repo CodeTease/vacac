@@ -10,6 +10,7 @@ impl From<&Token> for Span {
             line: token.line,
             column: token.column,
             end_column: token.end_column,
+            file: token.file,
         }
     }
 }
@@ -18,10 +19,17 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     struct_names: HashSet<String>,
+    enum_names: HashSet<String>,
+    module: String,
+    parsing_match_value: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
+        Self::new_in_module(tokens, String::new())
+    }
+
+    pub fn new_in_module(tokens: Vec<Token>, module: String) -> Self {
         let struct_names = tokens
             .windows(2)
             .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
@@ -29,10 +37,20 @@ impl Parser {
                 _ => None,
             })
             .collect();
+        let enum_names = tokens
+            .windows(2)
+            .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
+                (TokenKind::Enum, TokenKind::Ident(name)) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         Self {
             tokens,
             current: 0,
             struct_names,
+            enum_names,
+            module,
+            parsing_match_value: false,
         }
     }
 
@@ -40,26 +58,54 @@ impl Parser {
         let mut enums = Vec::new();
         let mut structs = Vec::new();
         let mut functions = Vec::new();
+        let mut modules = Vec::new();
         while !self.at(&TokenKind::Eof) {
+            let is_public = self.take(&TokenKind::Pub);
+            if self.take(&TokenKind::Mod) {
+                if is_public {
+                    return Err(unexpected(
+                        self.previous(),
+                        "a declaration after `pub` (`pub mod` is not supported)",
+                    ));
+                }
+                let token = self.previous().clone();
+                let name = self.take_ident("module name")?;
+                self.consume(&TokenKind::Semicolon, "`;` after module declaration")?;
+                modules.push(ModuleDecl {
+                    name,
+                    span: Span::from(&token),
+                });
+                continue;
+            }
             if self.at(&TokenKind::Enum) {
-                enums.push(self.parse_enum()?);
+                enums.push(self.parse_enum(is_public)?);
             } else if self.at(&TokenKind::Struct) {
-                structs.push(self.parse_struct()?);
+                structs.push(self.parse_struct(is_public)?);
             } else {
-                functions.push(self.parse_function()?);
+                if !self.at(&TokenKind::Fn) {
+                    return Err(unexpected(
+                        self.peek(),
+                        "`fn`, `struct`, `enum`, or `mod` declaration",
+                    ));
+                }
+                functions.push(self.parse_function(is_public)?);
             }
         }
-        if functions.is_empty() && enums.is_empty() && structs.is_empty() {
+        if functions.is_empty() && enums.is_empty() && structs.is_empty() && modules.is_empty() {
             return Err("program must contain at least one declaration".into());
         }
         Ok(Program {
             enums,
             structs,
             functions,
+            modules,
+            source_files: Vec::new(),
+            source_texts: Vec::new(),
+            functions_are_qualified: false,
         })
     }
 
-    fn parse_enum(&mut self) -> Result<EnumDecl, Diagnostic> {
+    fn parse_enum(&mut self, is_public: bool) -> Result<EnumDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Enum, "`enum`")?;
         let name = self.take_ident("enum name")?;
         self.consume(&TokenKind::LBrace, "`{` after enum name")?;
@@ -78,7 +124,7 @@ impl Parser {
                         break;
                     }
                 }
-                self.consume(&TokenKind::RParen, "`)` after enum payload type")?;
+                self.consume(&TokenKind::RParen, "`)`")?;
                 payload
             } else {
                 Vec::new()
@@ -100,10 +146,12 @@ impl Parser {
             name,
             variants,
             span: Span::from(&start),
+            is_public,
+            module: self.module.clone(),
         })
     }
 
-    fn parse_struct(&mut self) -> Result<StructDecl, Diagnostic> {
+    fn parse_struct(&mut self, is_public: bool) -> Result<StructDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Struct, "`struct`")?;
         let name = self.take_ident("struct name")?;
         self.consume(&TokenKind::LBrace, "`{` after struct name")?;
@@ -130,10 +178,12 @@ impl Parser {
             name,
             fields,
             span: Span::from(&start),
+            is_public,
+            module: self.module.clone(),
         })
     }
 
-    fn parse_function(&mut self) -> Result<Function, Diagnostic> {
+    fn parse_function(&mut self, is_public: bool) -> Result<Function, Diagnostic> {
         let start = self.consume(&TokenKind::Fn, "`fn`")?;
         let name = self.take_ident("function name")?;
         self.consume(&TokenKind::LParen, "`(`")?;
@@ -167,6 +217,8 @@ impl Parser {
             return_type,
             body,
             span: Span::from(&start),
+            is_public,
+            module: self.module.clone(),
         })
     }
 
@@ -194,11 +246,12 @@ impl Parser {
             };
             self.consume(&TokenKind::RBracket, "`]`")?;
             Ok(Type::Array(Box::new(element), length))
-        } else if let TokenKind::Ident(name) = &self.peek().kind {
-            let name = name.clone();
-            self.advance();
-            // Named types are resolved after all declarations are collected.
-            Ok(Type::Named(name))
+        } else if matches!(&self.peek().kind, TokenKind::Ident(_)) {
+            let mut segments = vec![self.take_ident("type name")?];
+            while self.take(&TokenKind::DoubleColon) {
+                segments.push(self.take_ident("type name after `::`")?);
+            }
+            Ok(Type::Named(segments.join("::")))
         } else {
             Err(unexpected(
                 self.peek(),
@@ -448,70 +501,130 @@ impl Parser {
                 body: Box::new(self.parse_block()?),
                 span,
             }),
-            TokenKind::Ident(enum_name) if self.at(&TokenKind::DoubleColon) => {
-                self.advance();
-                let variant_name = self.take_ident("enum variant after `::`")?;
-                let payload = if self.take(&TokenKind::LParen) {
-                    let mut values = Vec::new();
+            TokenKind::Ident(first) => {
+                let mut path = vec![first];
+                while self.at(&TokenKind::DoubleColon)
+                    && matches!(&self.peek_n(1).kind, TokenKind::Ident(_))
+                    && matches!(&self.peek_n(2).kind, TokenKind::DoubleColon)
+                {
+                    self.advance();
+                    path.push(self.take_ident("name after `::`")?);
+                }
+                if self.at(&TokenKind::DoubleColon) {
+                    self.advance();
+                    path.push(self.take_ident("name after `::`")?);
+                }
+                let name = path.join("::");
+                if path.len() >= 2 && self.take(&TokenKind::LParen) {
+                    let mut args = Vec::new();
                     if !self.at(&TokenKind::RParen) {
                         loop {
-                            values.push(self.parse_expression(0)?);
+                            args.push(self.parse_expression(0)?);
                             if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
                                 break;
                             }
                         }
+                    }
+                    self.consume(&TokenKind::RParen, "`)`")?;
+                    return Ok(Expr::Call { name, args, span });
+                }
+                if path.len() >= 2 && !self.parsing_match_value && self.at(&TokenKind::LBrace) {
+                    let type_name = path.last().expect("path has at least two segments");
+                    let enum_name = path
+                        .get(path.len() - 2)
+                        .expect("path has at least two segments");
+                    if self.enum_names.contains(enum_name) && !self.struct_names.contains(type_name)
+                    {
+                        let variant_name = path.pop().expect("path has multiple segments");
+                        return Ok(Expr::Variant {
+                            enum_name: path.join("::"),
+                            variant_name,
+                            payload: None,
+                            span,
+                        });
+                    }
+                    self.advance();
+                    let mut fields = Vec::new();
+                    if !self.at(&TokenKind::RBrace) {
+                        loop {
+                            let field_token = self.peek().clone();
+                            let field_name = self.take_ident("field name")?;
+                            self.consume(&TokenKind::Colon, "`:` after field name")?;
+                            let value = self.parse_expression(0)?;
+                            fields.push((field_name, value, Span::from(&field_token)));
+                            if !self.take(&TokenKind::Comma) {
+                                break;
+                            }
+                            if self.at(&TokenKind::RBrace) {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
+                    return Ok(Expr::Struct { name, fields, span });
+                }
+                if path.len() >= 2 {
+                    let variant_name = path.pop().expect("path has multiple segments");
+                    let enum_name = path.join("::");
+                    let payload = if self.take(&TokenKind::LParen) {
+                        let mut values = Vec::new();
+                        if !self.at(&TokenKind::RParen) {
+                            loop {
+                                values.push(self.parse_expression(0)?);
+                                if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                                    break;
+                                }
+                            }
+                        } else {
+                            return Err(unexpected(self.peek(), "at least one enum payload value"));
+                        }
+                        self.consume(&TokenKind::RParen, "`)` after enum payload")?;
+                        Some(values)
                     } else {
-                        return Err(unexpected(self.peek(), "at least one enum payload value"));
+                        None
+                    };
+                    Ok(Expr::Variant {
+                        enum_name,
+                        variant_name,
+                        payload,
+                        span,
+                    })
+                } else if self.struct_names.contains(&name) && self.at(&TokenKind::LBrace) {
+                    self.advance();
+                    let mut fields = Vec::new();
+                    if !self.at(&TokenKind::RBrace) {
+                        loop {
+                            let field_token = self.peek().clone();
+                            let field_name = self.take_ident("field name")?;
+                            self.consume(&TokenKind::Colon, "`:` after field name")?;
+                            let value = self.parse_expression(0)?;
+                            fields.push((field_name, value, Span::from(&field_token)));
+                            if !self.take(&TokenKind::Comma) {
+                                break;
+                            }
+                            if self.at(&TokenKind::RBrace) {
+                                break;
+                            }
+                        }
                     }
-                    self.consume(&TokenKind::RParen, "`)` after enum payload")?;
-                    Some(values)
+                    self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
+                    Ok(Expr::Struct { name, fields, span })
+                } else if self.take(&TokenKind::LParen) {
+                    let mut args = Vec::new();
+                    if !self.at(&TokenKind::RParen) {
+                        loop {
+                            args.push(self.parse_expression(0)?);
+                            if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(&TokenKind::RParen, "`)`")?;
+                    Ok(Expr::Call { name, args, span })
                 } else {
-                    None
-                };
-                Ok(Expr::Variant {
-                    enum_name,
-                    variant_name,
-                    payload,
-                    span,
-                })
-            }
-            TokenKind::Ident(name)
-                if self.struct_names.contains(&name) && self.at(&TokenKind::LBrace) =>
-            {
-                self.advance();
-                let mut fields = Vec::new();
-                if !self.at(&TokenKind::RBrace) {
-                    loop {
-                        let field_token = self.peek().clone();
-                        let field_name = self.take_ident("field name")?;
-                        self.consume(&TokenKind::Colon, "`:` after field name")?;
-                        let value = self.parse_expression(0)?;
-                        fields.push((field_name, value, Span::from(&field_token)));
-                        if !self.take(&TokenKind::Comma) {
-                            break;
-                        }
-                        if self.at(&TokenKind::RBrace) {
-                            break;
-                        }
-                    }
+                    Ok(Expr::Variable(name, span))
                 }
-                self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
-                Ok(Expr::Struct { name, fields, span })
             }
-            TokenKind::Ident(name) if self.take(&TokenKind::LParen) => {
-                let mut args = Vec::new();
-                if !self.at(&TokenKind::RParen) {
-                    loop {
-                        args.push(self.parse_expression(0)?);
-                        if !self.take(&TokenKind::Comma) {
-                            break;
-                        }
-                    }
-                }
-                self.consume(&TokenKind::RParen, "`)`")?;
-                Ok(Expr::Call { name, args, span })
-            }
-            TokenKind::Ident(name) => Ok(Expr::Variable(name, span)),
             TokenKind::LParen => {
                 let expr = self.parse_expression(0)?;
                 self.consume(&TokenKind::RParen, "`)`")?;
@@ -522,7 +635,11 @@ impl Parser {
     }
 
     fn parse_match(&mut self, span: Span) -> Result<Expr, Diagnostic> {
-        let value = self.parse_expression(7)?;
+        let was_parsing_match_value = self.parsing_match_value;
+        self.parsing_match_value = true;
+        let parsed_value = self.parse_expression(7);
+        self.parsing_match_value = was_parsing_match_value;
+        let value = parsed_value?;
         self.consume(&TokenKind::LBrace, "`{` before match arms")?;
         let mut arms = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
@@ -554,9 +671,15 @@ impl Parser {
                 self.advance();
                 MatchPattern::I64(value as i64)
             } else {
-                let enum_name = self.take_ident("enum name in match pattern")?;
-                self.consume(&TokenKind::DoubleColon, "`::` in match pattern")?;
-                let variant_name = self.take_ident("enum variant in match pattern")?;
+                let mut path = vec![self.take_ident("enum name in match pattern")?];
+                while self.take(&TokenKind::DoubleColon) {
+                    path.push(self.take_ident("name after `::` in match pattern")?);
+                }
+                if path.len() < 2 {
+                    return Err(unexpected(self.peek(), "`::` in match pattern"));
+                }
+                let variant_name = path.pop().expect("path has multiple segments");
+                let enum_name = path.join("::");
                 let bindings = if self.take(&TokenKind::LParen) {
                     let mut bindings = Vec::new();
                     if !self.at(&TokenKind::RParen) {

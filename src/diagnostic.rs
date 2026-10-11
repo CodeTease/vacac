@@ -5,6 +5,7 @@ pub struct SourceSpan {
     pub line: usize,
     pub column: usize,
     pub end_column: usize,
+    pub file: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +13,7 @@ pub struct Diagnostic {
     pub message: String,
     pub file: Option<String>,
     pub span: Option<SourceSpan>,
+    pub source_id: Option<usize>,
     pub source_line: Option<String>,
 }
 
@@ -21,6 +23,7 @@ impl Diagnostic {
             message: message.into(),
             file: None,
             span: None,
+            source_id: None,
             source_line: None,
         }
     }
@@ -30,6 +33,7 @@ impl Diagnostic {
             message: message.into(),
             file: None,
             span: Some(span),
+            source_id: span.file,
             source_line: None,
         }
     }
@@ -39,19 +43,25 @@ impl Diagnostic {
         self
     }
 
-    pub fn with_source(mut self, file: impl Into<String>, source: &str) -> Self {
+    pub fn with_source(self, file: impl Into<String>, source: &str) -> Self {
+        self.with_source_id(0, file, source)
+    }
+
+    pub fn with_source_id(
+        mut self,
+        source_id: usize,
+        file: impl Into<String>,
+        source: &str,
+    ) -> Self {
         self.file = Some(file.into());
-        if let Some(span) = self.span {
-            self.source_line = source
-                .lines()
-                .nth(span.line.saturating_sub(1))
-                .map(str::to_owned);
-        }
+        self.source_line = self
+            .span
+            .filter(|span| span.file == Some(source_id))
+            .and_then(|span| source.lines().nth(span.line.saturating_sub(1)))
+            .map(str::to_owned);
         self
     }
 
-    /// Convert diagnostics from components that still expose the legacy string
-    /// format into the structured representation at the component boundary.
     pub fn from_legacy(message: impl Into<String>, file: &str, source: &str) -> Self {
         let message = message.into();
         let Some(location) = message.strip_prefix("line ") else {
@@ -81,6 +91,7 @@ impl Diagnostic {
                 line,
                 column,
                 end_column,
+                file: None,
             },
             text,
         )
@@ -137,6 +148,7 @@ impl From<crate::ast::Span> for SourceSpan {
             line: span.line,
             column: span.column,
             end_column: span.end_column,
+            file: span.file,
         }
     }
 }

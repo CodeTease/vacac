@@ -3,6 +3,7 @@ mod ast;
 mod codegen;
 mod diagnostic;
 mod lexer;
+mod modules;
 mod parser;
 mod sema;
 
@@ -173,22 +174,29 @@ fn run() -> Result<i32, Diagnostic> {
         quiet,
         ..
     } = options;
-    let source = std::fs::read_to_string(&source_path).map_err(|e| {
-        Diagnostic::new(format!("cannot read source file: {e}"))
-            .with_file(source_path.display().to_string())
-    })?;
-
+    let program = modules::load(&source_path)?;
     let file = source_path.display().to_string();
-    let tokens = lexer::lex(&source).map_err(|e| e.with_source(&file, &source))?;
-    let program = parser::Parser::new(tokens)
-        .parse_program()
-        .map_err(|e| e.with_source(&file, &source))?;
-    sema::check(&program).map_err(|e| e.with_source(&file, &source))?;
+    sema::check(&program).map_err(|e| {
+        if let Some(source_id) = e.source_id {
+            e.with_source_id(
+                source_id,
+                program.source_files[source_id].clone(),
+                &program.source_texts[source_id],
+            )
+        } else {
+            e.with_file(file.clone())
+        }
+    })?;
 
     match mode {
         OutputMode::Check => {
             codegen::check(&program).map_err(|e| {
-                backend_diagnostic(&source_path, &source, "code generation failed", &e)
+                backend_diagnostic(
+                    &source_path,
+                    &program.source_texts[0],
+                    "code generation failed",
+                    &e,
+                )
             })?;
             if !quiet {
                 println!("checked {}", source_path.display());
@@ -196,7 +204,12 @@ fn run() -> Result<i32, Diagnostic> {
         }
         OutputMode::EmitLlvm(path) => {
             codegen::emit_llvm(&program, &path).map_err(|e| {
-                backend_diagnostic(&source_path, &source, "LLVM IR emission failed", &e)
+                backend_diagnostic(
+                    &source_path,
+                    &program.source_texts[0],
+                    "LLVM IR emission failed",
+                    &e,
+                )
             })?;
             if !quiet {
                 println!("wrote {}", path.display());
@@ -205,7 +218,12 @@ fn run() -> Result<i32, Diagnostic> {
         OutputMode::Executable { output, object } => {
             let object = object.unwrap_or_else(|| object_path(&output));
             codegen::emit_object(&program, &object).map_err(|e| {
-                backend_diagnostic(&source_path, &source, "code generation failed", &e)
+                backend_diagnostic(
+                    &source_path,
+                    &program.source_texts[0],
+                    "code generation failed",
+                    &e,
+                )
             })?;
             let status = link_object(&object, &output)?;
             if !status.success() {
@@ -222,7 +240,12 @@ fn run() -> Result<i32, Diagnostic> {
             let executable = temp.path().join("program");
             let object = temp.path().join("program.o");
             codegen::emit_object(&program, &object).map_err(|e| {
-                backend_diagnostic(&source_path, &source, "code generation failed", &e)
+                backend_diagnostic(
+                    &source_path,
+                    &program.source_texts[0],
+                    "code generation failed",
+                    &e,
+                )
             })?;
             let status = link_object(&object, &executable)?;
             if !status.success() {

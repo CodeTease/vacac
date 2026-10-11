@@ -75,6 +75,10 @@ struct Codegen<'ctx> {
     loop_targets: Vec<LoopTarget<'ctx>>,
     current_function: Option<FunctionValue<'ctx>>,
     return_type: ValueType,
+    module_context: String,
+    function_visibility: HashMap<String, (String, bool)>,
+    enum_visibility: HashMap<String, (String, bool)>,
+    struct_visibility: HashMap<String, (String, bool)>,
 }
 
 pub fn emit_object(program: &Program, path: &Path) -> Result<(), String> {

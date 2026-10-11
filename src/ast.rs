@@ -23,6 +23,7 @@ pub struct Span {
     pub line: usize,
     pub column: usize,
     pub end_column: usize,
+    pub file: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,16 @@ pub struct Program {
     pub enums: Vec<EnumDecl>,
     pub structs: Vec<StructDecl>,
     pub functions: Vec<Function>,
+    pub modules: Vec<ModuleDecl>,
+    pub source_files: Vec<String>,
+    pub source_texts: Vec<String>,
+    pub functions_are_qualified: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleDecl {
+    pub name: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +48,8 @@ pub struct StructDecl {
     pub name: String,
     pub fields: Vec<StructField>,
     pub span: Span,
+    pub is_public: bool,
+    pub module: String,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +64,8 @@ pub struct EnumDecl {
     pub name: String,
     pub variants: Vec<EnumVariant>,
     pub span: Span,
+    pub is_public: bool,
+    pub module: String,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +82,8 @@ pub struct Function {
     pub return_type: Type,
     pub body: Block,
     pub span: Span,
+    pub is_public: bool,
+    pub module: String,
 }
 
 #[derive(Debug, Clone)]

@@ -6,6 +6,8 @@ pub enum TokenKind {
     Integer(u64),
     StringLit(String),
     Fn,
+    Mod,
+    Pub,
     Enum,
     Struct,
     Match,
@@ -68,6 +70,7 @@ pub struct Token {
     pub line: usize,
     pub column: usize,
     pub end_column: usize,
+    pub file: Option<usize>,
 }
 
 impl Token {
@@ -84,6 +87,8 @@ impl Token {
 fn token_name(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Fn => "fn",
+        TokenKind::Mod => "mod",
+        TokenKind::Pub => "pub",
         TokenKind::Enum => "enum",
         TokenKind::Struct => "struct",
         TokenKind::Match => "match",
@@ -145,6 +150,10 @@ fn token_name(kind: &TokenKind) -> &'static str {
 }
 
 pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
+    lex_named(input, None)
+}
+
+pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Diagnostic> {
     let bytes = input.as_bytes();
     let (mut i, mut line, mut column) = (0usize, 1usize, 1usize);
     let mut tokens = Vec::new();
@@ -195,6 +204,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                         line: start_line,
                         column: start_column,
                         end_column: column,
+                        file: source_id,
                     },
                     "unterminated block comment",
                 ));
@@ -213,6 +223,8 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
             let text = &input[start..i];
             match text {
                 "fn" => TokenKind::Fn,
+                "mod" => TokenKind::Mod,
+                "pub" => TokenKind::Pub,
                 "enum" => TokenKind::Enum,
                 "struct" => TokenKind::Struct,
                 "match" => TokenKind::Match,
@@ -248,6 +260,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                         line: start_line,
                         column: start_column,
                         end_column: column,
+                        file: source_id,
                     },
                     "integer literal is out of range",
                 )
@@ -264,6 +277,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                                 line: start_line,
                                 column: start_column,
                                 end_column: column,
+                                file: source_id,
                             },
                             "unterminated string literal",
                         ));
@@ -287,6 +301,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                                         line,
                                         column: escape_column,
                                         end_column: escape_column + 2,
+                                        file: source_id,
                                     },
                                     "NUL characters are not supported in string literals",
                                 ));
@@ -297,6 +312,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                                         line: start_line,
                                         column: start_column,
                                         end_column: column + 1,
+                                        file: source_id,
                                     },
                                     "unterminated string literal",
                                 ));
@@ -308,6 +324,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                                         line,
                                         column: escape_column,
                                         end_column: escape_column + 2,
+                                        file: source_id,
                                     },
                                     format!(
                                         "unknown escape sequence `\\{}`",
@@ -374,6 +391,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
                             line,
                             column,
                             end_column: column + 1,
+                            file: source_id,
                         },
                         format!("unexpected character `{}`", b as char),
                     ));
@@ -388,6 +406,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
             line: start_line,
             column: start_column,
             end_column: column,
+            file: source_id,
         });
     }
     tokens.push(Token {
@@ -395,6 +414,7 @@ pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
         line,
         column,
         end_column: column,
+        file: source_id,
     });
     Ok(tokens)
 }
@@ -405,6 +425,7 @@ pub fn unexpected(token: &Token, expected: &str) -> Diagnostic {
             line: token.line,
             column: token.column,
             end_column: token.end_column,
+            file: token.file,
         },
         format!("expected {expected}, found {}", token.describe()),
     )

@@ -72,6 +72,17 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 };
+                let (owner, public) = self
+                    .struct_visibility
+                    .get(&self.structs[struct_id].name)
+                    .cloned()
+                    .unwrap_or_default();
+                if owner != self.module_context && !public {
+                    return Err(format!(
+                        "line {}:{}: struct `{}` is private",
+                        span.line, span.column, self.structs[struct_id].name
+                    ));
+                }
                 let field_index = self.structs[struct_id]
                     .fields
                     .iter()
