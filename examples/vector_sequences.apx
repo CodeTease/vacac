@@ -1,0 +1,29 @@
+// Grow a vector, share its handle, and iterate over a length snapshot.
+fn main() -> i64 {
+    let values: Vec<i64> = vec_new();
+    vec_push(values, 10);
+    vec_push(values, 20);
+    vec_push(values, 30);
+
+    // Vector handles alias the same heap-backed sequence.
+    let alias = values;
+    alias[1] = 25;
+
+    let total = 0;
+    for value in values {
+        print_i64(value);
+        total = total + value;
+
+        // This append is visible through both handles, but iteration's
+        // length was captured at loop entry, so 99 is not visited here.
+        vec_push(alias, 99);
+    }
+
+    print("sum of the original elements = ");
+    print_i64(total);
+    print("length after appending = ");
+    print_i64(len(values));
+    print("last element through alias = ");
+    print_i64(alias[len(alias) - 1]);
+    0
+}
