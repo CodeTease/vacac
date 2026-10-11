@@ -77,6 +77,7 @@ pub fn check(program: &Program) -> Result<(), Diagnostic> {
 
 mod declarations;
 mod expressions;
+mod matching;
 mod statements;
 mod types;
 

@@ -104,8 +104,10 @@ mod calls;
 mod declarations;
 mod equality;
 mod expressions;
+mod loops;
 mod operators;
 mod output;
+mod places;
 mod runtime;
 mod statements;
 
