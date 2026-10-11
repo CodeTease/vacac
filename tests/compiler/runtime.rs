@@ -1,7 +1,7 @@
 use crate::common::*;
 
 #[test]
-fn apex_main_result_becomes_process_exit_status() {
+fn vaca_main_result_becomes_process_exit_status() {
     let result = compile_and_run("fn main() -> i64 { 37 }\n", "main-exit-status");
     assert_eq!(result.status.code(), Some(37));
 }

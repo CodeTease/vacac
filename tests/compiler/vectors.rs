@@ -44,7 +44,7 @@ fn vectors_support_strings_structs_and_nested_vectors() {
 
         fn main() -> i64 {
             let words: Vec<str> = vec_new();
-            vec_push(words, "Apex");
+            vec_push(words, "Vaca");
             vec_push(words, "Vec");
             print(words[0]);
             print(words[1]);
@@ -67,7 +67,7 @@ fn vectors_support_strings_structs_and_nested_vectors() {
         "vector-aggregates-nested",
     );
     assert_eq!(result.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&result.stdout), "ApexVec7\n9\n55\n");
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "VacaVec7\n9\n55\n");
 }
 
 #[test]

@@ -4,24 +4,25 @@ use std::process::Command;
 
 #[test]
 fn help_and_version_are_available_without_a_source_file() {
-    let help = Command::new(env!("CARGO_BIN_EXE_apexc"))
+    let help = Command::new(env!("CARGO_BIN_EXE_vacac"))
         .arg("--help")
         .output()
         .unwrap();
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
     assert!(help.contains("Usage:"));
+    assert!(help.contains("vacac <source.vca>"));
     assert!(help.contains("--run"));
     assert!(help.contains("--json"));
 
-    let version = Command::new(env!("CARGO_BIN_EXE_apexc"))
+    let version = Command::new(env!("CARGO_BIN_EXE_vacac"))
         .arg("--version")
         .output()
         .unwrap();
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8_lossy(&version.stdout).trim(),
-        format!("apexc {}", env!("CARGO_PKG_VERSION"))
+        format!("vacac {}", env!("CARGO_PKG_VERSION"))
     );
 }
 
@@ -69,7 +70,7 @@ fn json_diagnostics_include_source_location_and_escaped_message() {
     assert!(stderr.contains("\"column\":5"), "{stderr}");
     assert!(stderr.contains("\"end_column\":9"), "{stderr}");
     assert!(stderr.contains("function result has type bool"), "{stderr}");
-    let source_path = dir.join("test.apx").to_string_lossy().into_owned();
+    let source_path = dir.join("test.vca").to_string_lossy().into_owned();
     let escaped_path = source_path.replace('\\', "\\\\").replace('"', "\\\"");
     assert!(
         stderr.contains(&format!("\"file\":\"{escaped_path}\"")),
@@ -150,7 +151,7 @@ fn emit_llvm_writes_a_verified_llvm_ir_module() {
         String::from_utf8_lossy(&result.stderr)
     );
     let ir = fs::read_to_string(dir.join("module.ll")).unwrap();
-    assert!(ir.contains("define i64 @apex_main()"), "{ir}");
+    assert!(ir.contains("define i64 @vaca_main()"), "{ir}");
     assert!(ir.contains("target triple"), "{ir}");
     assert!(!dir.join("a.out").exists());
     assert!(!dir.join("a.o").exists());

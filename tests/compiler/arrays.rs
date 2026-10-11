@@ -33,7 +33,7 @@ fn fixed_arrays_support_annotations_and_function_parameters_and_returns() {
             print_i64(original[0]);
             print_i64(changed[0]);
             let flags: [bool; 2] = [true, false];
-            let words: [str; 2] = ["apex", "array"];
+            let words: [str; 2] = ["vaca", "array"];
             if flags[0] && words[1] == "array" { 0 } else { 1 }
         }
         "#,
@@ -254,7 +254,7 @@ fn arrays_can_be_iterated_for_all_primitive_element_types_and_empty_arrays() {
         r#"
         fn main() -> i64 {
             let flags = [true, false];
-            let words = ["Apex", "rocks"];
+            let words = ["Vaca", "rocks"];
             for flag in flags { if flag { print("T"); } else { print("F"); } }
             for word in words { print(word); }
             let empty: [i64; 0] = [];
@@ -265,7 +265,7 @@ fn arrays_can_be_iterated_for_all_primitive_element_types_and_empty_arrays() {
         "array-iteration-types",
     );
     assert_eq!(result.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&result.stdout), "TFApexrocks");
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "TFVacarocks");
 }
 
 #[test]

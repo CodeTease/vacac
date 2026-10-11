@@ -2,7 +2,7 @@ use super::*;
 
 impl<'ctx> Codegen<'ctx> {
     pub(super) fn for_program(context: &'ctx Context, program: &Program) -> Result<Self, String> {
-        let mut codegen = Self::new(context, "apex");
+        let mut codegen = Self::new(context, "vaca");
         codegen.declare_enums(program)?;
         codegen.declare_structs(program)?;
         codegen.define_enums()?;
@@ -192,7 +192,7 @@ impl<'ctx> Codegen<'ctx> {
             .struct_type(&[pointer.into(), i64_type.into(), i64_type.into()], false);
         let vec_new = self
             .module
-            .add_function("apex_vec_new", pointer.fn_type(&[], false), None);
+            .add_function("vaca_vec_new", pointer.fn_type(&[], false), None);
         let entry = self.context.append_basic_block(vec_new, "entry");
         let failure = self.context.append_basic_block(vec_new, "allocation.error");
         let init = self.context.append_basic_block(vec_new, "initialize");
@@ -246,7 +246,7 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?;
 
         let push = self.module.add_function(
-            "apex_vec_push",
+            "vaca_vec_push",
             self.context.void_type().fn_type(
                 &[
                     pointer.into(),
@@ -607,7 +607,7 @@ impl<'ctx> Codegen<'ctx> {
             }
             self.enum_types.push(
                 self.context
-                    .opaque_struct_type(&format!("apex.enum.{}", declaration.name)),
+                    .opaque_struct_type(&format!("vaca.enum.{}", declaration.name)),
             );
             self.enum_payload_types.push(Vec::new());
             self.enum_visibility.insert(
@@ -666,7 +666,7 @@ impl<'ctx> Codegen<'ctx> {
             }
             self.struct_types.push(
                 self.context
-                    .opaque_struct_type(&format!("apex.struct.{}", declaration.name)),
+                    .opaque_struct_type(&format!("vaca.struct.{}", declaration.name)),
             );
             self.struct_visibility.insert(
                 declaration.name.clone(),
@@ -733,19 +733,19 @@ impl<'ctx> Codegen<'ctx> {
                     | "read_i64"
                     | "printf"
                     | "strcmp"
-                    | "apex_main"
+                    | "vaca_main"
                     | "getchar"
                     | "exit"
                     | "strlen"
                     | "malloc"
                     | "memcpy"
-                    | "apex_str_concat"
+                    | "vaca_str_concat"
                     | "len"
                     | "vec_new"
                     | "vec_push"
                     | "realloc"
-                    | "apex_vec_new"
-                    | "apex_vec_push"
+                    | "vaca_vec_new"
+                    | "vaca_vec_push"
             ) {
                 return Err(format!(
                     "`{}` is a reserved compiler/runtime name",
@@ -780,7 +780,7 @@ impl<'ctx> Codegen<'ctx> {
                 .collect::<Result<_, _>>()?;
             let ret: ValueType = self.resolve_type(&function.return_type, function.span)?;
             let llvm_name = if function.name == "main" {
-                "apex_main"
+                "vaca_main"
             } else if program.functions_are_qualified {
                 &function.name
             } else {

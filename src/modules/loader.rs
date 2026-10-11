@@ -102,11 +102,11 @@ fn module_file_path(parent: &Path, current_module: &str, child_module: &str) -> 
     } else {
         containing_directory.to_path_buf()
     };
-    let flat = directory.join(format!("{child_module}.apx"));
+    let flat = directory.join(format!("{child_module}.vca"));
     if flat.is_file() {
         flat
     } else {
-        let fallback = directory.join(child_module).join("mod.apx");
+        let fallback = directory.join(child_module).join("mod.vca");
         if fallback.is_file() { fallback } else { flat }
     }
 }

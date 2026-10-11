@@ -53,7 +53,7 @@ impl<'ctx> Codegen<'ctx> {
             let stride = self.vector_element_size(element_type)?;
             let runtime = self
                 .module
-                .get_function("apex_vec_push")
+                .get_function("vaca_vec_push")
                 .ok_or("missing vector runtime append")?;
             self.builder
                 .build_call(

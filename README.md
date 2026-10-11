@@ -1,6 +1,6 @@
-# Apex compiler
+# Vaca compiler
 
-`apexc` is a handwritten, statically compiled compiler for Apex v0.1. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
+`vacac` is a handwritten, statically compiled compiler for Vaca v0.1. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
 
 A **CodeTease** project.
 
@@ -16,17 +16,17 @@ Build with:
 cargo build --release
 ```
 
-Compile an Apex source file (the object file is retained next to the executable):
+Compile a Vaca source file (the object file is retained next to the executable):
 
 ```sh
-target/release/apexc examples/factorial.apx -o factorial
+target/release/vacac examples/factorial.vca -o factorial
 ./factorial
 ```
 
 For a quick compile-and-run without leaving build artifacts:
 
 ```sh
-target/release/apexc examples/factorial.apx --run
+target/release/vacac examples/factorial.vca --run
 ```
 
 Use `--emit-obj path.o` to choose the object-file path explicitly.
@@ -34,13 +34,13 @@ Use `--emit-obj path.o` to choose the object-file path explicitly.
 Run the lexer, parser, and semantic checker without producing build artifacts:
 
 ```sh
-target/release/apexc examples/factorial.apx --check
+target/release/vacac examples/factorial.vca --check
 ```
 
 Write the verified LLVM IR module to a text file (without linking an executable):
 
 ```sh
-target/release/apexc examples/factorial.apx --emit-llvm factorial.ll
+target/release/vacac examples/factorial.vca --emit-llvm factorial.ll
 ```
 
 `--check` and `--emit-llvm` are exclusive output modes and cannot be combined
@@ -53,31 +53,31 @@ object or executable. Use `--quiet` (or `-q`) to suppress success messages, and
 ## Examples
 
 The [`examples/`](examples/) directory contains complete programs that can be
-checked or compiled with `apexc`. For instance:
+checked or compiled with `vacac`. For instance:
 
 ```sh
-target/release/apexc examples/enum_match.apx --check
-target/release/apexc examples/enum_match.apx -o enum_match
+target/release/vacac examples/enum_match.vca --check
+target/release/vacac examples/enum_match.vca -o enum_match
 ./enum_match
 ```
 
 Some examples to explore:
 
-- [`if_expression.apx`](examples/if_expression.apx) — choose a value with an
+- [`if_expression.vca`](examples/if_expression.vca) — choose a value with an
   expression conditional.
-- [`enum_match.apx`](examples/enum_match.apx) — construct enum variants and
+- [`enum_match.vca`](examples/enum_match.vca) — construct enum variants and
   handle each one with an exhaustive `match`.
-- [`loop_control.apx`](examples/loop_control.apx) — use `continue` and `break`
+- [`loop_control.vca`](examples/loop_control.vca) — use `continue` and `break`
   in a range loop.
-- [`read_number.apx`](examples/read_number.apx) — read and classify an integer
+- [`read_number.vca`](examples/read_number.vca) — read and classify an integer
   from standard input.
-- [`array_stats.apx`](examples/array_stats.apx) — iterate over a fixed-size
+- [`array_stats.vca`](examples/array_stats.vca) — iterate over a fixed-size
   array.
-- [`array_iteration.apx`](examples/array_iteration.apx) — use read-only array
+- [`array_iteration.vca`](examples/array_iteration.vca) — use read-only array
   iteration to calculate a sum and maximum.
-- [`struct_inventory.apx`](examples/struct_inventory.apx) — define, construct,
+- [`struct_inventory.vca`](examples/struct_inventory.vca) — define, construct,
   pass, and read named structs.
-- [`const_and_struct_fields.apx`](examples/const_and_struct_fields.apx) — use an
+- [`const_and_struct_fields.vca`](examples/const_and_struct_fields.vca) — use an
   immutable `const` value and update fields of a mutable local struct.
 - [`modules/`](examples/modules/) — split a program across nested source files
   and use qualified public structs, enums, and functions.
@@ -87,11 +87,11 @@ Some examples to explore:
 Declare a child module with `mod name;`. The compiler loads its source relative
 to the declaring file, recursively checks all module files as one program, and
 resolves names such as `geometry::distance_squared()` or
-`geometry::point::Point`. Module files can use either `name.apx` or
-`name/mod.apx`; nested declarations are resolved relative to their containing
-module directory. For example, `mod geometry;` in `main.apx` can load
-`geometry.apx`, and a `mod point;` declared in `geometry.apx` can load
-`geometry/point.apx`.
+`geometry::point::Point`. Module files can use either `name.vca` or
+`name/mod.vca`; nested declarations are resolved relative to their containing
+module directory. For example, `mod geometry;` in `main.vca` can load
+`geometry.vca`, and a `mod point;` declared in `geometry.vca` can load
+`geometry/point.vca`.
 
 Declarations in another module are accessible only when marked `pub`; private
 functions, structs, and enums remain local to their declaring module. The root
@@ -101,18 +101,18 @@ type and function names, and enum matching. From the repository root, check,
 compile, or run it with:
 
 ```sh
-target/release/apexc examples/modules/main.apx --check
-target/release/apexc examples/modules/main.apx -o modules-example
+target/release/vacac examples/modules/main.vca --check
+target/release/vacac examples/modules/main.vca -o modules-example
 ./modules-example
 # Or compile and run without leaving artifacts:
-target/release/apexc examples/modules/main.apx --run
+target/release/vacac examples/modules/main.vca --run
 ```
 
 ## Expression conditionals
 
 In addition to statement-style `if`/`else`, an `if` with an `else` can produce a value:
 
-```apex
+```vaca
 let larger = if left > right { left } else { right };
 ```
 
@@ -126,7 +126,7 @@ because the integer domain is open-ended. Duplicate and unreachable patterns
 are rejected. Integer patterns are signed decimal literals, including
 `-9223372036854775808`:
 
-```apex
+```vaca
 let label = match code {
     0 => { "success" },
     -1 => { "failure" },
@@ -139,7 +139,7 @@ An unconditional `loop` expression produces the value carried by its
 non-`unit` type. `continue;` restarts the innermost loop. Ordinary `while` and
 `for` loops still use bare `break;` and do not produce values:
 
-```apex
+```vaca
 let first_even = loop {
     candidate = candidate + 1;
     if candidate % 2 == 0 {
@@ -154,7 +154,7 @@ let first_even = loop {
 
 Fixed-size arrays contain `i64`, `bool`, `str`, values of a named struct or enum type, vectors, or other fixed-size arrays. Array literals infer their element type and length from their contents; annotations use `[element_type; length]`:
 
-```apex
+```vaca
 fn first(values: [i64; 3]) -> i64 {
     values[0]
 }
@@ -173,7 +173,7 @@ Arrays are copied as values when bound, passed, or returned. Arrays of structs, 
 
 Arrays may also be traversed directly with a read-only element binding:
 
-```apex
+```vaca
 for value in values {
     print_i64(value);
 }
@@ -185,7 +185,7 @@ The array expression is evaluated once and copied before iteration. The binding 
 
 `Vec<T>` is a heap-backed, runtime-sized sequence with `i64`, `bool`, `str`, named enum/struct, fixed-array, and nested-vector element types (but not `unit`). Create an empty vector with a type annotation and append values with `vec_push`:
 
-```apex
+```vaca
 fn main() -> i64 {
     let values: Vec<i64> = vec_new();
     vec_push(values, 10);
@@ -203,7 +203,7 @@ fn main() -> i64 {
 
 Named records (structs) have top-level declarations and named fields of primitive, fixed-array, vector, enum, or struct type:
 
-```apex
+```vaca
 struct User {
     id: i64,
     active: bool,
@@ -221,7 +221,7 @@ Struct values can be bound, passed to functions, and returned. A literal must in
 
 Enums are top-level declarations with uniquely named variants. A variant has no payload or an ordered tuple of one or more non-`unit` value payloads (primitives, named structs and enums, fixed-size arrays, or vectors):
 
-```apex
+```vaca
 enum MaybeInt {
     None,
     Some(i64),
@@ -245,7 +245,7 @@ fn main() -> i64 {
 
 Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. `match` is an expression. Variant patterns use `EnumName::Variant`; payload variants bind or ignore each field independently, for example `Event::Record(id, _, label)`. The number and types of supplied payload values and pattern fields must match the declaration. A final `_` wildcard arm may handle all remaining variants; it is optional when every variant is otherwise covered. Wildcards must be unique and last, and duplicate or unreachable arms are rejected. Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same non-`unit` type. Enum values may be bound, assigned, passed to and returned from functions, stored in fixed-size arrays, inspected with `match`, and compared for equality or inequality. Two enums are equal when they have the same variant and equal payloads; payload strings compare by contents and aggregate payloads compare recursively. Payloads may be any non-`unit` value type, including arrays, structs, and other enums. Recursive by-value aggregate layouts are rejected.
 
-## Apex v0.1 syntax
+## Vaca v0.1 syntax
 
 ```text
 fn factorial(n: i64) -> i64 {
@@ -272,4 +272,4 @@ Value types are `i64`, `bool`, `str`, named enums, named structs, recursively ne
 
 Strings are immutable; they can be bound, assigned, passed, returned, and compared by content with `==` and `!=`. The `+` operator concatenates two strings. Concatenation copies both inputs into a newly allocated NUL-terminated string; these allocations remain alive until the process exits. Concatenation uses UTF-8 bytes without changing their encoding. Other arithmetic and ordering comparisons are not supported for `str`. `\0` is rejected because strings are NUL-terminated at runtime. `print(str)` writes a string to stdout as-is, and `println(str)` writes it followed by a newline; `print("x = "); print_i64(x);` prints a labelled value.
 
-The required Apex entry point is `fn main() -> i64`. The compiler emits a small C-ABI `main` wrapper that returns the low 8 bits of the Apex result as the process exit status, following the host OS convention. `read_i64()` accepts optional leading ASCII whitespace and an optional `+` or `-`, followed by at least one decimal digit and then whitespace or EOF. A malformed token, end-of-file before a number, or a value outside the `i64` range terminates the program with status 1. The first whitespace after a number is consumed as its delimiter; any following token remains available to the next call.
+The required Vaca entry point is `fn main() -> i64`. The compiler emits a small C-ABI `main` wrapper that returns the low 8 bits of the Vaca result as the process exit status, following the host OS convention. `read_i64()` accepts optional leading ASCII whitespace and an optional `+` or `-`, followed by at least one decimal digit and then whitespace or EOF. A malformed token, end-of-file before a number, or a value outside the `i64` range terminates the program with status 1. The first whitespace after a number is consumed as its delimiter; any following token remains available to the next call.

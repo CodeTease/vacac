@@ -24,7 +24,7 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.position_at_end(entry);
         let fmt = self
             .builder
-            .build_global_string_ptr(format, &format!("apex_{name}_fmt"))
+            .build_global_string_ptr(format, &format!("vaca_{name}_fmt"))
             .map_err(|e| e.to_string())?;
         let value = function
             .get_nth_param(0)

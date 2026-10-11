@@ -10,7 +10,7 @@ fn parser_diagnostics_highlight_the_offending_source_token() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:13: expected expression, found `;`"),
+        stderr.contains("test.vca:2:13: expected expression, found `;`"),
         "unexpected diagnostic: {stderr}"
     );
     assert!(

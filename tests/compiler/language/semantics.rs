@@ -23,7 +23,7 @@ fn positive_literal_outside_i64_reports_source_location() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:5: integer literal is out of range for i64"),
+        stderr.contains("test.vca:2:5: integer literal is out of range for i64"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);
@@ -35,7 +35,7 @@ fn semantic_type_errors_are_reported_before_codegen() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:5: function result has type bool, expected i64"),
+        stderr.contains("test.vca:2:5: function result has type bool, expected i64"),
         "unexpected diagnostic: {stderr}"
     );
     assert!(!dir.join("program.o").exists());
@@ -51,7 +51,7 @@ fn semantic_checker_validates_function_argument_types() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:3:14: argument 1 to `identity` has type bool, expected i64"),
+        stderr.contains("test.vca:3:14: argument 1 to `identity` has type bool, expected i64"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);
@@ -67,7 +67,7 @@ fn semantic_checker_rejects_functions_with_a_fallthrough_path() {
     assert!(!compile.status.success());
     assert!(
         stderr
-            .contains("test.apx:1:1: function `maybe` can reach its end without returning a value"),
+            .contains("test.vca:1:1: function `maybe` can reach its end without returning a value"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);

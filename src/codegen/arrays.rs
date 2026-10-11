@@ -70,7 +70,7 @@ impl<'ctx> Codegen<'ctx> {
                 .vector_element_byte_size(ValueType::from(self.vector_shapes[vector_id].element))?;
             let function = self
                 .module
-                .get_function("apex_vec_new")
+                .get_function("vaca_vec_new")
                 .ok_or("missing vector runtime constructor")?;
             let value = self
                 .builder

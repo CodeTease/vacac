@@ -14,7 +14,7 @@ fn strings_can_be_bound_passed_returned_and_printed() {
             println("!");
         }
         fn main() -> i64 {
-            let name: str = "Apex";
+            let name: str = "Vaca";
             print(greeting(true));
             print(", ");
             println(name);
@@ -34,7 +34,7 @@ fn strings_can_be_bound_passed_returned_and_printed() {
     assert!(result.status.success());
     assert_eq!(
         String::from_utf8_lossy(&result.stdout),
-        "Good day, Apex\nsecond\nanswer = 42\nHi!\n\n100% done\n"
+        "Good day, Vaca\nsecond\nanswer = 42\nHi!\n\n100% done\n"
     );
 }
 
@@ -45,7 +45,7 @@ fn strings_can_be_concatenated() {
         fn punctuation() -> str { "!" }
         fn greeting(name: str) -> str { "Hello, " + name + punctuation() }
         fn main() -> i64 {
-            println(greeting("Apex"));
+            println(greeting("Vaca"));
             println("" + "empty");
             println("tail" + "");
             println("hé" + "llo ✓");
@@ -62,7 +62,7 @@ fn strings_can_be_concatenated() {
     assert!(result.status.success());
     assert_eq!(
         String::from_utf8_lossy(&result.stdout),
-        "Hello, Apex!\nempty\ntail\nhéllo ✓\nxyyy\n"
+        "Hello, Vaca!\nempty\ntail\nhéllo ✓\nxyyy\n"
     );
 }
 
@@ -113,7 +113,7 @@ fn unterminated_string_literal_reports_source_location() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:13: unterminated string literal"),
+        stderr.contains("test.vca:2:13: unterminated string literal"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);
@@ -128,7 +128,7 @@ fn invalid_string_escapes_are_rejected() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:18: unknown escape sequence `\\q`"),
+        stderr.contains("test.vca:2:18: unknown escape sequence `\\q`"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);
@@ -155,7 +155,7 @@ fn strings_only_support_addition_and_equality() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:17: arithmetic operands has type str, expected i64"),
+        stderr.contains("test.vca:2:17: arithmetic operands has type str, expected i64"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);
@@ -179,7 +179,7 @@ fn strings_only_support_addition_and_equality() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(!compile.status.success());
     assert!(
-        stderr.contains("test.apx:2:15: argument 1 to `print_i64` has type str, expected i64"),
+        stderr.contains("test.vca:2:15: argument 1 to `print_i64` has type str, expected i64"),
         "unexpected diagnostic: {stderr}"
     );
     let _ = fs::remove_dir_all(dir);

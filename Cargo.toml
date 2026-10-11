@@ -1,8 +1,8 @@
 [package]
-name = "apexc"
+name = "vacac"
 version = "0.1.0"
 edition = "2024"
-description = "A small static compiler for the Apex language"
+description = "A small static compiler for the Vaca language"
 
 [dependencies]
 inkwell = { version = "0.10.0", features = ["llvm22-1"] }

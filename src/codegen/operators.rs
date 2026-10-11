@@ -59,7 +59,7 @@ impl<'ctx> Codegen<'ctx> {
                 .into_pointer_value();
             let concat = self
                 .module
-                .get_function("apex_str_concat")
+                .get_function("vaca_str_concat")
                 .ok_or("missing string concatenation runtime function")?;
             let result = self
                 .builder

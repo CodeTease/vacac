@@ -11,13 +11,13 @@ use diagnostic::Diagnostic;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const HELP: &str = "apexc — compile Apex source files
+const HELP: &str = "vacac — compile Vaca source files
 
 Usage:
-  apexc <source.apx> [-o <executable>] [--emit-obj <object.o>]
-  apexc <source.apx> --run
-  apexc <source.apx> --check
-  apexc <source.apx> --emit-llvm <module.ll>
+  vacac <source.vca> [-o <executable>] [--emit-obj <object.o>]
+  vacac <source.vca> --run
+  vacac <source.vca> --check
+  vacac <source.vca> --emit-llvm <module.ll>
 
 Options:
   -o <path>            Set executable output path (default: a.out)
@@ -163,7 +163,7 @@ fn run() -> Result<i32, Diagnostic> {
             return Ok(0);
         }
         ParseArgs::Version => {
-            println!("apexc {}", env!("CARGO_PKG_VERSION"));
+            println!("vacac {}", env!("CARGO_PKG_VERSION"));
             return Ok(0);
         }
         ParseArgs::Options(options) => options,
@@ -277,7 +277,7 @@ impl TempBuildDir {
     fn new() -> Result<Self, Diagnostic> {
         let base = std::env::temp_dir();
         for attempt in 0..100 {
-            let path = base.join(format!("apexc-run-{}-{attempt}", std::process::id()));
+            let path = base.join(format!("vacac-run-{}-{attempt}", std::process::id()));
             match std::fs::create_dir(&path) {
                 Ok(()) => return Ok(Self(path)),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -321,7 +321,7 @@ fn main() -> ExitCode {
             if json_diagnostics {
                 eprintln!("{}", error.render_json());
             } else {
-                eprintln!("apexc: {}", error.render_human());
+                eprintln!("vacac: {}", error.render_human());
             }
             ExitCode::from(1)
         }

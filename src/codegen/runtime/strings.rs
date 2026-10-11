@@ -27,7 +27,7 @@ impl<'ctx> Codegen<'ctx> {
             .get_function("exit")
             .ok_or("missing runtime exit declaration")?;
         let function = self.module.add_function(
-            "apex_str_concat",
+            "vaca_str_concat",
             pointer_type.fn_type(&[pointer_type.into(), pointer_type.into()], false),
             None,
         );
@@ -206,7 +206,7 @@ impl<'ctx> Codegen<'ctx> {
         if let Some(pointer) = self.string_literals.get(value) {
             return Ok(*pointer);
         }
-        let name = format!("apex_str.{}", self.string_literals.len());
+        let name = format!("vaca_str.{}", self.string_literals.len());
         let pointer = self
             .builder
             .build_global_string_ptr(value, &name)
@@ -217,18 +217,18 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub(in crate::codegen) fn emit_c_main_wrapper(&mut self) -> Result<(), String> {
-        let apex_main = *self.functions.get("main").ok_or("missing main function")?;
+        let vaca_main = *self.functions.get("main").ok_or("missing main function")?;
         let wrapper_type = self.context.i32_type().fn_type(&[], false);
         let wrapper = self.module.add_function("main", wrapper_type, None);
         let entry = self.context.append_basic_block(wrapper, "entry");
         self.builder.position_at_end(entry);
         let result = self
             .builder
-            .build_call(apex_main, &[], "apex_result")
+            .build_call(vaca_main, &[], "vaca_result")
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
             .basic()
-            .ok_or("internal error: Apex main returned void")?
+            .ok_or("internal error: Vaca main returned void")?
             .into_int_value();
         let process_status = self
             .builder

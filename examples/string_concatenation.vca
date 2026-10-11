@@ -4,7 +4,7 @@ fn greeting(name: str) -> str {
 }
 
 fn signature() -> str {
-    " — ApexC"
+    " — VacaC"
 }
 
 fn main() -> i64 {

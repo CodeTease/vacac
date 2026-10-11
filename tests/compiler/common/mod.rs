@@ -6,12 +6,12 @@ pub(crate) fn compile_source(
     source: &str,
     test_name: &str,
 ) -> (std::path::PathBuf, std::process::Output) {
-    let dir = std::env::temp_dir().join(format!("apexc-{test_name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vacac-{test_name}-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
-    let source_path = dir.join("test.apx");
+    let source_path = dir.join("test.vca");
     let executable = dir.join("program");
     fs::write(&source_path, source).unwrap();
-    let compile = Command::new(env!("CARGO_BIN_EXE_apexc"))
+    let compile = Command::new(env!("CARGO_BIN_EXE_vacac"))
         .arg(&source_path)
         .arg("-o")
         .arg(&executable)
@@ -25,11 +25,11 @@ pub(crate) fn run_compiler_with_args(
     test_name: &str,
     args: &[&str],
 ) -> (std::path::PathBuf, std::process::Output) {
-    let dir = std::env::temp_dir().join(format!("apexc-{test_name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vacac-{test_name}-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
-    let source_path = dir.join("test.apx");
+    let source_path = dir.join("test.vca");
     fs::write(&source_path, source).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_apexc"))
+    let output = Command::new(env!("CARGO_BIN_EXE_vacac"))
         .arg(&source_path)
         .args(args)
         .current_dir(&dir)

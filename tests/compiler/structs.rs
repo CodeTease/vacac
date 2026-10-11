@@ -10,7 +10,7 @@ fn structs_support_construction_field_reads_and_value_passing() {
             name: str,
         }
         fn rename(user: User) -> User {
-            User { id: user.id, active: user.active, name: "Apex" }
+            User { id: user.id, active: user.active, name: "Vaca" }
         }
         fn main() -> i64 {
             let user = User { name: "Ada", active: true, id: 42 };
@@ -23,7 +23,7 @@ fn structs_support_construction_field_reads_and_value_passing() {
         "structs-value-passing",
     );
     assert_eq!(result.status.code(), Some(0));
-    assert_eq!(String::from_utf8_lossy(&result.stdout), "42\nApex\n");
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "42\nVaca\n");
 }
 
 #[test]

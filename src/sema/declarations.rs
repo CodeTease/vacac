@@ -103,19 +103,19 @@ impl Checker {
                     | "read_i64"
                     | "printf"
                     | "strcmp"
-                    | "apex_main"
+                    | "vaca_main"
                     | "getchar"
                     | "exit"
                     | "strlen"
                     | "malloc"
                     | "memcpy"
-                    | "apex_str_concat"
+                    | "vaca_str_concat"
                     | "len"
                     | "vec_new"
                     | "vec_push"
                     | "realloc"
-                    | "apex_vec_new"
-                    | "apex_vec_push"
+                    | "vaca_vec_new"
+                    | "vaca_vec_push"
             ) {
                 return Err(at(
                     function.span,
