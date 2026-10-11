@@ -9,7 +9,13 @@ impl Checker {
         let needs_context = match (expr, expected) {
             (Expr::Array(elements, _), ValueType::Array(index)) => {
                 elements.is_empty()
-                    || matches!(self.array_shapes[index].element, ArrayElementType::Array(_))
+                    || matches!(
+                        self.array_shapes[index].element,
+                        ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+                    )
+            }
+            (Expr::Call { name, args, .. }, ValueType::Vector(_)) => {
+                name == "vec_new" && args.is_empty()
             }
             _ => false,
         };
@@ -25,6 +31,21 @@ impl Checker {
         expr: &Expr,
         expected: ValueType,
     ) -> Result<ValueType, Diagnostic> {
+        if let (Expr::Call { name, args, span }, ValueType::Vector(index)) = (expr, expected)
+            && name == "vec_new"
+        {
+            if !args.is_empty() {
+                return Err(at(
+                    *span,
+                    format!(
+                        "function `vec_new` expects 0 argument(s), got {}",
+                        args.len()
+                    ),
+                ));
+            }
+            let _ = index;
+            return Ok(expected);
+        }
         let Expr::Array(elements, span) = expr else {
             return self.check_expr(expr, false);
         };
@@ -50,8 +71,10 @@ impl Checker {
         }
         let element_type = ValueType::from(shape.element);
         for element in elements {
-            let actual = if matches!(shape.element, ArrayElementType::Array(_))
-                || matches!(element, Expr::Array(children, _) if children.is_empty())
+            let actual = if matches!(
+                shape.element,
+                ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+            ) || matches!(element, Expr::Array(children, _) if children.is_empty())
             {
                 self.check_expr_with_type(element, element_type)?
             } else {
@@ -108,13 +131,36 @@ impl Checker {
                         let element = self.array_shapes[index].element;
                         Ok(ValueType::from(element))
                     }
-                    _ => Err(at(*span, "indexing requires an array")),
+                    ValueType::Vector(index) => {
+                        Ok(ValueType::from(self.vector_shapes[index].element))
+                    }
+                    _ => Err(at(*span, "indexing requires an array (or vector)")),
                 }
             }
             _ => Err(at(
                 span_of_expr(expr),
                 "assignment target must be a local variable, field, or array element",
             )),
+        }
+    }
+
+    pub(super) fn place_crosses_vector(
+        &mut self,
+        expr: &Expr,
+        ty: ValueType,
+    ) -> Result<bool, Diagnostic> {
+        match expr {
+            Expr::Variable(_, _) => Ok(false),
+            Expr::Field { value, .. } => self.place_crosses_vector(value, ty),
+            Expr::Index { array, .. } => {
+                let base_type = self.check_place(array, ty)?;
+                match base_type {
+                    ValueType::Vector(_) => Ok(true),
+                    ValueType::Array(_) => self.place_crosses_vector(array, ty),
+                    _ => Ok(false),
+                }
+            }
+            _ => Ok(false),
         }
     }
 
@@ -156,11 +202,9 @@ impl Checker {
                     ValueType::Enum(index) => ArrayElementType::Enum(index),
                     ValueType::Struct(index) => ArrayElementType::Struct(index),
                     ValueType::Array(index) => ArrayElementType::Array(index),
+                    ValueType::Vector(index) => ArrayElementType::Vector(index),
                     ValueType::Unit => {
-                        return Err(at(
-                            *span,
-                            "array elements cannot have type `unit` or be arrays",
-                        ));
+                        return Err(at(*span, "array elements cannot have type `unit`"));
                     }
                 };
                 for value in &elements[1..] {
@@ -185,7 +229,10 @@ impl Checker {
                     ValueType::Array(index) => {
                         Ok(ValueType::from(self.array_shapes[index].element))
                     }
-                    _ => Err(at(*span, "indexing requires an array")),
+                    ValueType::Vector(index) => {
+                        Ok(ValueType::from(self.vector_shapes[index].element))
+                    }
+                    _ => Err(at(*span, "indexing requires an array (or vector)")),
                 }
             }
             Expr::Field { value, name, span } => {
@@ -333,6 +380,45 @@ impl Checker {
                 Ok(result_type)
             }
             Expr::Call { name, args, span } => {
+                if name == "vec_new" {
+                    if !args.is_empty() {
+                        return Err(at(
+                            *span,
+                            format!(
+                                "function `vec_new` expects 0 argument(s), got {}",
+                                args.len()
+                            ),
+                        ));
+                    }
+                    return Err(at(*span, "`vec_new()` requires a `Vec<T>` type annotation"));
+                }
+                if name == "vec_push" {
+                    if args.len() != 2 {
+                        return Err(at(
+                            *span,
+                            format!(
+                                "function `vec_push` expects 2 argument(s), got {}",
+                                args.len()
+                            ),
+                        ));
+                    }
+                    let vector_type = self.check_expr(&args[0], false)?;
+                    let ValueType::Vector(index) = vector_type else {
+                        return Err(at(
+                            span_of_expr(&args[0]),
+                            "argument 1 to `vec_push` must be a vector",
+                        ));
+                    };
+                    let element_type = ValueType::from(self.vector_shapes[index].element);
+                    let value_type = self.check_expr_expected(&args[1], element_type)?;
+                    self.expect_type(
+                        value_type,
+                        element_type,
+                        span_of_expr(&args[1]),
+                        "vector element",
+                    )?;
+                    return Ok(ValueType::Unit);
+                }
                 if name == "len" {
                     if args.len() != 1 {
                         return Err(at(
@@ -341,10 +427,10 @@ impl Checker {
                         ));
                     }
                     let array_type = self.check_expr(&args[0], false)?;
-                    if !matches!(array_type, ValueType::Array(_)) {
+                    if !matches!(array_type, ValueType::Array(_) | ValueType::Vector(_)) {
                         return Err(at(
                             span_of_expr(&args[0]),
-                            "argument 1 to `len` must be an array",
+                            "argument 1 to `len` must be an array (or vector)",
                         ));
                     }
                     return Ok(ValueType::I64);

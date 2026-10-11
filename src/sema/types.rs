@@ -11,6 +11,10 @@ impl Checker {
                 let element = self.resolve_array_element(element, span)?;
                 self.array_type(element, *length)
             }
+            Type::Vector(element) => {
+                let element = self.resolve_array_element(element, span)?;
+                self.vector_type(element)
+            }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
                     ValueType::Enum(*index)
@@ -26,6 +30,10 @@ impl Checker {
     pub(super) fn type_name(&self, ty: ValueType) -> String {
         match ty {
             ValueType::Array(index) => self.array_shape_name(index),
+            ValueType::Vector(index) => format!(
+                "Vec<{}>",
+                self.array_element_type_name(self.vector_shapes[index].element)
+            ),
             ValueType::Enum(index) => self
                 .enums
                 .get(index)
@@ -51,6 +59,10 @@ impl Checker {
             ArrayElementType::Enum(index) => self.enums[index].name.clone(),
             ArrayElementType::Struct(index) => self.structs[index].name.clone(),
             ArrayElementType::Array(index) => self.array_shape_name(index),
+            ArrayElementType::Vector(index) => format!(
+                "Vec<{}>",
+                self.array_element_type_name(self.vector_shapes[index].element)
+            ),
         }
     }
 
@@ -74,6 +86,18 @@ impl Checker {
             index
         };
         ValueType::Array(index)
+    }
+
+    pub(super) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {
+        let index = if let Some(index) = self.vector_shape_ids.get(&element) {
+            *index
+        } else {
+            let index = self.vector_shapes.len();
+            self.vector_shapes.push(VectorShape { element });
+            self.vector_shape_ids.insert(element, index);
+            index
+        };
+        ValueType::Vector(index)
     }
 
     fn resolve_array_element(
@@ -100,6 +124,13 @@ impl Checker {
                     unreachable!()
                 };
                 ArrayElementType::Array(index)
+            }
+            Type::Vector(nested_element) => {
+                let nested_element = self.resolve_array_element(nested_element, span)?;
+                let ValueType::Vector(index) = self.vector_type(nested_element) else {
+                    unreachable!()
+                };
+                ArrayElementType::Vector(index)
             }
             Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
         })
@@ -238,6 +269,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Enum(index) => Self::Enum(index),
             ArrayElementType::Struct(index) => Self::Struct(index),
             ArrayElementType::Array(index) => Self::Array(index),
+            ArrayElementType::Vector(index) => Self::Vector(index),
         }
     }
 }

@@ -150,7 +150,7 @@ let first_even = loop {
 
 ## Fixed-size arrays
 
-Fixed-size arrays contain `i64`, `bool`, `str`, values of a named struct or enum type, or other fixed-size arrays. Array literals infer their element type and length from their contents; annotations use `[element_type; length]`:
+Fixed-size arrays contain `i64`, `bool`, `str`, values of a named struct or enum type, vectors, or other fixed-size arrays. Array literals infer their element type and length from their contents; annotations use `[element_type; length]`:
 
 ```apex
 fn first(values: [i64; 3]) -> i64 {
@@ -167,7 +167,7 @@ fn main() -> i64 {
 }
 ```
 
-Arrays are copied as values when bound, passed, or returned. Arrays of structs and enums can be indexed, assigned, and iterated like primitive arrays; enum elements can be inspected with `match`, and struct elements support field access and assignment. Nested arrays are supported to any syntactic depth, including within struct fields, parameters, and return values. Zero-length arrays such as `[i64; 0]`, `[User; 0]`, or `[[i64; 2]; 0]` are supported; their empty literal must have an explicit array type annotation because no element type can be inferred. Indexes are signed `i64`; negative indexes and indexes greater than or equal to the array length terminate the program with status 1, so indexing a zero-length array always exits with status 1. `len(array)` returns the outer fixed length as an `i64`. Equality and inequality compare arrays element by element, recursively comparing nested aggregates and string contents; dynamically sized arrays are not supported.
+Arrays are copied as values when bound, passed, or returned. Arrays of structs, enums, and vectors can be indexed, assigned, and iterated like primitive arrays; enum elements can be inspected with `match`, and struct elements support field access and assignment. Nested arrays are supported to any syntactic depth, including within struct fields, parameters, and return values. Zero-length arrays such as `[i64; 0]`, `[User; 0]`, or `[[i64; 2]; 0]` are supported; their empty literal must have an explicit array type annotation because no element type can be inferred. Indexes are signed `i64`; negative indexes and indexes greater than or equal to the array length terminate the program with status 1, so indexing a zero-length array always exits with status 1. `len(array)` returns the outer fixed length as an `i64`. Equality and inequality compare arrays element by element, recursively comparing nested aggregates and string contents; vector values inside arrays compare by handle identity.
 
 Arrays may also be traversed directly with a read-only element binding:
 
@@ -179,9 +179,27 @@ for value in values {
 
 The array expression is evaluated once and copied before iteration. The binding is immutable and scoped to the loop body; `break` and `continue` work as they do in range loops. Iteration over a zero-length array executes the body zero times.
 
+## Runtime-sized vectors
+
+`Vec<T>` is a heap-backed, runtime-sized sequence with `i64`, `bool`, `str`, named enum/struct, fixed-array, and nested-vector element types (but not `unit`). Create an empty vector with a type annotation and append values with `vec_push`:
+
+```apex
+fn main() -> i64 {
+    let values: Vec<i64> = vec_new();
+    vec_push(values, 10);
+    vec_push(values, 20);
+    values[1] = 42;
+    print_i64(len(values));
+    print_i64(values[1]);
+    0
+}
+```
+
+`vec_new()` requires an expected `Vec<T>` type (usually a binding annotation), while `vec_push(vector, value)` appends one type-checked element and returns `unit`. Vector handles are copied shallowly: assigning, passing, or returning a vector aliases the same contents, and vector equality/inequality compares handle identity. `const` makes only the handle binding immutable; appending and indexed element mutation through that handle are permitted, but rebinding it is not. Indexing uses signed `i64` indexes and invalid indexes exit with status 1. Vector iteration evaluates the handle once and captures its length at loop entry, so elements appended during the loop are not visited; element bindings remain immutable. Vector allocations persist until process exit.
+
 ## Named records
 
-Named records (structs) have top-level declarations and named fields of primitive, fixed-array, enum, or struct type:
+Named records (structs) have top-level declarations and named fields of primitive, fixed-array, vector, enum, or struct type:
 
 ```apex
 struct User {
@@ -195,11 +213,11 @@ fn lookup(id: i64) -> User {
 }
 ```
 
-Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `bool`, `str`, recursively nested fixed-size arrays of primitive, enum, or struct values, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct equality and inequality compare every field recursively, using string contents for `str` fields.
+Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `bool`, `str`, recursively nested fixed-size arrays and vectors of non-`unit` values, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct equality and inequality compare every field recursively, using string contents for `str` fields and handle identity for vector fields.
 
 ## Enums and exhaustive matching
 
-Enums are top-level declarations with uniquely named variants. A variant has no payload or an ordered tuple of one or more non-`unit` value payloads (primitives, named structs and enums, or fixed-size arrays):
+Enums are top-level declarations with uniquely named variants. A variant has no payload or an ordered tuple of one or more non-`unit` value payloads (primitives, named structs and enums, fixed-size arrays, or vectors):
 
 ```apex
 enum MaybeInt {
@@ -248,7 +266,7 @@ fn main() -> i64 {
 }
 ```
 
-Value types are `i64`, `bool`, `str`, named enums, named structs, and recursively nested fixed-size arrays `[element_type; length]`; functions may also return `unit`. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. A `let` type annotation is optional and inferred from its initializer. `let` bindings are mutable; `const` creates an immutable binding. Assignment uses `name = expression;`, array elements may be assigned with `array[index] = expression;`, and fields of mutable local structs may be updated with `name.field = expression;`. Immutable bindings cannot be reassigned or mutated through an array element or struct field. `if`/`else`, `while`, and `for` loops are statements; `loop { ... }` is an expression whose `break expression;` exits with a value, and all such breaks must agree on one non-`unit` type. `continue;` targets the innermost loop. A range loop such as `for i in 0..6 { ... }` visits `0` through `5`; ranges are half-open, both bounds are evaluated once, and the loop variable is immutable and scoped to the loop. An array loop such as `for value in values { ... }` visits each copied element once, and its read-only binding is scoped to the loop. Functions returning a value must use `return expression;` or a final expression. All functions are top-level and have a declared return type. `match` supports enums, booleans, and signed `i64` literals; boolean matches are exhaustive over both values, while `i64` matches require a wildcard arm. Operators include arithmetic (`+ - * / %`), signed comparisons, equality, boolean negation, and short-circuiting `&&` / `||`. Integer bitwise operators `&`, `^`, and `|` operate on `i64` values. Shifts use `<<` and arithmetic `>>`; their right operand must be in `0..64`, otherwise the program exits with status 1. Bitwise AND binds more tightly than XOR, which binds more tightly than OR; shifts bind more tightly than comparisons and less tightly than addition. Division and remainder by zero, as well as `i64::MIN / -1` and `i64::MIN % -1`, terminate the program with exit status 1. Line (`//`) and block (`/* ... */`) comments are supported. `print_i64(i64)` writes one decimal value and a newline to stdout; `read_i64() -> i64` reads one signed decimal integer token from stdin.
+Value types are `i64`, `bool`, `str`, named enums, named structs, recursively nested fixed-size arrays `[element_type; length]`, and heap-backed vectors `Vec<element_type>`; functions may also return `unit`. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. A `let` type annotation is optional and inferred from its initializer. `let` bindings are mutable; `const` creates an immutable binding. Assignment uses `name = expression;`, array and vector elements may be assigned with `array[index] = expression;`, and fields of mutable local structs may be updated with `name.field = expression;`. Immutable bindings cannot be reassigned or mutated through an array element or struct field. `if`/`else`, `while`, and `for` loops are statements; `loop { ... }` is an expression whose `break expression;` exits with a value, and all such breaks must agree on one non-`unit` type. `continue;` targets the innermost loop. A range loop such as `for i in 0..6 { ... }` visits `0` through `5`; ranges are half-open, both bounds are evaluated once, and the loop variable is immutable and scoped to the loop. An array loop such as `for value in values { ... }` visits each copied element once; vector loops capture the vector length at entry. Both use a read-only binding scoped to the loop. Functions returning a value must use `return expression;` or a final expression. All functions are top-level and have a declared return type. `match` supports enums, booleans, and signed `i64` literals; boolean matches are exhaustive over both values, while `i64` matches require a wildcard arm. Operators include arithmetic (`+ - * / %`), signed comparisons, equality, boolean negation, and short-circuiting `&&` / `||`. Integer bitwise operators `&`, `^`, and `|` operate on `i64` values. Shifts use `<<` and arithmetic `>>`; their right operand must be in `0..64`, otherwise the program exits with status 1. Bitwise AND binds more tightly than XOR, which binds more tightly than OR; shifts bind more tightly than comparisons and less tightly than addition. Division and remainder by zero, as well as `i64::MIN / -1` and `i64::MIN % -1`, terminate the program with exit status 1. Line (`//`) and block (`/* ... */`) comments are supported. `print_i64(i64)` writes one decimal value and a newline to stdout; `read_i64() -> i64` reads one signed decimal integer token from stdin.
 
 Strings are immutable; they can be bound, assigned, passed, returned, and compared by content with `==` and `!=`. The `+` operator concatenates two strings. Concatenation copies both inputs into a newly allocated NUL-terminated string; these allocations remain alive until the process exits. Concatenation uses UTF-8 bytes without changing their encoding. Other arithmetic and ordering comparisons are not supported for `str`. `\0` is rejected because strings are NUL-terminated at runtime. `print(str)` writes a string to stdout as-is, and `println(str)` writes it followed by a newline; `print("x = "); print_i64(x);` prints a labelled value.
 

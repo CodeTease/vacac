@@ -210,11 +210,39 @@ impl<'ctx> Codegen<'ctx> {
         span: Span,
     ) -> Result<bool, String> {
         let array = self.emit_expression(array_expr)?;
-        let ValueType::Array(array_id) = array.ty else {
-            return Err(format!(
-                "line {}:{}: array iteration requires an array",
-                span.line, span.column
-            ));
+        let (element, vector_handle) = match array.ty {
+            ValueType::Array(array_id) => (self.array_shapes[array_id].element, None),
+            ValueType::Vector(vector_id) => (
+                self.vector_shapes[vector_id].element,
+                Some(
+                    array
+                        .value
+                        .ok_or("vector has no handle")?
+                        .into_pointer_value(),
+                ),
+            ),
+            _ => {
+                return Err(format!(
+                    "line {}:{}: array iteration requires an array or vector",
+                    span.line, span.column
+                ));
+            }
+        };
+        if let Some(header) = vector_handle {
+            return self.emit_for_vector(
+                name,
+                ValueType::Vector(match array.ty {
+                    ValueType::Vector(index) => index,
+                    _ => unreachable!(),
+                }),
+                element,
+                header,
+                body,
+            );
+        }
+        let array_id = match array.ty {
+            ValueType::Array(index) => index,
+            _ => unreachable!(),
         };
         let shape = self.array_shapes[array_id];
         let array_type = array.ty;
@@ -326,6 +354,166 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?;
         self.builder.position_at_end(end_bb);
         self.scopes.pop();
+        Ok(false)
+    }
+
+    fn emit_for_vector(
+        &mut self,
+        name: &str,
+        vector_type: ValueType,
+        element: ArrayElementType,
+        header: PointerValue<'ctx>,
+        body: &Block,
+    ) -> Result<bool, String> {
+        let function = self
+            .current_function
+            .ok_or("vector loop outside function")?;
+        let header_type = self.context.struct_type(
+            &[
+                self.context.ptr_type(AddressSpace::default()).into(),
+                self.i64_type().into(),
+                self.i64_type().into(),
+            ],
+            false,
+        );
+        let len_ptr = self
+            .builder
+            .build_struct_gep(header_type, header, 1, "vec.iter.len.ptr")
+            .map_err(|error| error.to_string())?;
+        let snapshot_length = self
+            .builder
+            .build_load(self.i64_type(), len_ptr, "vec.iter.length")
+            .map_err(|error| error.to_string())?
+            .into_int_value();
+        let index_slot = self.create_entry_alloca(ValueType::I64, "vec.iter.index")?;
+        self.builder
+            .build_store(index_slot, self.i64_type().const_zero())
+            .map_err(|error| error.to_string())?;
+        let element_type = ValueType::from(element);
+        let value_slot = self.create_entry_alloca(element_type, name)?;
+        self.scopes.push(HashMap::from([(
+            name.to_owned(),
+            Local {
+                pointer: value_slot,
+                ty: element_type,
+                immutable: true,
+                loop_variable: true,
+            },
+        )]));
+        let cond = self.context.append_basic_block(function, "vec.iter.cond");
+        let loop_body = self.context.append_basic_block(function, "vec.iter.body");
+        let step = self.context.append_basic_block(function, "vec.iter.step");
+        let end = self.context.append_basic_block(function, "vec.iter.end");
+        self.builder
+            .build_unconditional_branch(cond)
+            .map_err(|error| error.to_string())?;
+        self.builder.position_at_end(cond);
+        let index = self
+            .builder
+            .build_load(self.i64_type(), index_slot, "vec.iter.index")
+            .map_err(|error| error.to_string())?
+            .into_int_value();
+        let in_bounds = self
+            .builder
+            .build_int_compare(IntPredicate::SLT, index, snapshot_length, "vec.iter.test")
+            .map_err(|error| error.to_string())?;
+        self.builder
+            .build_conditional_branch(in_bounds, loop_body, end)
+            .map_err(|error| error.to_string())?;
+        self.builder.position_at_end(loop_body);
+        let header_type = self.context.struct_type(
+            &[
+                self.context.ptr_type(AddressSpace::default()).into(),
+                self.i64_type().into(),
+                self.i64_type().into(),
+            ],
+            false,
+        );
+        let data_ptr = self
+            .builder
+            .build_struct_gep(header_type, header, 0, "vec.iter.data.ptr")
+            .map_err(|error| error.to_string())?;
+        let data = self
+            .builder
+            .build_load(
+                self.context.ptr_type(AddressSpace::default()),
+                data_ptr,
+                "vec.iter.data",
+            )
+            .map_err(|error| error.to_string())?
+            .into_pointer_value();
+        let size = self.vector_element_size(element_type)?;
+        let offset = self
+            .builder
+            .build_int_mul(index, size, "vec.iter.offset")
+            .map_err(|error| error.to_string())?;
+        let address = unsafe {
+            self.builder
+                .build_gep(self.context.i8_type(), data, &[offset], "vec.iter.address")
+        }
+        .map_err(|error| error.to_string())?;
+        let typed = self
+            .builder
+            .build_pointer_cast(
+                address,
+                self.context.ptr_type(AddressSpace::default()),
+                "vec.iter.element.ptr",
+            )
+            .map_err(|error| error.to_string())?;
+        let llvm_element = self
+            .llvm_type(element_type)
+            .ok_or("vector element has no LLVM type")?;
+        let value = self
+            .builder
+            .build_load(llvm_element, typed, "vec.iter.value")
+            .map_err(|error| error.to_string())?;
+        self.builder
+            .build_store(value_slot, value)
+            .map_err(|error| error.to_string())?;
+        self.loop_targets.push(LoopTarget {
+            continue_target: step,
+            break_target: end,
+            value_loop: false,
+            result_type: None,
+            incoming: Vec::new(),
+        });
+        let result = self.emit_block(body, false);
+        self.loop_targets.pop();
+        let (terminated, _) = result?;
+        let terminated = terminated
+            || self
+                .builder
+                .get_insert_block()
+                .and_then(|block| block.get_terminator())
+                .is_some();
+        if !terminated {
+            self.builder
+                .build_unconditional_branch(step)
+                .map_err(|error| error.to_string())?;
+        }
+        self.builder.position_at_end(step);
+        let current = self
+            .builder
+            .build_load(self.i64_type(), index_slot, "vec.iter.index")
+            .map_err(|error| error.to_string())?
+            .into_int_value();
+        let next = self
+            .builder
+            .build_int_add(
+                current,
+                self.i64_type().const_int(1, false),
+                "vec.iter.next",
+            )
+            .map_err(|error| error.to_string())?;
+        self.builder
+            .build_store(index_slot, next)
+            .map_err(|error| error.to_string())?;
+        self.builder
+            .build_unconditional_branch(cond)
+            .map_err(|error| error.to_string())?;
+        self.builder.position_at_end(end);
+        self.scopes.pop();
+        let _ = vector_type;
         Ok(false)
     }
 }

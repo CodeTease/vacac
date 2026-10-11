@@ -20,7 +20,9 @@ pub(crate) fn validate_aggregate_cycles(
         match ty {
             Type::Named(name) => type_ids.get(name.as_str()).copied(),
             Type::Array(element, _) => named_type_id(element, type_ids),
-            Type::I64 | Type::Bool | Type::Str | Type::Unit => None,
+            // A vector stores its elements behind a heap allocation, so it breaks
+            // any otherwise by-value aggregate cycle.
+            Type::Vector(_) | Type::I64 | Type::Bool | Type::Str | Type::Unit => None,
         }
     }
 

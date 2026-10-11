@@ -204,7 +204,9 @@ fn resolve_type(
 ) -> Result<(), Diagnostic> {
     match ty {
         crate::ast::Type::Named(name) => *name = resolve_reference(name, module, span, symbols)?,
-        crate::ast::Type::Array(element, _) => resolve_type(element, module, span, symbols)?,
+        crate::ast::Type::Array(element, _) | crate::ast::Type::Vector(element) => {
+            resolve_type(element, module, span, symbols)?
+        }
         _ => {}
     }
     Ok(())
@@ -332,7 +334,7 @@ fn resolve_expr(
                 };
                 return resolve_expr(expr, module, symbols, struct_names, enum_names);
             }
-            if name != "len"
+            if !matches!(name.as_str(), "len" | "vec_new" | "vec_push")
                 && !matches!(
                     name.as_str(),
                     "print_i64" | "print" | "println" | "read_i64"

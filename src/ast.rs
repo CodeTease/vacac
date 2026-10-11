@@ -5,6 +5,7 @@ pub enum Type {
     Str,
     Unit,
     Array(Box<Type>, u32),
+    Vector(Box<Type>),
     Named(String),
 }
 
@@ -16,6 +17,7 @@ pub enum ArrayElementType {
     Enum(usize),
     Struct(usize),
     Array(usize),
+    Vector(usize),
 }
 
 #[derive(Debug, Clone, Copy)]

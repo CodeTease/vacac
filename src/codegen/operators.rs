@@ -28,7 +28,10 @@ impl<'ctx> Codegen<'ctx> {
             }
             if matches!(
                 left.ty,
-                ValueType::Array(_) | ValueType::Enum(_) | ValueType::Struct(_)
+                ValueType::Array(_)
+                    | ValueType::Vector(_)
+                    | ValueType::Enum(_)
+                    | ValueType::Struct(_)
             ) {
                 let lhs = left.value.ok_or("left operand has no value")?;
                 let rhs = right.value.ok_or("right operand has no value")?;

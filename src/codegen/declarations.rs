@@ -10,6 +10,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
         codegen.emit_string_concat_builtin()?;
+        codegen.emit_vector_runtime()?;
         for function in &program.functions {
             codegen.module_context = function.module.clone();
             codegen.emit_function(function)?;
@@ -38,6 +39,8 @@ impl<'ctx> Codegen<'ctx> {
             struct_types: Vec::new(),
             array_shapes: Vec::new(),
             array_shape_ids: HashMap::new(),
+            vector_shapes: Vec::new(),
+            vector_shape_ids: HashMap::new(),
             scopes: Vec::new(),
             string_literals: HashMap::new(),
             loop_targets: Vec::new(),
@@ -64,6 +67,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
             ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
+            ValueType::Vector(_) => Some(self.context.ptr_type(AddressSpace::default()).into()),
             ValueType::Enum(index) => self.enum_types.get(index).copied().map(Into::into),
             ValueType::Struct(index) => self.struct_types.get(index).copied().map(Into::into),
             ValueType::Unit => None,
@@ -113,6 +117,7 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                     Type::Array(_, _) => self.resolve_array_element(element, span)?,
+                    Type::Vector(_) => self.resolve_array_element(element, span)?,
                     Type::Unit => {
                         return Err(format!(
                             "line {}:{}: array elements cannot have type `unit`",
@@ -121,6 +126,10 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 };
                 self.array_type(element, *length)
+            }
+            Type::Vector(element) => {
+                let element = self.resolve_array_element(element, span)?;
+                self.vector_type(element)
             }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
@@ -150,6 +159,379 @@ impl<'ctx> Codegen<'ctx> {
         ValueType::Array(index)
     }
 
+    pub(super) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {
+        let index = if let Some(index) = self.vector_shape_ids.get(&element) {
+            *index
+        } else {
+            let index = self.vector_shapes.len();
+            self.vector_shapes.push(VectorShape { element });
+            self.vector_shape_ids.insert(element, index);
+            index
+        };
+        ValueType::Vector(index)
+    }
+
+    fn emit_vector_runtime(&mut self) -> Result<(), String> {
+        let pointer = self.context.ptr_type(AddressSpace::default());
+        let i64_type = self.i64_type();
+        let i8_type = self.context.i8_type();
+        let size_type = i64_type;
+        let realloc = self.module.get_function("realloc").unwrap_or_else(|| {
+            self.module.add_function(
+                "realloc",
+                pointer.fn_type(&[pointer.into(), size_type.into()], false),
+                None,
+            )
+        });
+        let exit = self
+            .module
+            .get_function("exit")
+            .ok_or("missing exit function")?;
+        let header_type = self
+            .context
+            .struct_type(&[pointer.into(), i64_type.into(), i64_type.into()], false);
+        let vec_new = self
+            .module
+            .add_function("apex_vec_new", pointer.fn_type(&[], false), None);
+        let entry = self.context.append_basic_block(vec_new, "entry");
+        let failure = self.context.append_basic_block(vec_new, "allocation.error");
+        let init = self.context.append_basic_block(vec_new, "initialize");
+        self.builder.position_at_end(entry);
+        let header = self
+            .builder
+            .build_malloc(header_type, "vec.header")
+            .map_err(|e| e.to_string())?;
+        let failed = self
+            .builder
+            .build_is_null(header, "vec.header.failed")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_conditional_branch(failed, failure, init)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure);
+        self.builder
+            .build_call(
+                exit,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "vec.exit",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unreachable()
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(init);
+        let data_field = self
+            .builder
+            .build_struct_gep(header_type, header, 0, "vec.data.field")
+            .map_err(|e| e.to_string())?;
+        let length_field = self
+            .builder
+            .build_struct_gep(header_type, header, 1, "vec.length.field")
+            .map_err(|e| e.to_string())?;
+        let capacity_field = self
+            .builder
+            .build_struct_gep(header_type, header, 2, "vec.capacity.field")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(data_field, pointer.const_null())
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(length_field, i64_type.const_zero())
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(capacity_field, i64_type.const_zero())
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_return(Some(&header))
+            .map_err(|e| e.to_string())?;
+
+        let push = self.module.add_function(
+            "apex_vec_push",
+            self.context.void_type().fn_type(
+                &[
+                    pointer.into(),
+                    pointer.into(),
+                    i64_type.into(),
+                    i64_type.into(),
+                ],
+                false,
+            ),
+            None,
+        );
+        let entry = self.context.append_basic_block(push, "entry");
+        let append = self.context.append_basic_block(push, "append");
+        let failure = self.context.append_basic_block(push, "allocation.error");
+        self.builder.position_at_end(entry);
+        let header = push
+            .get_nth_param(0)
+            .ok_or("missing vector header")?
+            .into_pointer_value();
+        let data_value = push
+            .get_nth_param(1)
+            .ok_or("missing vector element")?
+            .into_pointer_value();
+        let storage_stride = push
+            .get_nth_param(2)
+            .ok_or("missing vector storage stride")?
+            .into_int_value();
+        let element_size = push
+            .get_nth_param(3)
+            .ok_or("missing vector element size")?
+            .into_int_value();
+        let len_ptr = self
+            .builder
+            .build_struct_gep(header_type, header, 1, "vec.len.ptr")
+            .map_err(|e| e.to_string())?;
+        let cap_ptr = self
+            .builder
+            .build_struct_gep(header_type, header, 2, "vec.cap.ptr")
+            .map_err(|e| e.to_string())?;
+        let data_ptr = self
+            .builder
+            .build_struct_gep(header_type, header, 0, "vec.data.ptr")
+            .map_err(|e| e.to_string())?;
+        let len = self
+            .builder
+            .build_load(i64_type, len_ptr, "vec.len")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let cap = self
+            .builder
+            .build_load(i64_type, cap_ptr, "vec.cap")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let enough = self
+            .builder
+            .build_int_compare(IntPredicate::ULT, len, cap, "vec.has.capacity")
+            .map_err(|e| e.to_string())?;
+        let length_overflow = self
+            .builder
+            .build_int_compare(
+                IntPredicate::EQ,
+                len,
+                i64_type.const_all_ones(),
+                "vec.length.overflow",
+            )
+            .map_err(|e| e.to_string())?;
+        let append_ready = self.context.append_basic_block(push, "append.ready");
+        let grow = self.context.append_basic_block(push, "grow");
+        self.builder
+            .build_conditional_branch(length_overflow, failure, append_ready)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(append_ready);
+        self.builder
+            .build_conditional_branch(enough, append, grow)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(grow);
+        let is_empty = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, cap, i64_type.const_zero(), "vec.empty")
+            .map_err(|e| e.to_string())?;
+        let doubled = self
+            .builder
+            .build_int_mul(cap, i64_type.const_int(2, false), "vec.doubled")
+            .map_err(|e| e.to_string())?;
+        let new_cap = self
+            .builder
+            .build_select(
+                is_empty,
+                i64_type.const_int(4, false),
+                doubled,
+                "vec.new.capacity",
+            )
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let too_large = self
+            .builder
+            .build_int_compare(IntPredicate::ULT, new_cap, cap, "vec.capacity.overflow")
+            .map_err(|e| e.to_string())?;
+        let safe_element_size = self
+            .builder
+            .build_select(
+                self.builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        storage_stride,
+                        i64_type.const_zero(),
+                        "vec.zero.size",
+                    )
+                    .map_err(|e| e.to_string())?,
+                i64_type.const_int(1, false),
+                storage_stride,
+                "vec.safe.size",
+            )
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let maximum_count = self
+            .builder
+            .build_int_unsigned_div(
+                i64_type.const_all_ones(),
+                safe_element_size,
+                "vec.max.count",
+            )
+            .map_err(|e| e.to_string())?;
+        let size_overflow = self
+            .builder
+            .build_int_compare(
+                IntPredicate::UGT,
+                new_cap,
+                maximum_count,
+                "vec.size.overflow",
+            )
+            .map_err(|e| e.to_string())?;
+        let overflow = self
+            .builder
+            .build_or(too_large, size_overflow, "vec.overflow")
+            .map_err(|e| e.to_string())?;
+        let allocation_size = self
+            .builder
+            .build_int_mul(new_cap, safe_element_size, "vec.allocation.size")
+            .map_err(|e| e.to_string())?;
+        let resize = self.context.append_basic_block(push, "resize");
+        self.builder
+            .build_conditional_branch(overflow, failure, resize)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(resize);
+        let old_data = self
+            .builder
+            .build_load(pointer, data_ptr, "vec.old.data")
+            .map_err(|e| e.to_string())?
+            .into_pointer_value();
+        let new_data = self
+            .builder
+            .build_call(
+                realloc,
+                &[old_data.into(), allocation_size.into()],
+                "vec.realloc",
+            )
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or("realloc returned void")?
+            .into_pointer_value();
+        let allocation_failed = self
+            .builder
+            .build_is_null(new_data, "vec.realloc.failed")
+            .map_err(|e| e.to_string())?;
+        let store_reallocation = self.context.append_basic_block(push, "store.reallocation");
+        self.builder
+            .build_conditional_branch(allocation_failed, failure, store_reallocation)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(store_reallocation);
+        self.builder
+            .build_store(data_ptr, new_data)
+            .map_err(|e| e.to_string())?;
+        let old_capacity_zero = self
+            .builder
+            .build_int_compare(
+                IntPredicate::EQ,
+                cap,
+                i64_type.const_zero(),
+                "vec.capacity.was.zero",
+            )
+            .map_err(|e| e.to_string())?;
+        let allocated_capacity = self
+            .builder
+            .build_select(
+                old_capacity_zero,
+                i64_type.const_int(4, false),
+                new_cap,
+                "vec.capacity.stored",
+            )
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        self.builder
+            .build_store(cap_ptr, allocated_capacity)
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unconditional_branch(append)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure);
+        self.builder
+            .build_call(
+                exit,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "vec.realloc.exit",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unreachable()
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(append);
+        self.emit_vector_append(
+            data_ptr,
+            len_ptr,
+            data_value,
+            storage_stride,
+            element_size,
+            pointer,
+            i8_type,
+            i64_type,
+        )?;
+        Ok(())
+    }
+
+    fn emit_vector_append(
+        &mut self,
+        data_ptr: PointerValue<'ctx>,
+        len_ptr: PointerValue<'ctx>,
+        data_value: PointerValue<'ctx>,
+        storage_stride: IntValue<'ctx>,
+        element_size: IntValue<'ctx>,
+        pointer: inkwell::types::PointerType<'ctx>,
+        i8_type: inkwell::types::IntType<'ctx>,
+        i64_type: inkwell::types::IntType<'ctx>,
+    ) -> Result<(), String> {
+        let current_data = self
+            .builder
+            .build_load(pointer, data_ptr, "vec.current.data")
+            .map_err(|e| e.to_string())?
+            .into_pointer_value();
+        let current_len = self
+            .builder
+            .build_load(i64_type, len_ptr, "vec.current.len")
+            .map_err(|e| e.to_string())?
+            .into_int_value();
+        let offset = self
+            .builder
+            .build_int_mul(current_len, storage_stride, "vec.element.offset")
+            .map_err(|e| e.to_string())?;
+        let element_address = unsafe {
+            self.builder
+                .build_gep(i8_type, current_data, &[offset], "vec.element.address")
+        }
+        .map_err(|e| e.to_string())?;
+        let memcpy = self.module.get_function("memcpy").unwrap_or_else(|| {
+            self.module.add_function(
+                "memcpy",
+                pointer.fn_type(&[pointer.into(), pointer.into(), i64_type.into()], false),
+                None,
+            )
+        });
+        if element_size.get_zero_extended_constant() != Some(0) {
+            self.builder
+                .build_call(
+                    memcpy,
+                    &[
+                        element_address.into(),
+                        data_value.into(),
+                        element_size.into(),
+                    ],
+                    "vec.copy.element",
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        let next_len = self
+            .builder
+            .build_int_add(current_len, i64_type.const_int(1, false), "vec.next.len")
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_store(len_ptr, next_len)
+            .map_err(|e| e.to_string())?;
+        self.builder.build_return(None).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     fn resolve_array_element(
         &mut self,
         element: &Type,
@@ -164,6 +546,12 @@ impl<'ctx> Codegen<'ctx> {
                     unreachable!()
                 };
                 Ok(ArrayElementType::Array(index))
+            }
+            Type::Vector(_) => {
+                let ValueType::Vector(index) = self.resolve_type(element, span)? else {
+                    unreachable!()
+                };
+                Ok(ArrayElementType::Vector(index))
             }
             Type::Unit => Err(format!(
                 "line {}:{}: array elements cannot have type `unit`",
@@ -289,7 +677,7 @@ impl<'ctx> Codegen<'ctx> {
             self.module_context = declaration.module.clone();
             for field in &declaration.fields {
                 match &field.ty {
-                    Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) => {}
+                    Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) | Type::Vector(_) => {}
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
                     Type::Named(name) if self.enum_ids.contains_key(name) => {}
                     Type::Named(name) => {
@@ -353,6 +741,11 @@ impl<'ctx> Codegen<'ctx> {
                     | "memcpy"
                     | "apex_str_concat"
                     | "len"
+                    | "vec_new"
+                    | "vec_push"
+                    | "realloc"
+                    | "apex_vec_new"
+                    | "apex_vec_push"
             ) {
                 return Err(format!(
                     "`{}` is a reserved compiler/runtime name",

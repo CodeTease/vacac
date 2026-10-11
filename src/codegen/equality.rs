@@ -58,6 +58,23 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(equal)
             }
+            ValueType::Vector(_) => self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    self.builder
+                        .build_ptr_to_int(left.into_pointer_value(), self.i64_type(), "vec.eq.left")
+                        .map_err(|e| e.to_string())?,
+                    self.builder
+                        .build_ptr_to_int(
+                            right.into_pointer_value(),
+                            self.i64_type(),
+                            "vec.eq.right",
+                        )
+                        .map_err(|e| e.to_string())?,
+                    "vec.eq",
+                )
+                .map_err(|e| e.to_string()),
             ValueType::Struct(struct_id) => {
                 let fields = self.structs[struct_id].fields.clone();
                 let mut equal = self.bool_type().const_int(1, false);

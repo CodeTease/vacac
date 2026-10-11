@@ -27,6 +27,7 @@ pub struct Parser {
     enum_names: HashSet<String>,
     module: String,
     parsing_match_value: bool,
+    type_close_debt: usize,
 }
 
 impl Parser {
@@ -56,6 +57,7 @@ impl Parser {
             enum_names,
             module,
             parsing_match_value: false,
+            type_close_debt: 0,
         }
     }
 
@@ -150,6 +152,21 @@ impl Parser {
     }
     fn previous(&self) -> &Token {
         &self.tokens[self.current.saturating_sub(1)]
+    }
+
+    pub(super) fn consume_type_greater(&mut self) -> Result<(), Diagnostic> {
+        if self.type_close_debt > 0 {
+            self.type_close_debt -= 1;
+            return Ok(());
+        }
+        if self.take(&TokenKind::Greater) {
+            return Ok(());
+        }
+        if self.take(&TokenKind::ShiftRight) {
+            self.type_close_debt = 1;
+            return Ok(());
+        }
+        Err(unexpected(self.peek(), "`>` after generic type argument"))
     }
 }
 

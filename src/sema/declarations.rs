@@ -111,6 +111,11 @@ impl Checker {
                     | "memcpy"
                     | "apex_str_concat"
                     | "len"
+                    | "vec_new"
+                    | "vec_push"
+                    | "realloc"
+                    | "apex_vec_new"
+                    | "apex_vec_push"
             ) {
                 return Err(at(
                     function.span,

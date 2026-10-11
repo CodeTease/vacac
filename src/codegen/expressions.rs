@@ -16,6 +16,18 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ValueType::Str,
             }),
             Expr::Array(elements, span) => self.emit_array_literal(elements, *span),
+            Expr::Call { name, args, span } if name == "vec_new" => {
+                if !args.is_empty() {
+                    return Err(format!(
+                        "line {}:{}: `vec_new` expects 0 arguments",
+                        span.line, span.column
+                    ));
+                }
+                Err(format!(
+                    "line {}:{}: `vec_new()` requires a `Vec<T>` type annotation",
+                    span.line, span.column
+                ))
+            }
             Expr::Variable(name, span) => {
                 let local = self.lookup_local(name).ok_or_else(|| {
                     format!(
@@ -34,14 +46,85 @@ impl<'ctx> Codegen<'ctx> {
             }
             Expr::Index { array, index, span } => {
                 let array_value = self.emit_expression(array)?;
+                let index = self.emit_expression(index)?;
+                let index = self.expect_i64(index, "array index")?;
+                if let ValueType::Vector(vector_id) = array_value.ty {
+                    let header = array_value
+                        .value
+                        .ok_or("vector has no handle")?
+                        .into_pointer_value();
+                    let header_type = self.context.struct_type(
+                        &[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.i64_type().into(),
+                            self.i64_type().into(),
+                        ],
+                        false,
+                    );
+                    let data_ptr = self
+                        .builder
+                        .build_struct_gep(header_type, header, 0, "vec.data.ptr")
+                        .map_err(|error| error.to_string())?;
+                    let length_ptr = self
+                        .builder
+                        .build_struct_gep(header_type, header, 1, "vec.length.ptr")
+                        .map_err(|error| error.to_string())?;
+                    let length = self
+                        .builder
+                        .build_load(self.i64_type(), length_ptr, "vec.length")
+                        .map_err(|error| error.to_string())?
+                        .into_int_value();
+                    self.emit_dynamic_bounds_check(index, length)?;
+                    let data = self
+                        .builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            data_ptr,
+                            "vec.data",
+                        )
+                        .map_err(|error| error.to_string())?
+                        .into_pointer_value();
+                    let element_type = ValueType::from(self.vector_shapes[vector_id].element);
+                    let llvm_element_type = self
+                        .llvm_type(element_type)
+                        .ok_or("vector element has no LLVM type")?;
+                    let size = self.vector_element_size(element_type)?;
+                    let offset = self
+                        .builder
+                        .build_int_mul(index, size, "vec.element.offset")
+                        .map_err(|error| error.to_string())?;
+                    let address = unsafe {
+                        self.builder.build_gep(
+                            self.context.i8_type(),
+                            data,
+                            &[offset],
+                            "vec.element.address",
+                        )
+                    }
+                    .map_err(|error| error.to_string())?;
+                    let typed_pointer = self
+                        .builder
+                        .build_pointer_cast(
+                            address,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "vec.element.ptr",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let value = self
+                        .builder
+                        .build_load(llvm_element_type, typed_pointer, "vec.element")
+                        .map_err(|error| error.to_string())?;
+                    return Ok(TypedValue {
+                        value: Some(value),
+                        ty: element_type,
+                    });
+                }
                 let ValueType::Array(array_id) = array_value.ty else {
                     return Err(format!(
-                        "line {}:{}: indexing requires an array",
+                        "line {}:{}: indexing requires an array (or vector)",
                         span.line, span.column
                     ));
                 };
-                let index = self.emit_expression(index)?;
-                let index = self.expect_i64(index, "array index")?;
                 let shape = self.array_shapes[array_id];
                 self.emit_bounds_check(index, shape.length)?;
                 let array_type = array_value.ty;

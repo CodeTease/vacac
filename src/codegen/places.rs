@@ -47,9 +47,79 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Index { array, index, span } => {
                 let (array_pointer, array_type) =
                     self.emit_place_pointer(array, root_name, root_pointer, root_type)?;
+                if let ValueType::Vector(vector_id) = array_type {
+                    let index_value = self.emit_expression(index)?;
+                    let index_value = self.expect_i64(index_value, "vector index")?;
+                    let handle = self
+                        .builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            array_pointer,
+                            "vec.handle",
+                        )
+                        .map_err(|error| error.to_string())?
+                        .into_pointer_value();
+                    let header_type = self.context.struct_type(
+                        &[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.i64_type().into(),
+                            self.i64_type().into(),
+                        ],
+                        false,
+                    );
+                    let data_ptr = self
+                        .builder
+                        .build_struct_gep(header_type, handle, 0, "vec.data.ptr")
+                        .map_err(|error| error.to_string())?;
+                    let len_ptr = self
+                        .builder
+                        .build_struct_gep(header_type, handle, 1, "vec.length.ptr")
+                        .map_err(|error| error.to_string())?;
+                    let length = self
+                        .builder
+                        .build_load(self.i64_type(), len_ptr, "vec.length")
+                        .map_err(|error| error.to_string())?
+                        .into_int_value();
+                    self.emit_dynamic_bounds_check(index_value, length)?;
+                    let data = self
+                        .builder
+                        .build_load(
+                            self.context.ptr_type(AddressSpace::default()),
+                            data_ptr,
+                            "vec.data",
+                        )
+                        .map_err(|error| error.to_string())?
+                        .into_pointer_value();
+                    let element_type = ValueType::from(self.vector_shapes[vector_id].element);
+                    self.llvm_type(element_type)
+                        .ok_or("vector element has no LLVM type")?;
+                    let size = self.vector_element_size(element_type)?;
+                    let offset = self
+                        .builder
+                        .build_int_mul(index_value, size, "vec.element.offset")
+                        .map_err(|error| error.to_string())?;
+                    let address = unsafe {
+                        self.builder.build_gep(
+                            self.context.i8_type(),
+                            data,
+                            &[offset],
+                            "vec.element.address",
+                        )
+                    }
+                    .map_err(|error| error.to_string())?;
+                    let pointer = self
+                        .builder
+                        .build_pointer_cast(
+                            address,
+                            self.context.ptr_type(AddressSpace::default()),
+                            "vec.element.ptr",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    return Ok((pointer, element_type));
+                }
                 let ValueType::Array(array_id) = array_type else {
                     return Err(format!(
-                        "line {}:{}: indexing requires an array",
+                        "line {}:{}: indexing requires an array (or vector)",
                         span.line, span.column
                     ));
                 };
@@ -117,7 +187,8 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     )
                 })?;
-                if local.immutable {
+                let vector_place = self.place_mutates_vector(target, name, local.ty)?;
+                if local.immutable && !vector_place {
                     let reason = if local.loop_variable {
                         format!("cannot assign through immutable loop variable `{name}`")
                     } else {
@@ -146,6 +217,70 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(false)
             }
             _ => unreachable!("non-assignment passed to assignment emitter"),
+        }
+    }
+
+    fn place_mutates_vector(
+        &mut self,
+        expr: &Expr,
+        root_name: &str,
+        root_type: ValueType,
+    ) -> Result<bool, String> {
+        match expr {
+            Expr::Variable(name, _) if name == root_name => Ok(false),
+            Expr::Field { value, .. } => self.place_mutates_vector(value, root_name, root_type),
+            Expr::Index { array, .. } => {
+                let array_type = self.place_expression_type(array, root_name, root_type)?;
+                if matches!(array_type, ValueType::Vector(_)) {
+                    Ok(true)
+                } else {
+                    self.place_mutates_vector(array, root_name, root_type)
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn place_expression_type(
+        &mut self,
+        expr: &Expr,
+        root_name: &str,
+        root_type: ValueType,
+    ) -> Result<ValueType, String> {
+        match expr {
+            Expr::Variable(name, _) if name == root_name => Ok(root_type),
+            Expr::Field { value, name, span } => {
+                let ValueType::Struct(struct_id) =
+                    self.place_expression_type(value, root_name, root_type)?
+                else {
+                    return Err(format!(
+                        "line {}:{}: field access requires a struct",
+                        span.line, span.column
+                    ));
+                };
+                let field = self.structs[struct_id]
+                    .fields
+                    .iter()
+                    .find(|field| field.name == *name)
+                    .ok_or_else(|| {
+                        format!(
+                            "line {}:{}: struct has no field `{name}`",
+                            span.line, span.column
+                        )
+                    })?;
+                self.resolve_type(&field.ty.clone(), field.span)
+            }
+            Expr::Index { array, span, .. } => match self
+                .place_expression_type(array, root_name, root_type)?
+            {
+                ValueType::Array(index) => Ok(ValueType::from(self.array_shapes[index].element)),
+                ValueType::Vector(index) => Ok(ValueType::from(self.vector_shapes[index].element)),
+                _ => Err(format!(
+                    "line {}:{}: indexing requires an array or vector",
+                    span.line, span.column
+                )),
+            },
+            _ => Err("invalid place expression".into()),
         }
     }
 }

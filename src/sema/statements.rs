@@ -67,6 +67,14 @@ impl Checker {
                 let value_type = if let Some(ty) = ty {
                     let expected = self.resolve_type(ty, *span)?;
                     self.check_expr_expected(value, expected)?
+                } else if let Expr::Call { name, args, .. } = value
+                    && name == "vec_new"
+                    && args.is_empty()
+                {
+                    return Err(at(
+                        span_of_expr(value),
+                        "`vec_new()` requires a `Vec<T>` type annotation",
+                    ));
                 } else {
                     self.check_expr(value, false)?
                 };
@@ -138,6 +146,18 @@ impl Checker {
                 let binding_type = self
                     .lookup_local(root)
                     .ok_or_else(|| at(*span, format!("undefined variable `{root}`")))?;
+                let target_type = self.check_place(target, binding_type)?;
+                let vector_place = self.place_crosses_vector(target, binding_type)?;
+                if vector_place {
+                    let value_type = self.check_expr_expected(value, target_type)?;
+                    self.expect_type(
+                        value_type,
+                        target_type,
+                        span_of_expr(value),
+                        "vector element assignment",
+                    )?;
+                    return Ok(false);
+                }
                 if self.is_loop_variable(root) {
                     return Err(at(
                         *span,
@@ -150,7 +170,6 @@ impl Checker {
                         format!("cannot assign through immutable binding `{root}`"),
                     ));
                 }
-                let target_type = self.check_place(target, binding_type)?;
                 let value_type = self.check_expr_expected(value, target_type)?;
                 let context = match target {
                     Expr::Field { name, .. } => format!("assignment to field `{name}`"),
@@ -242,10 +261,11 @@ impl Checker {
                 span,
             } => {
                 let array_type = self.check_expr(array, false)?;
-                let ValueType::Array(index) = array_type else {
-                    return Err(at(*span, "array iteration requires an array"));
+                let element = match array_type {
+                    ValueType::Array(index) => self.array_shapes[index].element,
+                    ValueType::Vector(index) => self.vector_shapes[index].element,
+                    _ => return Err(at(*span, "array iteration requires an array or vector")),
                 };
-                let element = self.array_shapes[index].element;
                 self.scopes
                     .push(HashMap::from([(name.clone(), ValueType::from(element))]));
                 self.immutable_scopes

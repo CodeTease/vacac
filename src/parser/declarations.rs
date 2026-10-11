@@ -143,7 +143,14 @@ impl Parser {
             self.consume(&TokenKind::RBracket, "`]`")?;
             Ok(Type::Array(Box::new(element), length))
         } else if matches!(&self.peek().kind, TokenKind::Ident(_)) {
-            let mut segments = vec![self.take_ident("type name")?];
+            let first = self.take_ident("type name")?;
+            if first == "Vec" {
+                self.consume(&TokenKind::Less, "`<` after `Vec`")?;
+                let element = self.parse_type()?;
+                self.consume_type_greater()?;
+                return Ok(Type::Vector(Box::new(element)));
+            }
+            let mut segments = vec![first];
             while self.take(&TokenKind::DoubleColon) {
                 segments.push(self.take_ident("type name after `::`")?);
             }

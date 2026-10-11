@@ -14,12 +14,18 @@ enum ValueType {
     Array(usize),
     Enum(usize),
     Struct(usize),
+    Vector(usize),
 }
 
 #[derive(Clone, Copy)]
 struct ArrayShape {
     element: ArrayElementType,
     length: u32,
+}
+
+#[derive(Clone, Copy)]
+struct VectorShape {
+    element: ArrayElementType,
 }
 
 #[derive(Clone)]
@@ -41,6 +47,8 @@ struct Checker {
     structs: Vec<StructDecl>,
     array_shapes: Vec<ArrayShape>,
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
+    vector_shapes: Vec<VectorShape>,
+    vector_shape_ids: HashMap<ArrayElementType, usize>,
     module_context: String,
     function_visibility: HashMap<String, (String, bool)>,
 }
@@ -64,6 +72,8 @@ pub fn check(program: &Program) -> Result<(), Diagnostic> {
         structs: Vec::new(),
         array_shapes: Vec::new(),
         array_shape_ids: HashMap::new(),
+        vector_shapes: Vec::new(),
+        vector_shape_ids: HashMap::new(),
         module_context: String::new(),
         function_visibility: HashMap::new(),
     };

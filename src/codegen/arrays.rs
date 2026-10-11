@@ -1,6 +1,28 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    pub(super) fn vector_element_size(&self, element: ValueType) -> Result<IntValue<'ctx>, String> {
+        let llvm_type = self
+            .llvm_type(element)
+            .ok_or("vector element has no LLVM type")?;
+        let size = llvm_type.size_of().ok_or("vector element has no size")?;
+        if size.get_zero_extended_constant() == Some(0) {
+            Ok(self.i64_type().const_int(1, false))
+        } else {
+            Ok(size)
+        }
+    }
+
+    pub(super) fn vector_element_byte_size(
+        &self,
+        element: ValueType,
+    ) -> Result<IntValue<'ctx>, String> {
+        self.llvm_type(element)
+            .ok_or("vector element has no LLVM type")?
+            .size_of()
+            .ok_or_else(|| "vector element has no size".to_owned())
+    }
+
     pub(super) fn emit_expression_expected(
         &mut self,
         expression: &Expr,
@@ -9,13 +31,20 @@ impl<'ctx> Codegen<'ctx> {
         let needs_context = match (expression, expected) {
             (Expr::Array(elements, _), ValueType::Array(index)) => {
                 elements.is_empty()
-                    || matches!(self.array_shapes[index].element, ArrayElementType::Array(_))
+                    || matches!(
+                        self.array_shapes[index].element,
+                        ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+                    )
+            }
+            (Expr::Call { name, args, .. }, ValueType::Vector(_)) => {
+                name == "vec_new" && args.is_empty()
             }
             _ => false,
         };
         if needs_context {
             let span = match expression {
                 Expr::Array(_, span) => *span,
+                Expr::Call { span, .. } => *span,
                 _ => unreachable!(),
             };
             self.emit_array_literal_with_type(expression, expected, span)
@@ -30,6 +59,31 @@ impl<'ctx> Codegen<'ctx> {
         array_type: ValueType,
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
+        if let (Expr::Call { name, args, .. }, ValueType::Vector(vector_id)) =
+            (expression, array_type)
+            && name == "vec_new"
+        {
+            if !args.is_empty() {
+                return Err(format!("`vec_new` expects 0 arguments, got {}", args.len()));
+            }
+            let _element_size = self
+                .vector_element_byte_size(ValueType::from(self.vector_shapes[vector_id].element))?;
+            let function = self
+                .module
+                .get_function("apex_vec_new")
+                .ok_or("missing vector runtime constructor")?;
+            let value = self
+                .builder
+                .build_call(function, &[], "vec.new")
+                .map_err(|error| error.to_string())?
+                .try_as_basic_value()
+                .basic()
+                .ok_or("vector constructor returned void")?;
+            return Ok(TypedValue {
+                value: Some(value),
+                ty: array_type,
+            });
+        }
         let Expr::Array(elements, _) = expression else {
             return self.emit_expression(expression);
         };
@@ -68,7 +122,14 @@ impl<'ctx> Codegen<'ctx> {
         let mut aggregate = llvm_type.const_zero().as_basic_value_enum();
         for (index, expression) in elements.iter().enumerate() {
             let element_type = ValueType::from(shape.element);
-            let value = self.emit_expression_expected(expression, element_type)?;
+            let value = if matches!(
+                shape.element,
+                ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+            ) {
+                self.emit_expression_expected(expression, element_type)?
+            } else {
+                self.emit_expression(expression)?
+            };
             if value.ty != element_type {
                 return Err(format!(
                     "array element has type {}, expected {}",
@@ -124,6 +185,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Enum(index) => ArrayElementType::Enum(index),
             ValueType::Struct(index) => ArrayElementType::Struct(index),
             ValueType::Array(index) => ArrayElementType::Array(index),
+            ValueType::Vector(index) => ArrayElementType::Vector(index),
             ValueType::Unit => return Err("array elements cannot have type `unit`".into()),
         };
         let array_type = self.array_type(element, elements.len() as u32);
@@ -236,6 +298,55 @@ impl<'ctx> Codegen<'ctx> {
         self.builder
             .build_unreachable()
             .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(valid);
+        Ok(())
+    }
+
+    pub(super) fn emit_dynamic_bounds_check(
+        &mut self,
+        index: IntValue<'ctx>,
+        length: IntValue<'ctx>,
+    ) -> Result<(), String> {
+        let negative = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SLT,
+                index,
+                self.i64_type().const_zero(),
+                "index.negative",
+            )
+            .map_err(|error| error.to_string())?;
+        let too_large = self
+            .builder
+            .build_int_compare(IntPredicate::SGE, index, length, "index.too.large")
+            .map_err(|error| error.to_string())?;
+        let invalid = self
+            .builder
+            .build_or(negative, too_large, "index.invalid")
+            .map_err(|error| error.to_string())?;
+        let function = self
+            .current_function
+            .ok_or("vector index outside function")?;
+        let failure = self.context.append_basic_block(function, "bounds.error");
+        let valid = self.context.append_basic_block(function, "bounds.valid");
+        self.builder
+            .build_conditional_branch(invalid, failure, valid)
+            .map_err(|error| error.to_string())?;
+        self.builder.position_at_end(failure);
+        let exit = self
+            .module
+            .get_function("exit")
+            .ok_or("missing runtime exit declaration")?;
+        self.builder
+            .build_call(
+                exit,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "bounds.exit",
+            )
+            .map_err(|error| error.to_string())?;
+        self.builder
+            .build_unreachable()
+            .map_err(|error| error.to_string())?;
         self.builder.position_at_end(valid);
         Ok(())
     }
