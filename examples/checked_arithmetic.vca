@@ -1,0 +1,23 @@
+// Signed i64 addition, subtraction, multiplication, and negation are checked.
+// An operation whose result is outside the i64 range terminates with status 1.
+// The direct minimum-literal spelling remains valid.
+fn main() -> i64 {
+    let maximum = 9223372036854775807;
+    let minimum = -9223372036854775808;
+
+    print("maximum + 0 = ");
+    print_i64(maximum + 0);
+    print("minimum - 0 = ");
+    print_i64(minimum - 0);
+    print("safe product = ");
+    print_i64(3037000499 * 3037000499);
+    print("negated value = ");
+    print_i64(-(-42));
+
+    // Examples that trap if uncommented:
+    // maximum + 1
+    // minimum - 1
+    // maximum * 2
+    // -minimum
+    0
+}
