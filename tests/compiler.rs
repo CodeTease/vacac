@@ -1,5 +1,7 @@
 #[path = "compiler/arrays.rs"]
 mod arrays;
+#[path = "compiler/bitwise.rs"]
+mod bitwise;
 #[path = "compiler/cli.rs"]
 mod cli;
 #[path = "compiler/common/mod.rs"]

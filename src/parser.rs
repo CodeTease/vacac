@@ -396,7 +396,7 @@ impl Parser {
             let operator = self.advance().clone();
             return Ok(Expr::Unary {
                 op: UnaryOp::Negate,
-                value: Box::new(self.parse_expression(7)?),
+                value: Box::new(self.parse_expression(11)?),
                 span: Span::from(&operator),
             });
         }
@@ -404,7 +404,7 @@ impl Parser {
             let operator = self.advance().clone();
             return Ok(Expr::Unary {
                 op: UnaryOp::Not,
-                value: Box::new(self.parse_expression(7)?),
+                value: Box::new(self.parse_expression(11)?),
                 span: Span::from(&operator),
             });
         }
@@ -612,17 +612,22 @@ impl Parser {
         Some(match self.peek().kind {
             TokenKind::OrOr => (BinaryOp::Or, 1),
             TokenKind::AndAnd => (BinaryOp::And, 2),
-            TokenKind::EqualEqual => (BinaryOp::Equal, 3),
-            TokenKind::BangEqual => (BinaryOp::NotEqual, 3),
-            TokenKind::Less => (BinaryOp::Less, 4),
-            TokenKind::LessEqual => (BinaryOp::LessEqual, 4),
-            TokenKind::Greater => (BinaryOp::Greater, 4),
-            TokenKind::GreaterEqual => (BinaryOp::GreaterEqual, 4),
-            TokenKind::Plus => (BinaryOp::Add, 5),
-            TokenKind::Minus => (BinaryOp::Subtract, 5),
-            TokenKind::Star => (BinaryOp::Multiply, 6),
-            TokenKind::Slash => (BinaryOp::Divide, 6),
-            TokenKind::Percent => (BinaryOp::Remainder, 6),
+            TokenKind::Pipe => (BinaryOp::BitOr, 3),
+            TokenKind::Caret => (BinaryOp::BitXor, 4),
+            TokenKind::Amp => (BinaryOp::BitAnd, 5),
+            TokenKind::EqualEqual => (BinaryOp::Equal, 6),
+            TokenKind::BangEqual => (BinaryOp::NotEqual, 6),
+            TokenKind::Less => (BinaryOp::Less, 7),
+            TokenKind::LessEqual => (BinaryOp::LessEqual, 7),
+            TokenKind::Greater => (BinaryOp::Greater, 7),
+            TokenKind::GreaterEqual => (BinaryOp::GreaterEqual, 7),
+            TokenKind::ShiftLeft => (BinaryOp::ShiftLeft, 8),
+            TokenKind::ShiftRight => (BinaryOp::ShiftRight, 8),
+            TokenKind::Plus => (BinaryOp::Add, 9),
+            TokenKind::Minus => (BinaryOp::Subtract, 9),
+            TokenKind::Star => (BinaryOp::Multiply, 10),
+            TokenKind::Slash => (BinaryOp::Divide, 10),
+            TokenKind::Percent => (BinaryOp::Remainder, 10),
             _ => return None,
         })
     }

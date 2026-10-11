@@ -82,6 +82,47 @@ impl<'ctx> Codegen<'ctx> {
             .ok_or("right operand has no value")?
             .into_int_value();
         let result = match op {
+            BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
+                if left.ty != ValueType::I64 {
+                    return Err(format!(
+                        "bitwise operators require i64, got {}",
+                        self.type_name(left.ty)
+                    ));
+                }
+                let value = match op {
+                    BinaryOp::BitAnd => self.builder.build_and(lhs, rhs, "bit.and"),
+                    BinaryOp::BitXor => self.builder.build_xor(lhs, rhs, "bit.xor"),
+                    BinaryOp::BitOr => self.builder.build_or(lhs, rhs, "bit.or"),
+                    _ => unreachable!(),
+                }
+                .map_err(|e| e.to_string())?;
+                TypedValue {
+                    value: Some(value.into()),
+                    ty: ValueType::I64,
+                }
+            }
+            BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
+                if left.ty != ValueType::I64 {
+                    return Err(format!(
+                        "shift operators require i64, got {}",
+                        self.type_name(left.ty)
+                    ));
+                }
+                self.guard_shift_amount(rhs)?;
+                let value = match op {
+                    BinaryOp::ShiftLeft => self.builder.build_left_shift(lhs, rhs, "shift.left"),
+                    BinaryOp::ShiftRight => {
+                        self.builder
+                            .build_right_shift(lhs, rhs, true, "shift.right")
+                    }
+                    _ => unreachable!(),
+                }
+                .map_err(|e| e.to_string())?;
+                TypedValue {
+                    value: Some(value.into()),
+                    ty: ValueType::I64,
+                }
+            }
             BinaryOp::Add
             | BinaryOp::Subtract
             | BinaryOp::Multiply
@@ -210,6 +251,55 @@ impl<'ctx> Codegen<'ctx> {
                 exit,
                 &[self.context.i32_type().const_int(1, false).into()],
                 "arithmetic.exit",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unreachable()
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(valid);
+        Ok(())
+    }
+
+    fn guard_shift_amount(&mut self, amount: IntValue<'ctx>) -> Result<(), String> {
+        let negative = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SLT,
+                amount,
+                self.i64_type().const_zero(),
+                "shift.negative",
+            )
+            .map_err(|e| e.to_string())?;
+        let too_large = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SGE,
+                amount,
+                self.i64_type().const_int(64, false),
+                "shift.too.large",
+            )
+            .map_err(|e| e.to_string())?;
+        let invalid = self
+            .builder
+            .build_or(negative, too_large, "shift.invalid")
+            .map_err(|e| e.to_string())?;
+        let function = self.current_function.ok_or("shift outside function")?;
+        let failure = self.context.append_basic_block(function, "shift.error");
+        let valid = self.context.append_basic_block(function, "shift.valid");
+        self.builder
+            .build_conditional_branch(invalid, failure, valid)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(failure);
+        let exit = self
+            .module
+            .get_function("exit")
+            .ok_or("internal error: missing runtime exit declaration")?;
+        self.builder
+            .build_call(
+                exit,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "shift.exit",
             )
             .map_err(|e| e.to_string())?;
         self.builder

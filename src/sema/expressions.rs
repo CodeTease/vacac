@@ -299,6 +299,14 @@ impl Checker {
                         self.expect_type(left_type, ValueType::I64, *span, "arithmetic operands")?;
                         ValueType::I64
                     }
+                    BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
+                        self.expect_type(left_type, ValueType::I64, *span, "bitwise operands")?;
+                        ValueType::I64
+                    }
+                    BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
+                        self.expect_type(left_type, ValueType::I64, *span, "shift operands")?;
+                        ValueType::I64
+                    }
                     BinaryOp::Equal | BinaryOp::NotEqual => {
                         if left_type == ValueType::Unit {
                             return Err(at(*span, "void expressions cannot be compared"));
