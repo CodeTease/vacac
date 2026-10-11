@@ -59,3 +59,46 @@ fn division_and_remainder_trap_on_zero_and_signed_overflow() {
         assert_eq!(result.status.code(), Some(1), "expression: {expression}");
     }
 }
+
+#[test]
+fn signed_i64_addition_subtraction_and_multiplication_trap_on_overflow() {
+    for (expression, name) in [
+        ("9223372036854775807 + 1", "add-positive-overflow"),
+        ("-9223372036854775808 + -1", "add-negative-overflow"),
+        ("-9223372036854775808 - 1", "subtract-negative-overflow"),
+        ("9223372036854775807 - -1", "subtract-positive-overflow"),
+        ("9223372036854775807 * 2", "multiply-positive-overflow"),
+        ("-9223372036854775808 * -1", "multiply-negative-overflow"),
+    ] {
+        let source = format!("fn main() -> i64 {{ {expression}; 0 }}\n");
+        let result = compile_and_run(&source, name);
+        assert_eq!(result.status.code(), Some(1), "expression: {expression}");
+    }
+}
+
+#[test]
+fn negating_a_runtime_i64_minimum_traps_but_in_range_arithmetic_works() {
+    let result = compile_and_run(
+        "fn main() -> i64 { let minimum = -9223372036854775808; -minimum }\n",
+        "negate-runtime-minimum",
+    );
+    assert_eq!(result.status.code(), Some(1));
+
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            print_i64(9223372036854775807 + 0);
+            print_i64(-9223372036854775808 - 0);
+            print_i64(3037000499 * 3037000499);
+            print_i64(-(-42));
+            0
+        }
+        "#,
+        "checked-arithmetic-in-range",
+    );
+    assert!(result.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "9223372036854775807\n-9223372036854775808\n9223372030926249001\n42\n"
+    );
+}

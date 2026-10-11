@@ -198,6 +198,14 @@ impl<'ctx> Codegen<'ctx> {
             }
             Expr::Struct { name, fields, span } => self.emit_struct_literal(name, fields, *span),
             Expr::Unary { op, value, .. } => {
+                if matches!(op, UnaryOp::Negate)
+                    && matches!(value.as_ref(), Expr::Integer(n, _) if *n == (i64::MAX as u64) + 1)
+                {
+                    return Ok(TypedValue {
+                        value: Some(self.i64_type().const_int(1u64 << 63, false).into()),
+                        ty: ValueType::I64,
+                    });
+                }
                 let value = self.emit_expression(value)?;
                 match op {
                     UnaryOp::Negate => {
@@ -207,10 +215,11 @@ impl<'ctx> Codegen<'ctx> {
                                 self.type_name(value.ty)
                             ));
                         }
-                        let result = self
-                            .builder
-                            .build_int_neg(value.value.unwrap().into_int_value(), "neg")
-                            .map_err(|e| e.to_string())?;
+                        let result = self.emit_checked_i64_operation(
+                            BinaryOp::Subtract,
+                            self.i64_type().const_zero(),
+                            value.value.unwrap().into_int_value(),
+                        )?;
                         Ok(TypedValue {
                             value: Some(result.into()),
                             ty: ValueType::I64,

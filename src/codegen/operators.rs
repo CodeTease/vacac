@@ -137,18 +137,26 @@ impl<'ctx> Codegen<'ctx> {
                         self.type_name(left.ty)
                     ));
                 }
-                if matches!(op, BinaryOp::Divide | BinaryOp::Remainder) {
-                    self.guard_signed_division_operands(lhs, rhs)?;
-                }
                 let value = match op {
-                    BinaryOp::Add => self.builder.build_int_add(lhs, rhs, "add"),
-                    BinaryOp::Subtract => self.builder.build_int_sub(lhs, rhs, "sub"),
-                    BinaryOp::Multiply => self.builder.build_int_mul(lhs, rhs, "mul"),
-                    BinaryOp::Divide => self.builder.build_int_signed_div(lhs, rhs, "div"),
-                    BinaryOp::Remainder => self.builder.build_int_signed_rem(lhs, rhs, "rem"),
+                    BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply => {
+                        self.emit_checked_i64_operation(op, lhs, rhs)?
+                    }
+                    BinaryOp::Divide | BinaryOp::Remainder => {
+                        self.guard_signed_division_operands(lhs, rhs)?;
+                        match op {
+                            BinaryOp::Divide => self
+                                .builder
+                                .build_int_signed_div(lhs, rhs, "div")
+                                .map_err(|e| e.to_string())?,
+                            BinaryOp::Remainder => self
+                                .builder
+                                .build_int_signed_rem(lhs, rhs, "rem")
+                                .map_err(|e| e.to_string())?,
+                            _ => unreachable!(),
+                        }
+                    }
                     _ => unreachable!(),
-                }
-                .map_err(|e| e.to_string())?;
+                };
                 TypedValue {
                     value: Some(value.into()),
                     ty: ValueType::I64,
@@ -195,6 +203,80 @@ impl<'ctx> Codegen<'ctx> {
             }
         };
         Ok(result)
+    }
+
+    pub(super) fn emit_checked_i64_operation(
+        &mut self,
+        op: BinaryOp,
+        lhs: IntValue<'ctx>,
+        rhs: IntValue<'ctx>,
+    ) -> Result<IntValue<'ctx>, String> {
+        let wide_type = self.context.i128_type();
+        let wide_lhs = self
+            .builder
+            .build_int_s_extend(lhs, wide_type, "arithmetic.lhs.wide")
+            .map_err(|e| e.to_string())?;
+        let wide_rhs = self
+            .builder
+            .build_int_s_extend(rhs, wide_type, "arithmetic.rhs.wide")
+            .map_err(|e| e.to_string())?;
+        let wide_result = match op {
+            BinaryOp::Add => self.builder.build_int_add(wide_lhs, wide_rhs, "add.wide"),
+            BinaryOp::Subtract => self.builder.build_int_sub(wide_lhs, wide_rhs, "sub.wide"),
+            BinaryOp::Multiply => self.builder.build_int_mul(wide_lhs, wide_rhs, "mul.wide"),
+            _ => return Err("internal error: unsupported checked i64 operation".into()),
+        }
+        .map_err(|e| e.to_string())?;
+        let result = self
+            .builder
+            .build_int_truncate(wide_result, self.i64_type(), "arithmetic.result")
+            .map_err(|e| e.to_string())?;
+        let restored = self
+            .builder
+            .build_int_s_extend(result, wide_type, "arithmetic.result.wide")
+            .map_err(|e| e.to_string())?;
+        let overflow = self
+            .builder
+            .build_int_compare(
+                IntPredicate::NE,
+                wide_result,
+                restored,
+                "arithmetic.overflow",
+            )
+            .map_err(|e| e.to_string())?;
+        self.guard_i64_overflow(overflow)?;
+        Ok(result)
+    }
+
+    fn guard_i64_overflow(&mut self, overflow: IntValue<'ctx>) -> Result<(), String> {
+        let function = self.current_function.ok_or("arithmetic outside function")?;
+        let failure = self
+            .context
+            .append_basic_block(function, "arithmetic.overflow.error");
+        let valid = self
+            .context
+            .append_basic_block(function, "arithmetic.overflow.valid");
+        self.builder
+            .build_conditional_branch(overflow, failure, valid)
+            .map_err(|e| e.to_string())?;
+
+        self.builder.position_at_end(failure);
+        let exit = self
+            .module
+            .get_function("exit")
+            .ok_or("internal error: missing runtime exit declaration")?;
+        self.builder
+            .build_call(
+                exit,
+                &[self.context.i32_type().const_int(1, false).into()],
+                "arithmetic.overflow.exit",
+            )
+            .map_err(|e| e.to_string())?;
+        self.builder
+            .build_unreachable()
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(valid);
+        Ok(())
     }
 
     pub(super) fn guard_signed_division_operands(
