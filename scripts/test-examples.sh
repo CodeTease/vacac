@@ -27,8 +27,12 @@ if [[ ! -x "$APEXC" ]]; then
     exit 2
 fi
 
-shopt -s nullglob
-examples=("$EXAMPLES_DIR"/*.apx)
+mapfile -d '' examples < <(
+    {
+        find "$EXAMPLES_DIR" -maxdepth 1 -type f -name '*.apx' -print0
+        find "$EXAMPLES_DIR" -mindepth 2 -type f -name main.apx -print0
+    } | sort -z
+)
 if (( ${#examples[@]} == 0 )); then
     printf 'error: no .apx examples found in %s\n' "$EXAMPLES_DIR" >&2
     exit 2
@@ -36,7 +40,7 @@ fi
 
 failures=0
 for example in "${examples[@]}"; do
-    name="${example##*/}"
+    name="${example#"$EXAMPLES_DIR"/}"
 
     printf '%s[CHECK]%s %s\n' "$BLUE" "$RESET" "$name"
     if ! "$APEXC" "$example" --check; then
@@ -46,7 +50,7 @@ for example in "${examples[@]}"; do
     fi
 
     printf '%s[RUN]%s   %s\n' "$YELLOW" "$RESET" "$name"
-    if [[ "$name" == "read_number.apx" ]]; then
+    if [[ "${name##*/}" == "read_number.apx" ]]; then
         if ! printf '42\n' | "$APEXC" "$example" --run; then
             printf '%s[FAIL]%s  run: %s\n' "$RED" "$RESET" "$name"
             failures=$((failures + 1))

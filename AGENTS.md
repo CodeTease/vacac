@@ -13,6 +13,7 @@
 | Build | `cargo build --release` |
 | Test | `cargo test` |
 | Format | `cargo fmt` |
+| Check/run all examples | `scripts/test-examples.sh` (after `cargo build --release`) |
 
 No linter or CI config exists. This is a bare Cargo project.
 
@@ -40,6 +41,8 @@ Types: `i64`, `bool`, `str`, named enums, named structs, and fixed-size one-dime
 ## Testing
 
 Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `tests/compiler/` (`cli`, `runtime`, `language`, `strings`, `arrays`, `structs`, and `enums`). Shared compile/run helpers are in `tests/compiler/common/mod.rs`. Each test invokes the already-built binary via `env!("CARGO_BIN_EXE_apexc")`, writes temporary `.apx` to `$TMPDIR`, compiles, runs, and asserts stdout/status. Clean up temp dirs on completion.
+
+`scripts/test-examples.sh` checks and runs all top-level `examples/*.apx` files and nested `main.apx` entry points (including module projects); nested module implementation files are not treated as independent programs. It supplies `42` to `read_number.apx` and accepts `APEXC=/path/to/apexc` to select another compiler binary. Hierarchical modules use `mod name;`; child source may be `name.apx` or `name/mod.apx`, relative to the declaring module file. Cross-module declarations must be `pub`, names are qualified with `::`, and only the root source defines `fn main() -> i64`.
 
 ## Gotchas
 
