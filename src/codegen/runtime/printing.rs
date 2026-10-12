@@ -6,6 +6,7 @@ impl<'ctx> Codegen<'ctx> {
         let printf_type = self.context.i32_type().fn_type(&[i8_ptr.into()], true);
         let printf = self.module.add_function("printf", printf_type, None);
         self.emit_printf_wrapper(printf, "print_i64", ValueType::I64, "%lld\n")?;
+        self.emit_printf_wrapper(printf, "print_f64", ValueType::F64, "%.17g\n")?;
         self.emit_printf_wrapper(printf, "print", ValueType::Str, "%s")?;
         self.emit_printf_wrapper(printf, "println", ValueType::Str, "%s\n")?;
         Ok(())

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueType {
     I64,
+    F64,
     Bool,
     Str,
     Unit,

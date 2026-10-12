@@ -10,6 +10,8 @@ mod common;
 mod enums;
 #[path = "compiler/equality.rs"]
 mod equality;
+#[path = "compiler/floats.rs"]
+mod floats;
 #[path = "compiler/language.rs"]
 mod language;
 #[path = "compiler/matching_loops.rs"]

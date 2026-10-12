@@ -76,6 +76,17 @@ impl<'ctx> Codegen<'ctx> {
         if left.ty == ValueType::Str {
             return Err("operator is not supported for str".into());
         }
+        if left.ty == ValueType::F64 {
+            let lhs = left
+                .value
+                .ok_or("left operand has no value")?
+                .into_float_value();
+            let rhs = right
+                .value
+                .ok_or("right operand has no value")?
+                .into_float_value();
+            return self.emit_f64_operation(op, lhs, rhs);
+        }
         let lhs = left
             .value
             .ok_or("left operand has no value")?
@@ -203,6 +214,60 @@ impl<'ctx> Codegen<'ctx> {
             }
         };
         Ok(result)
+    }
+
+    fn emit_f64_operation(
+        &mut self,
+        op: BinaryOp,
+        lhs: FloatValue<'ctx>,
+        rhs: FloatValue<'ctx>,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let value = match op {
+            BinaryOp::Add => Some(self.builder.build_float_add(lhs, rhs, "f64.add")),
+            BinaryOp::Subtract => Some(self.builder.build_float_sub(lhs, rhs, "f64.sub")),
+            BinaryOp::Multiply => Some(self.builder.build_float_mul(lhs, rhs, "f64.mul")),
+            BinaryOp::Divide => Some(self.builder.build_float_div(lhs, rhs, "f64.div")),
+            BinaryOp::Remainder => Some(self.builder.build_float_rem(lhs, rhs, "f64.rem")),
+            _ => None,
+        };
+        if let Some(value) = value {
+            return Ok(TypedValue {
+                value: Some(value.map_err(|e| e.to_string())?.into()),
+                ty: ValueType::F64,
+            });
+        }
+
+        let predicate = match op {
+            BinaryOp::Equal => FloatPredicate::OEQ,
+            BinaryOp::NotEqual => FloatPredicate::UNE,
+            BinaryOp::Less => FloatPredicate::OLT,
+            BinaryOp::LessEqual => FloatPredicate::OLE,
+            BinaryOp::Greater => FloatPredicate::OGT,
+            BinaryOp::GreaterEqual => FloatPredicate::OGE,
+            _ => {
+                return Err(format!(
+                    "operator is not supported for f64: {}",
+                    match op {
+                        BinaryOp::BitAnd => "&",
+                        BinaryOp::BitXor => "^",
+                        BinaryOp::BitOr => "|",
+                        BinaryOp::ShiftLeft => "<<",
+                        BinaryOp::ShiftRight => ">>",
+                        BinaryOp::And => "&&",
+                        BinaryOp::Or => "||",
+                        _ => "unknown operator",
+                    }
+                ));
+            }
+        };
+        let value = self
+            .builder
+            .build_float_compare(predicate, lhs, rhs, "f64.cmp")
+            .map_err(|e| e.to_string())?;
+        Ok(TypedValue {
+            value: Some(value.into()),
+            ty: ValueType::Bool,
+        })
     }
 
     pub(super) fn emit_checked_i64_operation(

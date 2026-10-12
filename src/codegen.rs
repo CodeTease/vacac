@@ -11,15 +11,17 @@ use inkwell::targets::{
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
+    PointerValue,
 };
-use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
+use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
 use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueType {
     I64,
+    F64,
     Bool,
     Str,
     Unit,
@@ -123,6 +125,7 @@ impl<'ctx> Codegen<'ctx> {
     fn type_name(&self, ty: ValueType) -> String {
         match ty {
             ValueType::I64 => "i64".into(),
+            ValueType::F64 => "f64".into(),
             ValueType::Bool => "bool".into(),
             ValueType::Str => "str".into(),
             ValueType::Unit => "unit".into(),

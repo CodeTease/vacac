@@ -4,6 +4,7 @@ use crate::diagnostic::{Diagnostic, SourceSpan};
 pub enum TokenKind {
     Ident(String),
     Integer(u64),
+    Float(f64),
     StringLit(String),
     Fn,
     Mod,
@@ -25,6 +26,7 @@ pub enum TokenKind {
     True,
     False,
     I64,
+    F64,
     Bool,
     Str,
     Unit,
@@ -78,6 +80,7 @@ impl Token {
         match &self.kind {
             TokenKind::Ident(s) => format!("identifier `{s}`"),
             TokenKind::Integer(n) => format!("integer `{n}`"),
+            TokenKind::Float(n) => format!("floating-point literal `{n}`"),
             TokenKind::StringLit(s) => format!("string literal {s:?}"),
             kind => format!("`{}`", token_name(kind)),
         }
@@ -106,6 +109,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
         TokenKind::True => "true",
         TokenKind::False => "false",
         TokenKind::I64 => "i64",
+        TokenKind::F64 => "f64",
         TokenKind::Bool => "bool",
         TokenKind::Str => "str",
         TokenKind::Unit => "unit",
@@ -145,6 +149,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
         TokenKind::Eof => "end of file",
         TokenKind::Ident(_) => "identifier",
         TokenKind::Integer(_) => "integer",
+        TokenKind::Float(_) => "floating-point literal",
         TokenKind::StringLit(_) => "string literal",
     }
 }
@@ -242,6 +247,7 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                 "true" => TokenKind::True,
                 "false" => TokenKind::False,
                 "i64" => TokenKind::I64,
+                "f64" => TokenKind::F64,
                 "bool" => TokenKind::Bool,
                 "str" => TokenKind::Str,
                 "unit" => TokenKind::Unit,
@@ -253,18 +259,82 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                 i += 1;
                 column += 1;
             }
+            let mut is_float = false;
+            if bytes.get(i) == Some(&b'.')
+                && bytes.get(i + 1).is_some_and(u8::is_ascii_digit)
+                && bytes.get(i + 1) != Some(&b'.')
+            {
+                is_float = true;
+                i += 1;
+                column += 1;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                    column += 1;
+                }
+            }
+            if matches!(bytes.get(i), Some(b'e' | b'E')) {
+                is_float = true;
+                i += 1;
+                column += 1;
+                if matches!(bytes.get(i), Some(b'+' | b'-')) {
+                    i += 1;
+                    column += 1;
+                }
+                let exponent_start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                    column += 1;
+                }
+                if exponent_start == i {
+                    return Err(Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column,
+                            file: source_id,
+                        },
+                        "floating-point exponent must contain at least one digit",
+                    ));
+                }
+            }
             let text = &input[start..i];
-            TokenKind::Integer(text.parse::<u64>().map_err(|_| {
-                Diagnostic::at(
-                    SourceSpan {
-                        line: start_line,
-                        column: start_column,
-                        end_column: column,
-                        file: source_id,
-                    },
-                    "integer literal is out of range",
-                )
-            })?)
+            if is_float {
+                let value = text.parse::<f64>().map_err(|_| {
+                    Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column,
+                            file: source_id,
+                        },
+                        "invalid f64 literal",
+                    )
+                })?;
+                if !value.is_finite() {
+                    return Err(Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column,
+                            file: source_id,
+                        },
+                        "f64 literal is out of range",
+                    ));
+                }
+                TokenKind::Float(value)
+            } else {
+                TokenKind::Integer(text.parse::<u64>().map_err(|_| {
+                    Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column,
+                            file: source_id,
+                        },
+                        "integer literal is out of range",
+                    )
+                })?)
+            }
         } else if b == b'"' {
             i += 1;
             column += 1;

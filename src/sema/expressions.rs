@@ -179,6 +179,7 @@ impl Checker {
                     Err(at(*span, "integer literal is out of range for i64"))
                 }
             }
+            Expr::Float(_, _) => Ok(ValueType::F64),
             Expr::Bool(_, _) => Ok(ValueType::Bool),
             Expr::String(_, _) => Ok(ValueType::Str),
             Expr::Array(elements, span) => {
@@ -197,6 +198,9 @@ impl Checker {
                 let first_type = self.check_expr(first, false)?;
                 let element = match first_type {
                     ValueType::I64 => ArrayElementType::I64,
+                    ValueType::F64 => {
+                        return Err(at(*span, "f64 is not supported in arrays"));
+                    }
                     ValueType::Bool => ArrayElementType::Bool,
                     ValueType::Str => ArrayElementType::Str,
                     ValueType::Enum(index) => ArrayElementType::Enum(index),
@@ -317,6 +321,7 @@ impl Checker {
                     matches!(op, UnaryOp::Negate) && matches!(value.as_ref(), Expr::Integer(_, _)),
                 )?;
                 let expected = match op {
+                    UnaryOp::Negate if value_type == ValueType::F64 => ValueType::F64,
                     UnaryOp::Negate => ValueType::I64,
                     UnaryOp::Not => ValueType::Bool,
                 };
@@ -348,6 +353,9 @@ impl Checker {
                     | BinaryOp::Multiply
                     | BinaryOp::Divide
                     | BinaryOp::Remainder => {
+                        if left_type == ValueType::F64 {
+                            return Ok(ValueType::F64);
+                        }
                         self.expect_type(left_type, ValueType::I64, *span, "arithmetic operands")?;
                         ValueType::I64
                     }
@@ -369,6 +377,9 @@ impl Checker {
                     | BinaryOp::LessEqual
                     | BinaryOp::Greater
                     | BinaryOp::GreaterEqual => {
+                        if left_type == ValueType::F64 {
+                            return Ok(ValueType::Bool);
+                        }
                         self.expect_type(left_type, ValueType::I64, *span, "comparison operands")?;
                         ValueType::Bool
                     }

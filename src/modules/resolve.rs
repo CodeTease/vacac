@@ -337,7 +337,7 @@ fn resolve_expr(
             if !matches!(name.as_str(), "len" | "vec_new" | "vec_push")
                 && !matches!(
                     name.as_str(),
-                    "print_i64" | "print" | "println" | "read_i64"
+                    "print_i64" | "print_f64" | "print" | "println" | "read_i64"
                 )
             {
                 *name = resolve_reference(name, module, *span, symbols)?;
@@ -388,7 +388,11 @@ fn resolve_expr(
                 }
             }
         }
-        Expr::Integer(..) | Expr::Bool(..) | Expr::String(..) | Expr::Variable(..) => {}
+        Expr::Integer(..)
+        | Expr::Float(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Variable(..) => {}
     }
     Ok(())
 }

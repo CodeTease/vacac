@@ -36,7 +36,7 @@ vacac <source.vca> [-o <executable>] [--emit-obj <object.o>]
 
 Entry point must be exactly `fn main() -> i64`. The emitted ELF wrapper returns its low 8 bits as the process exit status.
 
-Types: `i64`, `bool`, `str`, named enums, named structs, and fixed-size one-dimensional arrays of primitive, enum, or struct values. Functions may also return `unit`. Built-ins are `print_i64(i64)`, `print(str)` (no newline), `println(str)`, `read_i64() -> i64` (signed decimal token from stdin; invalid or out-of-range input exits 1), and `len(array) -> i64`.
+Types: `i64`, scalar `f64`, `bool`, `str`, named enums, named structs, and fixed-size one-dimensional arrays of primitive, enum, or struct values (excluding `f64`). Functions may also return `unit`. Built-ins are `print_i64(i64)`, `print_f64(f64)` (17 significant digits plus newline), `print(str)` (no newline), `println(str)`, `read_i64() -> i64` (signed decimal token from stdin; invalid or out-of-range input exits 1), and `len(array) -> i64`.
 
 ## Testing
 

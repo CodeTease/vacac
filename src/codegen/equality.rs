@@ -8,6 +8,15 @@ impl<'ctx> Codegen<'ctx> {
         right: BasicValueEnum<'ctx>,
     ) -> Result<IntValue<'ctx>, String> {
         match ty {
+            ValueType::F64 => self
+                .builder
+                .build_float_compare(
+                    FloatPredicate::OEQ,
+                    left.into_float_value(),
+                    right.into_float_value(),
+                    "f64.value.eq",
+                )
+                .map_err(|e| e.to_string()),
             ValueType::I64 | ValueType::Bool => self
                 .builder
                 .build_int_compare(

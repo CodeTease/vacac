@@ -121,6 +121,8 @@ impl Parser {
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.take(&TokenKind::I64) {
             Ok(Type::I64)
+        } else if self.take(&TokenKind::F64) {
+            Ok(Type::F64)
         } else if self.take(&TokenKind::Bool) {
             Ok(Type::Bool)
         } else if self.take(&TokenKind::Str) {
@@ -158,7 +160,7 @@ impl Parser {
         } else {
             Err(unexpected(
                 self.peek(),
-                "type `i64`, `bool`, `str`, `unit`, a named type, or `[element; length]`",
+                "type `i64`, `f64`, `bool`, `str`, `unit`, a named type, or `[element; length]`",
             ))
         }
     }

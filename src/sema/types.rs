@@ -4,6 +4,7 @@ impl Checker {
     pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, Diagnostic> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
+            Type::F64 => ValueType::F64,
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
@@ -45,6 +46,7 @@ impl Checker {
                 .map(|declaration| declaration.name.clone())
                 .unwrap_or_else(|| "<invalid struct>".into()),
             ValueType::I64 => "i64".into(),
+            ValueType::F64 => "f64".into(),
             ValueType::Bool => "bool".into(),
             ValueType::Str => "str".into(),
             ValueType::Unit => "unit".into(),
@@ -107,6 +109,7 @@ impl Checker {
     ) -> Result<ArrayElementType, Diagnostic> {
         Ok(match element {
             Type::I64 => ArrayElementType::I64,
+            Type::F64 => return Err(at(span, "f64 is not supported in arrays or vectors")),
             Type::Bool => ArrayElementType::Bool,
             Type::Str => ArrayElementType::Str,
             Type::Named(name) => {
@@ -231,6 +234,7 @@ impl Checker {
 pub(super) fn span_of_expr(expr: &Expr) -> Span {
     match expr {
         Expr::Integer(_, span)
+        | Expr::Float(_, span)
         | Expr::Variable(_, span)
         | Expr::Call { span, .. }
         | Expr::Unary { span, .. }

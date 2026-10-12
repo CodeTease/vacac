@@ -7,6 +7,10 @@ impl<'ctx> Codegen<'ctx> {
                 value: Some(self.i64_type().const_int(*n, false).into()),
                 ty: ValueType::I64,
             }),
+            Expr::Float(n, _) => Ok(TypedValue {
+                value: Some(self.context.f64_type().const_float(*n).into()),
+                ty: ValueType::F64,
+            }),
             Expr::Bool(value, _) => Ok(TypedValue {
                 value: Some(self.bool_type().const_int(u64::from(*value), false).into()),
                 ty: ValueType::Bool,
@@ -209,6 +213,22 @@ impl<'ctx> Codegen<'ctx> {
                 let value = self.emit_expression(value)?;
                 match op {
                     UnaryOp::Negate => {
+                        if value.ty == ValueType::F64 {
+                            let result = self
+                                .builder
+                                .build_float_neg(
+                                    value
+                                        .value
+                                        .ok_or("f64 value has no LLVM value")?
+                                        .into_float_value(),
+                                    "f64.neg",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            return Ok(TypedValue {
+                                value: Some(result.into()),
+                                ty: ValueType::F64,
+                            });
+                        }
                         if value.ty != ValueType::I64 {
                             return Err(format!(
                                 "unary `-` requires i64, got {}",

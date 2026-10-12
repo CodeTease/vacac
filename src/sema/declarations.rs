@@ -67,8 +67,14 @@ impl Checker {
         for declaration in &enum_declarations {
             for variant in &declaration.variants {
                 for payload_type in &variant.payload {
-                    if self.resolve_type(payload_type, variant.span)? == ValueType::Unit {
-                        return Err(at(variant.span, "enum payloads cannot have type `unit`"));
+                    match self.resolve_type(payload_type, variant.span)? {
+                        ValueType::Unit => {
+                            return Err(at(variant.span, "enum payloads cannot have type `unit`"));
+                        }
+                        ValueType::F64 => {
+                            return Err(at(variant.span, "enum payloads cannot have type `f64`"));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -76,8 +82,14 @@ impl Checker {
         let struct_fields = self.structs.clone();
         for declaration in &struct_fields {
             for field in &declaration.fields {
-                if self.resolve_type(&field.ty, field.span)? == ValueType::Unit {
-                    return Err(at(field.span, "struct fields cannot have type `unit`"));
+                match self.resolve_type(&field.ty, field.span)? {
+                    ValueType::Unit => {
+                        return Err(at(field.span, "struct fields cannot have type `unit`"));
+                    }
+                    ValueType::F64 => {
+                        return Err(at(field.span, "struct fields cannot have type `f64`"));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -98,6 +110,7 @@ impl Checker {
             if matches!(
                 function.name.as_str(),
                 "print_i64"
+                    | "print_f64"
                     | "print"
                     | "println"
                     | "read_i64"
@@ -174,6 +187,13 @@ impl Checker {
             "print_i64".into(),
             Signature {
                 params: vec![ValueType::I64],
+                return_type: ValueType::Unit,
+            },
+        );
+        self.signatures.insert(
+            "print_f64".into(),
+            Signature {
+                params: vec![ValueType::F64],
                 return_type: ValueType::Unit,
             },
         );

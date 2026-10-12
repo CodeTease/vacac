@@ -267,6 +267,7 @@ fn link_object(object: &Path, output: &Path) -> Result<std::process::ExitStatus,
         .arg(object)
         .arg("-o")
         .arg(output)
+        .arg("-lm")
         .status()
         .map_err(|e| Diagnostic::new(format!("failed to run cc: {e}")))
 }

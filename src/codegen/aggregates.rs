@@ -216,6 +216,12 @@ impl<'ctx> Codegen<'ctx> {
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
         let value = self.emit_expression(value_expr)?;
+        if value.ty == ValueType::F64 {
+            return Err(format!(
+                "line {}:{}: match does not support `f64` values",
+                span.line, span.column
+            ));
+        }
         if matches!(value.ty, ValueType::Bool | ValueType::I64) {
             return self.emit_scalar_match(value, arms, span);
         }
