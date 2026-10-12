@@ -34,3 +34,4 @@
 ## Future
 
 * [ ] Consider a package manager and reusable library distribution once the standard library and module system mature.
+* [ ] Linter and formatter.
