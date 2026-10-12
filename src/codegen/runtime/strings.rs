@@ -9,11 +9,10 @@ impl<'ctx> Codegen<'ctx> {
             size_type.fn_type(&[pointer_type.into()], false),
             None,
         );
-        let allocate = self.module.add_function(
-            "malloc",
-            pointer_type.fn_type(&[size_type.into()], false),
-            None,
-        );
+        let allocate = self
+            .module
+            .get_function("vaca_alloc")
+            .ok_or("missing allocator runtime function")?;
         let copy = self.module.add_function(
             "memcpy",
             pointer_type.fn_type(
@@ -34,9 +33,6 @@ impl<'ctx> Codegen<'ctx> {
         let entry = self.context.append_basic_block(function, "entry");
         let invalid_size = self.context.append_basic_block(function, "size.error");
         let allocate_block = self.context.append_basic_block(function, "allocate");
-        let allocation_failure_block = self
-            .context
-            .append_basic_block(function, "allocation.error");
         let copy_block = self.context.append_basic_block(function, "copy");
 
         self.builder.position_at_end(entry);
@@ -123,30 +119,18 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?;
         let result = self
             .builder
-            .build_call(allocate, &[allocation_size.into()], "str.allocation")
+            .build_call(
+                allocate,
+                &[pointer_type.const_null().into(), allocation_size.into()],
+                "str.allocation",
+            )
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
             .basic()
-            .ok_or("internal error: malloc returned void")?
+            .ok_or("internal error: allocator returned void")?
             .into_pointer_value();
-        let allocation_failed = self
-            .builder
-            .build_is_null(result, "str.allocation.failed")
-            .map_err(|e| e.to_string())?;
         self.builder
-            .build_conditional_branch(allocation_failed, allocation_failure_block, copy_block)
-            .map_err(|e| e.to_string())?;
-
-        self.builder.position_at_end(allocation_failure_block);
-        self.builder
-            .build_call(
-                exit,
-                &[self.context.i32_type().const_int(1, false).into()],
-                "str.allocation.exit",
-            )
-            .map_err(|e| e.to_string())?;
-        self.builder
-            .build_unreachable()
+            .build_unconditional_branch(copy_block)
             .map_err(|e| e.to_string())?;
 
         self.builder.position_at_end(copy_block);

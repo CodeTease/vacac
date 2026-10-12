@@ -9,6 +9,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.declare_functions(program)?;
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
+        codegen.emit_allocator_builtin()?;
         codegen.emit_string_concat_builtin()?;
         codegen.emit_vector_runtime()?;
         for function in &program.functions {
@@ -193,14 +194,10 @@ impl<'ctx> Codegen<'ctx> {
         let pointer = self.context.ptr_type(AddressSpace::default());
         let i64_type = self.i64_type();
         let i8_type = self.context.i8_type();
-        let size_type = i64_type;
-        let realloc = self.module.get_function("realloc").unwrap_or_else(|| {
-            self.module.add_function(
-                "realloc",
-                pointer.fn_type(&[pointer.into(), size_type.into()], false),
-                None,
-            )
-        });
+        let allocate = self
+            .module
+            .get_function("vaca_alloc")
+            .ok_or("missing allocator runtime function")?;
         let exit = self
             .module
             .get_function("exit")
@@ -212,30 +209,23 @@ impl<'ctx> Codegen<'ctx> {
             .module
             .add_function("vaca_vec_new", pointer.fn_type(&[], false), None);
         let entry = self.context.append_basic_block(vec_new, "entry");
-        let failure = self.context.append_basic_block(vec_new, "allocation.error");
         let init = self.context.append_basic_block(vec_new, "initialize");
         self.builder.position_at_end(entry);
+        let header_size = header_type.size_of().ok_or("vector header has no size")?;
         let header = self
             .builder
-            .build_malloc(header_type, "vec.header")
-            .map_err(|e| e.to_string())?;
-        let failed = self
-            .builder
-            .build_is_null(header, "vec.header.failed")
-            .map_err(|e| e.to_string())?;
-        self.builder
-            .build_conditional_branch(failed, failure, init)
-            .map_err(|e| e.to_string())?;
-        self.builder.position_at_end(failure);
-        self.builder
             .build_call(
-                exit,
-                &[self.context.i32_type().const_int(1, false).into()],
-                "vec.exit",
+                allocate,
+                &[pointer.const_null().into(), header_size.into()],
+                "vec.header",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .try_as_basic_value()
+            .basic()
+            .ok_or("allocator returned void")?
+            .into_pointer_value();
         self.builder
-            .build_unreachable()
+            .build_unconditional_branch(init)
             .map_err(|e| e.to_string())?;
         self.builder.position_at_end(init);
         let data_field = self
@@ -418,48 +408,20 @@ impl<'ctx> Codegen<'ctx> {
         let new_data = self
             .builder
             .build_call(
-                realloc,
+                allocate,
                 &[old_data.into(), allocation_size.into()],
-                "vec.realloc",
+                "vec.allocation",
             )
             .map_err(|e| e.to_string())?
             .try_as_basic_value()
             .basic()
-            .ok_or("realloc returned void")?
+            .ok_or("allocator returned void")?
             .into_pointer_value();
-        let allocation_failed = self
-            .builder
-            .build_is_null(new_data, "vec.realloc.failed")
-            .map_err(|e| e.to_string())?;
-        let store_reallocation = self.context.append_basic_block(push, "store.reallocation");
-        self.builder
-            .build_conditional_branch(allocation_failed, failure, store_reallocation)
-            .map_err(|e| e.to_string())?;
-        self.builder.position_at_end(store_reallocation);
         self.builder
             .build_store(data_ptr, new_data)
             .map_err(|e| e.to_string())?;
-        let old_capacity_zero = self
-            .builder
-            .build_int_compare(
-                IntPredicate::EQ,
-                cap,
-                i64_type.const_zero(),
-                "vec.capacity.was.zero",
-            )
-            .map_err(|e| e.to_string())?;
-        let allocated_capacity = self
-            .builder
-            .build_select(
-                old_capacity_zero,
-                i64_type.const_int(4, false),
-                new_cap,
-                "vec.capacity.stored",
-            )
-            .map_err(|e| e.to_string())?
-            .into_int_value();
         self.builder
-            .build_store(cap_ptr, allocated_capacity)
+            .build_store(cap_ptr, new_cap)
             .map_err(|e| e.to_string())?;
         self.builder
             .build_unconditional_branch(append)
@@ -769,6 +731,7 @@ impl<'ctx> Codegen<'ctx> {
                     | "exit"
                     | "strlen"
                     | "malloc"
+                    | "vaca_alloc"
                     | "memcpy"
                     | "vaca_str_concat"
                     | "len"

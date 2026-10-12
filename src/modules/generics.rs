@@ -44,6 +44,7 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
         "exit",
         "strlen",
         "malloc",
+        "vaca_alloc",
         "memcpy",
         "vaca_str_concat",
         "realloc",

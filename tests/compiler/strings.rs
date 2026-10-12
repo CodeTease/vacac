@@ -199,3 +199,18 @@ fn string_builtin_names_are_reserved() {
     );
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn allocator_runtime_name_is_reserved() {
+    let (dir, compile) = compile_source(
+        "fn vaca_alloc(size: i64) -> i64 { size }\nfn main() -> i64 { 0 }\n",
+        "reserved-vaca-alloc",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("`vaca_alloc` is a reserved compiler/runtime name"),
+        "unexpected diagnostic: {stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
