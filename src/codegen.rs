@@ -119,6 +119,7 @@ mod declarations;
 mod equality;
 mod expressions;
 mod loops;
+mod matching;
 mod operators;
 mod output;
 mod places;
