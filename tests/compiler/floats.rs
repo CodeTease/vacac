@@ -118,31 +118,91 @@ fn f32_rejects_implicit_conversions_and_unsupported_operators() {
 }
 
 #[test]
-fn f32_is_rejected_in_aggregates_and_match_values() {
+fn f32_arrays_vectors_struct_fields_and_enum_payloads_work() {
+    let result = compile_and_run(
+        r#"
+        struct Readings { samples: [f32; 2], latest: f32 }
+        enum Reading { Narrow(f32) }
+
+        fn update(values: [f32; 2]) -> [f32; 2] {
+            values[1] = values[1] + 1f32;
+            values
+        }
+
+        fn update_readings(data: Readings) -> Readings {
+            data.latest = data.latest + 0.5f32;
+            data
+        }
+
+        fn payload(value: Reading) -> f32 {
+            match value {
+                Reading::Narrow(number) => { number },
+            }
+        }
+
+        fn main() -> i64 {
+            let values = update([1.5f32, 2.5f32]);
+            let data = update_readings(Readings { samples: values, latest: values[0] });
+            let vector: Vec<f32> = vec_new();
+            vec_push(vector, data.latest);
+            vec_push(vector, payload(Reading::Narrow(data.samples[1])));
+            vector[0] = vector[0] + vector[1];
+            for value in vector { print_f32(value); }
+            let selected = match vector[0] {
+                5.5f32 => { 40 },
+                _ => { 0 },
+            };
+            print_i64(selected);
+            0
+        }
+        "#,
+        "f32-aggregate-runtime",
+    );
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "5.5\n3.5\n40\n");
+}
+
+#[test]
+fn f32_match_patterns_use_ieee_equality_and_require_wildcards() {
+    let result = compile_and_run(
+        r#"
+        fn classify(value: f32) -> i64 {
+            match value {
+                1f32 => { 10 },
+                -0.0f32 => { 20 },
+                _ => { 30 },
+            }
+        }
+        fn main() -> i64 {
+            let nan = 0f32 / 0f32;
+            print_i64(classify(1f32));
+            print_i64(classify(0f32));
+            print_i64(classify(nan));
+            0
+        }
+        "#,
+        "f32-match-ieee",
+    );
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "10\n20\n30\n");
+}
+
+#[test]
+fn f32_match_patterns_reject_mismatches_duplicates_and_missing_wildcards() {
     assert_compile_error(
-        "fn main() -> i64 { let values: [f32; 1] = [1f32]; 0 }",
-        "f32-array",
-        "f32 is not supported in arrays or vectors",
+        "fn main() -> i64 { let value: f32 = 1f32; match value { 1.0 => { 0 }, _ => { 1 } } }",
+        "f32-match-pattern-width",
+        "match pattern type does not match f32 value",
     );
     assert_compile_error(
-        "fn main() -> i64 { let values: Vec<f32> = vec_new(); 0 }",
-        "f32-vector",
-        "f32 is not supported in arrays or vectors",
+        "fn main() -> i64 { match 1f32 { 1f32 => { 0 } } }",
+        "f32-match-non-exhaustive",
+        "non-exhaustive match on `f32`; add a wildcard (`_`) arm",
     );
     assert_compile_error(
-        "struct Data { value: f32 } fn main() -> i64 { 0 }",
-        "f32-struct-field",
-        "struct fields cannot have type `f32`",
-    );
-    assert_compile_error(
-        "enum Data { Value(f32) } fn main() -> i64 { 0 }",
-        "f32-enum-payload",
-        "enum payloads cannot have type `f32`",
-    );
-    assert_compile_error(
-        "fn main() -> i64 { let value = match 1f32 { _ => { 0 }, }; value }",
-        "f32-match",
-        "match does not support `f32` values",
+        "fn main() -> i64 { match 0f32 { 0f32 => { 0 }, -0f32 => { 1 }, _ => { 2 } } }",
+        "f32-match-signed-zero-duplicate",
+        "duplicate match arm for `-0`",
     );
 }
 
@@ -213,31 +273,91 @@ fn f64_rejects_implicit_conversions_and_unsupported_operators() {
 }
 
 #[test]
-fn f64_is_rejected_in_aggregates_and_match_values() {
+fn f64_arrays_vectors_struct_fields_and_enum_payloads_work() {
+    let result = compile_and_run(
+        r#"
+        struct Readings { samples: [f64; 2], latest: f64 }
+        enum Reading { Wide(f64) }
+
+        fn update(values: [f64; 2]) -> [f64; 2] {
+            values[1] = values[1] + 1.0;
+            values
+        }
+
+        fn update_readings(data: Readings) -> Readings {
+            data.latest = data.latest + 0.5;
+            data
+        }
+
+        fn payload(value: Reading) -> f64 {
+            match value {
+                Reading::Wide(number) => { number },
+            }
+        }
+
+        fn main() -> i64 {
+            let values = update([1.5, 2.5]);
+            let data = update_readings(Readings { samples: values, latest: values[0] });
+            let vector: Vec<f64> = vec_new();
+            vec_push(vector, data.latest);
+            vec_push(vector, payload(Reading::Wide(data.samples[1])));
+            vector[0] = vector[0] + vector[1];
+            for value in vector { print_f64(value); }
+            let selected = match vector[0] {
+                5.5 => { 40 },
+                _ => { 0 },
+            };
+            print_i64(selected);
+            0
+        }
+        "#,
+        "f64-aggregate-runtime",
+    );
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "5.5\n3.5\n40\n");
+}
+
+#[test]
+fn f64_match_patterns_use_ieee_equality_and_require_wildcards() {
+    let result = compile_and_run(
+        r#"
+        fn classify(value: f64) -> i64 {
+            match value {
+                1.0 => { 10 },
+                -0.0 => { 20 },
+                _ => { 30 },
+            }
+        }
+        fn main() -> i64 {
+            let nan = 0.0 / 0.0;
+            print_i64(classify(1.0));
+            print_i64(classify(0.0));
+            print_i64(classify(nan));
+            0
+        }
+        "#,
+        "f64-match-ieee",
+    );
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "10\n20\n30\n");
+}
+
+#[test]
+fn f64_match_patterns_reject_mismatches_duplicates_and_missing_wildcards() {
     assert_compile_error(
-        "fn main() -> i64 { let values: [f64; 1] = [1.0]; 0 }",
-        "f64-array",
-        "f64 is not supported in arrays or vectors",
+        "fn main() -> i64 { let value: f64 = 1.0; match value { 1f32 => { 0 }, _ => { 1 } } }",
+        "f64-match-pattern-width",
+        "match pattern type does not match f64 value",
     );
     assert_compile_error(
-        "fn main() -> i64 { let values: Vec<f64> = vec_new(); 0 }",
-        "f64-vector",
-        "f64 is not supported in arrays or vectors",
+        "fn main() -> i64 { match 1.0 { 1.0 => { 0 } } }",
+        "f64-match-non-exhaustive",
+        "non-exhaustive match on `f64`; add a wildcard (`_`) arm",
     );
     assert_compile_error(
-        "struct Data { value: f64 } fn main() -> i64 { 0 }",
-        "f64-struct-field",
-        "struct fields cannot have type `f64`",
-    );
-    assert_compile_error(
-        "enum Data { Value(f64) } fn main() -> i64 { 0 }",
-        "f64-enum-payload",
-        "enum payloads cannot have type `f64`",
-    );
-    assert_compile_error(
-        "fn main() -> i64 { let value = match 1.0 { _ => { 0 }, }; value }",
-        "f64-match",
-        "match does not support `f64` values",
+        "fn main() -> i64 { match 0.0 { 0.0 => { 0 }, -0.0 => { 1 }, _ => { 2 } } }",
+        "f64-match-signed-zero-duplicate",
+        "duplicate match arm for `-0`",
     );
 }
 

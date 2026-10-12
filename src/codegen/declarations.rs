@@ -106,18 +106,8 @@ impl<'ctx> Codegen<'ctx> {
             Type::Array(element, length) => {
                 let element = match element.as_ref() {
                     Type::I64 => ArrayElementType::I64,
-                    Type::F32 => {
-                        return Err(format!(
-                            "line {}:{}: f32 is not supported in arrays or vectors",
-                            span.line, span.column
-                        ));
-                    }
-                    Type::F64 => {
-                        return Err(format!(
-                            "line {}:{}: f64 is not supported in arrays or vectors",
-                            span.line, span.column
-                        ));
-                    }
+                    Type::F32 => ArrayElementType::F32,
+                    Type::F64 => ArrayElementType::F64,
                     Type::Bool => ArrayElementType::Bool,
                     Type::Str => ArrayElementType::Str,
                     Type::Named(name) if self.enum_ids.contains_key(name) => {
@@ -555,14 +545,8 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<ArrayElementType, String> {
         match element {
             Type::I64 => Ok(ArrayElementType::I64),
-            Type::F32 => Err(format!(
-                "line {}:{}: f32 is not supported in arrays or vectors",
-                span.line, span.column
-            )),
-            Type::F64 => Err(format!(
-                "line {}:{}: f64 is not supported in arrays or vectors",
-                span.line, span.column
-            )),
+            Type::F32 => Ok(ArrayElementType::F32),
+            Type::F64 => Ok(ArrayElementType::F64),
             Type::Bool => Ok(ArrayElementType::Bool),
             Type::Str => Ok(ArrayElementType::Str),
             Type::Array(_, _) => {
@@ -657,18 +641,6 @@ impl<'ctx> Codegen<'ctx> {
                             variant.span.line, variant.span.column
                         ));
                     }
-                    if value_type == ValueType::F64 {
-                        return Err(format!(
-                            "line {}:{}: enum payloads cannot have type `f64`",
-                            variant.span.line, variant.span.column
-                        ));
-                    }
-                    if value_type == ValueType::F32 {
-                        return Err(format!(
-                            "line {}:{}: enum payloads cannot have type `f32`",
-                            variant.span.line, variant.span.column
-                        ));
-                    }
                     payload_fields.push(
                         self.llvm_type(value_type)
                             .ok_or("enum payload has no LLVM type")?,
@@ -714,18 +686,7 @@ impl<'ctx> Codegen<'ctx> {
             for field in &declaration.fields {
                 match &field.ty {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) | Type::Vector(_) => {}
-                    Type::F32 => {
-                        return Err(format!(
-                            "line {}:{}: struct fields cannot have type `f32`",
-                            field.span.line, field.span.column
-                        ));
-                    }
-                    Type::F64 => {
-                        return Err(format!(
-                            "line {}:{}: struct fields cannot have type `f64`",
-                            field.span.line, field.span.column
-                        ));
-                    }
+                    Type::F32 | Type::F64 => {}
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
                     Type::Named(name) if self.enum_ids.contains_key(name) => {}
                     Type::Named(name) => {

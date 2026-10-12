@@ -144,6 +144,8 @@ impl<'ctx> Codegen<'ctx> {
     fn array_element_type_name(&self, element: ArrayElementType) -> String {
         match element {
             ArrayElementType::I64 => "i64".into(),
+            ArrayElementType::F32 => "f32".into(),
+            ArrayElementType::F64 => "f64".into(),
             ArrayElementType::Bool => "bool".into(),
             ArrayElementType::Str => "str".into(),
             ArrayElementType::Enum(index) => self.enums[index].name.clone(),

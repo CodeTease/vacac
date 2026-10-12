@@ -19,17 +19,18 @@ impl Parser {
             } else if self.take(&TokenKind::False) {
                 MatchPattern::Bool(false)
             } else if self.take(&TokenKind::Minus) {
-                let value = match self.advance().kind {
+                match self.advance().kind {
                     TokenKind::Integer(value) if value <= (i64::MAX as u64) + 1 => {
                         if value == (i64::MAX as u64) + 1 {
-                            i64::MIN
+                            MatchPattern::I64(i64::MIN)
                         } else {
-                            -(value as i64)
+                            MatchPattern::I64(-(value as i64))
                         }
                     }
+                    TokenKind::Float32(value) => MatchPattern::F32(-value),
+                    TokenKind::Float(value) => MatchPattern::F64(-value),
                     _ => return Err(unexpected(self.previous(), "signed i64 match pattern")),
-                };
-                MatchPattern::I64(value)
+                }
             } else if let TokenKind::Integer(value) = &self.peek().kind {
                 if *value > i64::MAX as u64 {
                     return Err(unexpected(self.peek(), "i64 match pattern"));
@@ -37,6 +38,14 @@ impl Parser {
                 let value = *value;
                 self.advance();
                 MatchPattern::I64(value as i64)
+            } else if let TokenKind::Float32(value) = &self.peek().kind {
+                let value = *value;
+                self.advance();
+                MatchPattern::F32(value)
+            } else if let TokenKind::Float(value) = &self.peek().kind {
+                let value = *value;
+                self.advance();
+                MatchPattern::F64(value)
             } else {
                 let mut path = vec![self.take_ident("enum name in match pattern")?];
                 while self.take(&TokenKind::DoubleColon) {

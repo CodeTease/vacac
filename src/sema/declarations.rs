@@ -71,12 +71,6 @@ impl Checker {
                         ValueType::Unit => {
                             return Err(at(variant.span, "enum payloads cannot have type `unit`"));
                         }
-                        ValueType::F64 => {
-                            return Err(at(variant.span, "enum payloads cannot have type `f64`"));
-                        }
-                        ValueType::F32 => {
-                            return Err(at(variant.span, "enum payloads cannot have type `f32`"));
-                        }
                         _ => {}
                     }
                 }
@@ -88,12 +82,6 @@ impl Checker {
                 match self.resolve_type(&field.ty, field.span)? {
                     ValueType::Unit => {
                         return Err(at(field.span, "struct fields cannot have type `unit`"));
-                    }
-                    ValueType::F64 => {
-                        return Err(at(field.span, "struct fields cannot have type `f64`"));
-                    }
-                    ValueType::F32 => {
-                        return Err(at(field.span, "struct fields cannot have type `f32`"));
                     }
                     _ => {}
                 }

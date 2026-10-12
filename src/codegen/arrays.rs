@@ -180,8 +180,8 @@ impl<'ctx> Codegen<'ctx> {
         let first = self.emit_expression(first)?;
         let element = match first.ty {
             ValueType::I64 => ArrayElementType::I64,
-            ValueType::F32 => return Err("f32 is not supported in arrays".into()),
-            ValueType::F64 => return Err("f64 is not supported in arrays".into()),
+            ValueType::F32 => ArrayElementType::F32,
+            ValueType::F64 => ArrayElementType::F64,
             ValueType::Bool => ArrayElementType::Bool,
             ValueType::Str => ArrayElementType::Str,
             ValueType::Enum(index) => ArrayElementType::Enum(index),

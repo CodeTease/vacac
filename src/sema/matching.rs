@@ -8,13 +8,10 @@ impl Checker {
         span: Span,
     ) -> Result<ValueType, Diagnostic> {
         let value_type = self.check_expr(value, false)?;
-        if value_type == ValueType::F64 {
-            return Err(at(span, "match does not support `f64` values"));
-        }
-        if value_type == ValueType::F32 {
-            return Err(at(span, "match does not support `f32` values"));
-        }
-        if matches!(value_type, ValueType::Bool | ValueType::I64) {
+        if matches!(
+            value_type,
+            ValueType::Bool | ValueType::I64 | ValueType::F32 | ValueType::F64
+        ) {
             self.check_scalar_match(value_type, arms, span)
         } else {
             let enum_id = match value_type {
@@ -125,7 +122,10 @@ impl Checker {
                         }
                         Some(variant)
                     }
-                    MatchPattern::Bool(_) | MatchPattern::I64(_) => {
+                    MatchPattern::Bool(_)
+                    | MatchPattern::I64(_)
+                    | MatchPattern::F32(_)
+                    | MatchPattern::F64(_) => {
                         return Err(at(
                             arm.span,
                             format!(
@@ -206,6 +206,8 @@ impl Checker {
     ) -> Result<ValueType, Diagnostic> {
         let mut seen_bool = std::collections::HashSet::new();
         let mut seen_i64 = std::collections::HashSet::new();
+        let mut seen_f32 = Vec::new();
+        let mut seen_f64 = Vec::new();
         let mut wildcard_seen = false;
         let mut result_type = None;
         for arm in arms {
@@ -216,7 +218,7 @@ impl Checker {
                     }
                     let exhaustive = match value_type {
                         ValueType::Bool => seen_bool.len() == 2,
-                        ValueType::I64 => false,
+                        ValueType::I64 | ValueType::F32 | ValueType::F64 => false,
                         _ => unreachable!(),
                     };
                     if exhaustive {
@@ -243,7 +245,28 @@ impl Checker {
                         return Err(at(arm.span, format!("duplicate match arm for `{value}`")));
                     }
                 }
-                MatchPattern::Bool(_) | MatchPattern::I64(_) => {
+                MatchPattern::F32(value) if value_type == ValueType::F32 => {
+                    if wildcard_seen {
+                        return Err(at(arm.span, "unreachable match arm after wildcard"));
+                    }
+                    if seen_f32.iter().any(|seen| *seen == *value) {
+                        return Err(at(arm.span, format!("duplicate match arm for `{value}`")));
+                    }
+                    seen_f32.push(*value);
+                }
+                MatchPattern::F64(value) if value_type == ValueType::F64 => {
+                    if wildcard_seen {
+                        return Err(at(arm.span, "unreachable match arm after wildcard"));
+                    }
+                    if seen_f64.iter().any(|seen| *seen == *value) {
+                        return Err(at(arm.span, format!("duplicate match arm for `{value}`")));
+                    }
+                    seen_f64.push(*value);
+                }
+                MatchPattern::Bool(_)
+                | MatchPattern::I64(_)
+                | MatchPattern::F32(_)
+                | MatchPattern::F64(_) => {
                     return Err(at(
                         arm.span,
                         format!(
@@ -289,6 +312,15 @@ impl Checker {
                 return Err(at(
                     span,
                     "non-exhaustive match on `i64`; add a wildcard (`_`) arm",
+                ));
+            }
+            if matches!(value_type, ValueType::F32 | ValueType::F64) {
+                return Err(at(
+                    span,
+                    format!(
+                        "non-exhaustive match on `{}`; add a wildcard (`_`) arm",
+                        self.type_name(value_type)
+                    ),
                 ));
             }
         }

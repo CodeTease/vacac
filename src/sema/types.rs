@@ -58,6 +58,8 @@ impl Checker {
     fn array_element_type_name(&self, element: ArrayElementType) -> String {
         match element {
             ArrayElementType::I64 => "i64".into(),
+            ArrayElementType::F32 => "f32".into(),
+            ArrayElementType::F64 => "f64".into(),
             ArrayElementType::Bool => "bool".into(),
             ArrayElementType::Str => "str".into(),
             ArrayElementType::Enum(index) => self.enums[index].name.clone(),
@@ -111,8 +113,8 @@ impl Checker {
     ) -> Result<ArrayElementType, Diagnostic> {
         Ok(match element {
             Type::I64 => ArrayElementType::I64,
-            Type::F32 => return Err(at(span, "f32 is not supported in arrays or vectors")),
-            Type::F64 => return Err(at(span, "f64 is not supported in arrays or vectors")),
+            Type::F32 => ArrayElementType::F32,
+            Type::F64 => ArrayElementType::F64,
             Type::Bool => ArrayElementType::Bool,
             Type::Str => ArrayElementType::Str,
             Type::Named(name) => {
@@ -272,6 +274,8 @@ impl From<ArrayElementType> for ValueType {
     fn from(element: ArrayElementType) -> Self {
         match element {
             ArrayElementType::I64 => Self::I64,
+            ArrayElementType::F32 => Self::F32,
+            ArrayElementType::F64 => Self::F64,
             ArrayElementType::Bool => Self::Bool,
             ArrayElementType::Str => Self::Str,
             ArrayElementType::Enum(index) => Self::Enum(index),

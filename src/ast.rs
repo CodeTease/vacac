@@ -14,6 +14,8 @@ pub enum Type {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArrayElementType {
     I64,
+    F32,
+    F64,
     Bool,
     Str,
     Enum(usize),
@@ -232,6 +234,8 @@ pub enum MatchPattern {
     Wildcard,
     Bool(bool),
     I64(i64),
+    F32(f32),
+    F64(f64),
     Variant {
         enum_name: String,
         variant_name: String,

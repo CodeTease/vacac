@@ -216,19 +216,10 @@ impl<'ctx> Codegen<'ctx> {
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
         let value = self.emit_expression(value_expr)?;
-        if value.ty == ValueType::F64 {
-            return Err(format!(
-                "line {}:{}: match does not support `f64` values",
-                span.line, span.column
-            ));
-        }
-        if value.ty == ValueType::F32 {
-            return Err(format!(
-                "line {}:{}: match does not support `f32` values",
-                span.line, span.column
-            ));
-        }
-        if matches!(value.ty, ValueType::Bool | ValueType::I64) {
+        if matches!(
+            value.ty,
+            ValueType::Bool | ValueType::I64 | ValueType::F32 | ValueType::F64
+        ) {
             return self.emit_scalar_match(value, arms, span);
         }
         let ValueType::Enum(enum_id) = value.ty else {
@@ -409,11 +400,11 @@ impl<'ctx> Codegen<'ctx> {
         arms: &[crate::parser::MatchArm],
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
+        let scalar_value = value.value.ok_or("match value has no LLVM value")?;
+        let is_float = matches!(value.ty, ValueType::F32 | ValueType::F64);
         let is_bool = value.ty == ValueType::Bool;
-        let scalar = value
-            .value
-            .ok_or("match value has no LLVM value")?
-            .into_int_value();
+        let int_scalar = (!is_float).then(|| scalar_value.into_int_value());
+        let float_scalar = is_float.then(|| scalar_value.into_float_value());
         let function = self.current_function.ok_or("match outside function")?;
         let end_bb = self.context.append_basic_block(function, "match.end");
         let arm_blocks: Vec<_> = arms
@@ -423,9 +414,11 @@ impl<'ctx> Codegen<'ctx> {
         let fallback_bb = self.context.append_basic_block(function, "match.invalid");
         let mut seen_bool = std::collections::HashSet::new();
         let mut seen_i64 = std::collections::HashSet::new();
+        let mut seen_f32 = Vec::new();
+        let mut seen_f64 = Vec::new();
         let mut wildcard_seen = false;
         for (index, arm) in arms.iter().enumerate() {
-            let test_value = match &arm.pattern {
+            let test_pattern = match &arm.pattern {
                 MatchPattern::Wildcard => {
                     if wildcard_seen {
                         return Err(format!(
@@ -443,18 +436,41 @@ impl<'ctx> Codegen<'ctx> {
                             arm.span.line, arm.span.column
                         ));
                     }
-                    Some(u64::from(*pattern))
+                    Some(MatchPattern::Bool(*pattern))
                 }
-                MatchPattern::I64(pattern) if !is_bool => {
+                MatchPattern::I64(pattern) if !is_bool && !is_float => {
                     if wildcard_seen || !seen_i64.insert(*pattern) {
                         return Err(format!(
                             "line {}:{}: duplicate or unreachable integer match arm",
                             arm.span.line, arm.span.column
                         ));
                     }
-                    Some(*pattern as u64)
+                    Some(MatchPattern::I64(*pattern))
                 }
-                MatchPattern::Bool(_) | MatchPattern::I64(_) => {
+                MatchPattern::F32(pattern) if value.ty == ValueType::F32 => {
+                    if wildcard_seen || seen_f32.iter().any(|seen| *seen == *pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate or unreachable f32 match arm",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    seen_f32.push(*pattern);
+                    Some(MatchPattern::F32(*pattern))
+                }
+                MatchPattern::F64(pattern) if value.ty == ValueType::F64 => {
+                    if wildcard_seen || seen_f64.iter().any(|seen| *seen == *pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate or unreachable f64 match arm",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    seen_f64.push(*pattern);
+                    Some(MatchPattern::F64(*pattern))
+                }
+                MatchPattern::Bool(_)
+                | MatchPattern::I64(_)
+                | MatchPattern::F32(_)
+                | MatchPattern::F64(_) => {
                     return Err(format!(
                         "line {}:{}: match pattern type does not match {} value",
                         arm.span.line,
@@ -476,16 +492,37 @@ impl<'ctx> Codegen<'ctx> {
             } else {
                 self.context.append_basic_block(function, "match.next")
             };
-            if let Some(test_value) = test_value {
-                let test = self
-                    .builder
-                    .build_int_compare(
+            if let Some(pattern) = &test_pattern {
+                let test = match pattern {
+                    MatchPattern::Bool(pattern) => self.builder.build_int_compare(
                         IntPredicate::EQ,
-                        scalar,
-                        scalar.get_type().const_int(test_value, false),
+                        int_scalar.expect("boolean match uses an integer value"),
+                        self.context
+                            .bool_type()
+                            .const_int(u64::from(*pattern), false),
                         "match.scalar.test",
-                    )
-                    .map_err(|error| error.to_string())?;
+                    ),
+                    MatchPattern::I64(pattern) => self.builder.build_int_compare(
+                        IntPredicate::EQ,
+                        int_scalar.expect("integer match uses an integer value"),
+                        self.i64_type().const_int(*pattern as u64, false),
+                        "match.scalar.test",
+                    ),
+                    MatchPattern::F32(pattern) => self.builder.build_float_compare(
+                        FloatPredicate::OEQ,
+                        float_scalar.expect("f32 match uses a floating value"),
+                        self.context.f32_type().const_float(f64::from(*pattern)),
+                        "match.scalar.test",
+                    ),
+                    MatchPattern::F64(pattern) => self.builder.build_float_compare(
+                        FloatPredicate::OEQ,
+                        float_scalar.expect("f64 match uses a floating value"),
+                        self.context.f64_type().const_float(*pattern),
+                        "match.scalar.test",
+                    ),
+                    _ => unreachable!(),
+                }
+                .map_err(|error| error.to_string())?;
                 self.builder
                     .build_conditional_branch(test, arm_blocks[index], next)
                     .map_err(|error| error.to_string())?;
@@ -494,9 +531,9 @@ impl<'ctx> Codegen<'ctx> {
                     .build_unconditional_branch(arm_blocks[index])
                     .map_err(|error| error.to_string())?;
             }
-            if test_value.is_some() && index + 1 != arms.len() {
+            if test_pattern.is_some() && index + 1 != arms.len() {
                 self.builder.position_at_end(next);
-            } else if test_value.is_some() {
+            } else if test_pattern.is_some() {
                 self.builder.position_at_end(fallback_bb);
             }
             if matches!(arm.pattern, MatchPattern::Wildcard) {

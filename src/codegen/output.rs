@@ -38,6 +38,8 @@ impl From<ArrayElementType> for ValueType {
     fn from(element: ArrayElementType) -> Self {
         match element {
             ArrayElementType::I64 => Self::I64,
+            ArrayElementType::F32 => Self::F32,
+            ArrayElementType::F64 => Self::F64,
             ArrayElementType::Bool => Self::Bool,
             ArrayElementType::Str => Self::Str,
             ArrayElementType::Enum(index) => Self::Enum(index),

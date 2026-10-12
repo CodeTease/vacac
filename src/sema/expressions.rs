@@ -199,10 +199,8 @@ impl Checker {
                 let first_type = self.check_expr(first, false)?;
                 let element = match first_type {
                     ValueType::I64 => ArrayElementType::I64,
-                    ValueType::F32 => return Err(at(*span, "f32 is not supported in arrays")),
-                    ValueType::F64 => {
-                        return Err(at(*span, "f64 is not supported in arrays"));
-                    }
+                    ValueType::F32 => ArrayElementType::F32,
+                    ValueType::F64 => ArrayElementType::F64,
                     ValueType::Bool => ArrayElementType::Bool,
                     ValueType::Str => ArrayElementType::Str,
                     ValueType::Enum(index) => ArrayElementType::Enum(index),
