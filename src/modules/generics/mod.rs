@@ -10,6 +10,8 @@ struct PendingFunction {
 }
 
 struct Specializer {
+    global_declarations: HashMap<String, GlobalDecl>,
+    module_context: String,
     generic_functions: HashMap<String, Function>,
     generic_structs: HashMap<String, StructDecl>,
     enum_names: std::collections::HashSet<String>,
@@ -70,6 +72,12 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
         }
     }
     let mut specializer = Specializer {
+        global_declarations: program
+            .globals
+            .iter()
+            .map(|global| (global.name.clone(), global.clone()))
+            .collect(),
+        module_context: String::new(),
         generic_functions: program
             .functions
             .iter()
@@ -112,6 +120,15 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
     program
         .structs
         .retain(|declaration| declaration.generic_params.is_empty());
+
+    for global in &mut program.globals {
+        specializer.module_context = global.module.clone();
+        if let Some(ty) = global.ty.take() {
+            global.ty = Some(specializer.normalize_type(ty, &Substitution::new(), global.span)?);
+        }
+        specializer.process_expr(&mut global.value, &Substitution::new(), &mut HashMap::new())?;
+    }
+    specializer.module_context.clear();
 
     for declaration in &mut program.structs {
         for field in &mut declaration.fields {

@@ -184,6 +184,39 @@ fn public_generic_functions_and_structs_work_across_modules() {
 }
 
 #[test]
+fn public_globals_work_across_modules_and_private_globals_stay_private() {
+    let (directory, compile) = module_project(
+        "module-globals",
+        "mod values;\nfn main() -> i64 { values::COUNTER = 43; values::ANSWER + values::COUNTER - 85 }\n",
+        &[(
+            "values.vca",
+            "pub const ANSWER: i64 = 42;\npub const NEXT: i64 = ANSWER + 1;\npub let COUNTER: i64 = 42;\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "private-global",
+        "mod values;\nfn main() -> i64 { values::SECRET }\n",
+        &[("values.vca", "const SECRET: i64 = 42;\n")],
+    );
+    assert!(!compile.status.success());
+    assert!(
+        String::from_utf8_lossy(&compile.stderr).contains("global `values::SECRET` is private"),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn private_generic_module_declarations_remain_private() {
     let (directory, compile) = module_project(
         "private-generic-module",

@@ -174,9 +174,9 @@ fn run() -> Result<i32, Diagnostic> {
         quiet,
         ..
     } = options;
-    let program = modules::load(&source_path)?;
+    let mut program = modules::load(&source_path)?;
     let file = source_path.display().to_string();
-    sema::check(&program).map_err(|e| {
+    sema::check(&mut program).map_err(|e| {
         if let Some(source_id) = e.source_id {
             e.with_source_id(
                 source_id,

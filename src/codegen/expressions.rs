@@ -40,19 +40,41 @@ impl<'ctx> Codegen<'ctx> {
                 ))
             }
             Expr::Variable(name, span) => {
-                let local = self.lookup_local(name).ok_or_else(|| {
+                if let Some(local) = self.lookup_local(name) {
+                    let value = self
+                        .builder
+                        .build_load(self.llvm_type(local.ty).unwrap(), local.pointer, name)
+                        .map_err(|e| e.to_string())?;
+                    return Ok(TypedValue {
+                        value: Some(value),
+                        ty: local.ty,
+                    });
+                }
+                let global_name = self.resolve_global_name(name).ok_or_else(|| {
                     format!(
                         "line {}:{}: undefined variable `{name}`",
                         span.line, span.column
                     )
                 })?;
+                let declaration = self.global_declarations[&global_name].clone();
+                if declaration.module != self.module_context && !declaration.is_public {
+                    return Err(format!(
+                        "line {}:{}: global `{name}` is private",
+                        span.line, span.column
+                    ));
+                }
+                let ty = self.global_types[&global_name];
                 let value = self
                     .builder
-                    .build_load(self.llvm_type(local.ty).unwrap(), local.pointer, name)
-                    .map_err(|e| e.to_string())?;
+                    .build_load(
+                        self.llvm_type(ty).ok_or("global has no LLVM type")?,
+                        self.globals[&global_name].as_pointer_value(),
+                        name,
+                    )
+                    .map_err(|error| error.to_string())?;
                 Ok(TypedValue {
                     value: Some(value),
-                    ty: local.ty,
+                    ty,
                 })
             }
             Expr::Index { array, index, span } => {

@@ -14,6 +14,8 @@ mod equality;
 mod floats;
 #[path = "compiler/generics.rs"]
 mod generics;
+#[path = "compiler/globals.rs"]
+mod globals;
 #[path = "compiler/language.rs"]
 mod language;
 #[path = "compiler/matching_loops.rs"]

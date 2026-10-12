@@ -1,6 +1,32 @@
 use super::*;
 
 impl Parser {
+    pub(super) fn parse_global(
+        &mut self,
+        is_public: bool,
+        mutable: bool,
+    ) -> Result<GlobalDecl, Diagnostic> {
+        let start = self.advance().clone();
+        let name = self.take_ident("global name")?;
+        let ty = if self.take(&TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        self.consume(&TokenKind::Equal, "`=` in global initializer")?;
+        let value = self.parse_expression(0)?;
+        self.consume(&TokenKind::Semicolon, "`;` after global initializer")?;
+        Ok(GlobalDecl {
+            name,
+            ty,
+            value,
+            mutable,
+            span: Span::from(&start),
+            is_public,
+            module: self.module.clone(),
+        })
+    }
+
     pub(super) fn parse_enum(&mut self, is_public: bool) -> Result<EnumDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Enum, "`enum`")?;
         let name = self.take_ident("enum name")?;

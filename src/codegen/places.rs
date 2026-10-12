@@ -138,35 +138,53 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn emit_assignment_statement(&mut self, statement: &Stmt) -> Result<bool, String> {
         match statement {
             Stmt::Assign { name, value, span } => {
-                let local = self.lookup_local(name).ok_or_else(|| {
-                    format!(
-                        "line {}:{}: undefined variable `{name}`",
-                        span.line, span.column
+                let (pointer, ty) = if let Some(local) = self.lookup_local(name) {
+                    if local.immutable {
+                        let reason = if local.loop_variable {
+                            format!("cannot assign to immutable loop variable `{name}`")
+                        } else {
+                            format!("cannot assign to immutable binding `{name}`")
+                        };
+                        return Err(format!("line {}:{}: {reason}", span.line, span.column));
+                    }
+                    (local.pointer, local.ty)
+                } else {
+                    let global_name = self.resolve_global_name(name).ok_or_else(|| {
+                        format!(
+                            "line {}:{}: undefined variable `{name}`",
+                            span.line, span.column
+                        )
+                    })?;
+                    let declaration = self.global_declarations[&global_name].clone();
+                    if declaration.module != self.module_context && !declaration.is_public {
+                        return Err(format!(
+                            "line {}:{}: global `{name}` is private",
+                            span.line, span.column
+                        ));
+                    }
+                    if !declaration.mutable {
+                        return Err(format!(
+                            "line {}:{}: cannot assign to immutable global `{name}`",
+                            span.line, span.column
+                        ));
+                    }
+                    (
+                        self.globals[&global_name].as_pointer_value(),
+                        self.global_types[&global_name],
                     )
-                })?;
-                if local.immutable {
-                    let reason = if local.loop_variable {
-                        format!("cannot assign to immutable loop variable `{name}`")
-                    } else {
-                        format!("cannot assign to immutable binding `{name}`")
-                    };
-                    return Err(format!("line {}:{}: {reason}", span.line, span.column));
-                }
-                let value = self.emit_expression_expected(value, local.ty)?;
-                if local.ty != value.ty {
+                };
+                let value = self.emit_expression_expected(value, ty)?;
+                if ty != value.ty {
                     return Err(format!(
                         "line {}:{}: cannot assign {} to `{name}` of type {}",
                         span.line,
                         span.column,
                         self.type_name(value.ty),
-                        self.type_name(local.ty)
+                        self.type_name(ty)
                     ));
                 }
                 self.builder
-                    .build_store(
-                        local.pointer,
-                        value.value.ok_or("missing assignment value")?,
-                    )
+                    .build_store(pointer, value.value.ok_or("missing assignment value")?)
                     .map_err(|e| e.to_string())?;
                 Ok(false)
             }
@@ -177,27 +195,50 @@ impl<'ctx> Codegen<'ctx> {
             } => {
                 let name = codegen_assignment_root(target).ok_or_else(|| {
                     format!(
-                        "line {}:{}: assignment target must start with a local variable",
+                        "line {}:{}: assignment target must start with a variable",
                         span.line, span.column
                     )
                 })?;
-                let local = self.lookup_local(name).ok_or_else(|| {
-                    format!(
-                        "line {}:{}: undefined variable `{name}`",
-                        span.line, span.column
-                    )
-                })?;
-                let vector_place = self.place_mutates_vector(target, name, local.ty)?;
-                if local.immutable && !vector_place {
-                    let reason = if local.loop_variable {
+                let (root_pointer, root_type, mutable, loop_variable) =
+                    if let Some(local) = self.lookup_local(name) {
+                        (
+                            local.pointer,
+                            local.ty,
+                            !local.immutable,
+                            local.loop_variable,
+                        )
+                    } else {
+                        let global_name = self.resolve_global_name(name).ok_or_else(|| {
+                            format!(
+                                "line {}:{}: undefined variable `{name}`",
+                                span.line, span.column
+                            )
+                        })?;
+                        let declaration = self.global_declarations[&global_name].clone();
+                        if declaration.module != self.module_context && !declaration.is_public {
+                            return Err(format!(
+                                "line {}:{}: global `{name}` is private",
+                                span.line, span.column
+                            ));
+                        }
+                        (
+                            self.globals[&global_name].as_pointer_value(),
+                            self.global_types[&global_name],
+                            declaration.mutable,
+                            false,
+                        )
+                    };
+                let vector_place = self.place_mutates_vector(target, name, root_type)?;
+                if !mutable && !vector_place {
+                    let reason = if loop_variable {
                         format!("cannot assign through immutable loop variable `{name}`")
                     } else {
                         format!("cannot assign through immutable binding `{name}`")
                     };
-                    return Err(format!("line {}:{}: {reason}", span.line, span.column,));
+                    return Err(format!("line {}:{}: {reason}", span.line, span.column));
                 }
                 let (target_pointer, target_type) =
-                    self.emit_place_pointer(target, name, local.pointer, local.ty)?;
+                    self.emit_place_pointer(target, name, root_pointer, root_type)?;
                 let value = self.emit_expression_expected(value, target_type)?;
                 if value.ty != target_type {
                     return Err(format!(

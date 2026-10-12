@@ -111,9 +111,23 @@ impl Checker {
                 Ok(false)
             }
             Stmt::Assign { name, value, span } => {
-                let binding_type = self
-                    .lookup_local(name)
-                    .ok_or_else(|| at(*span, format!("undefined variable `{name}`")))?;
+                let binding_type = if let Some(ty) = self.lookup_local(name) {
+                    ty
+                } else if let Some(global) = self.find_global_name(name) {
+                    let declaration = self.global_declarations[&global].clone();
+                    if declaration.module != self.module_context && !declaration.is_public {
+                        return Err(at(*span, format!("global `{name}` is private")));
+                    }
+                    if !declaration.mutable {
+                        return Err(at(
+                            *span,
+                            format!("cannot assign to immutable global `{name}`"),
+                        ));
+                    }
+                    self.check_global(&global, *span)?
+                } else {
+                    return Err(at(*span, format!("undefined variable `{name}`")));
+                };
                 if self.is_loop_variable(name) {
                     return Err(at(
                         *span,
@@ -140,12 +154,25 @@ impl Checker {
                 value,
                 span,
             } => {
-                let root = assignment_root(target).ok_or_else(|| {
-                    at(*span, "assignment target must start with a local variable")
-                })?;
-                let binding_type = self
-                    .lookup_local(root)
-                    .ok_or_else(|| at(*span, format!("undefined variable `{root}`")))?;
+                let root = assignment_root(target)
+                    .ok_or_else(|| at(*span, "assignment target must start with a variable"))?;
+                let binding_type = if let Some(ty) = self.lookup_local(root) {
+                    ty
+                } else if let Some(global) = self.find_global_name(root) {
+                    let declaration = self.global_declarations[&global].clone();
+                    if declaration.module != self.module_context && !declaration.is_public {
+                        return Err(at(*span, format!("global `{root}` is private")));
+                    }
+                    if !declaration.mutable {
+                        return Err(at(
+                            *span,
+                            format!("cannot assign through immutable global `{root}`"),
+                        ));
+                    }
+                    self.check_global(&global, *span)?
+                } else {
+                    return Err(at(*span, format!("undefined variable `{root}`")));
+                };
                 let target_type = self.check_place(target, binding_type)?;
                 let vector_place = self.place_crosses_vector(target, binding_type)?;
                 if vector_place {
@@ -158,13 +185,14 @@ impl Checker {
                     )?;
                     return Ok(false);
                 }
-                if self.is_loop_variable(root) {
+                let is_global = self.lookup_local(root).is_none();
+                if !is_global && self.is_loop_variable(root) {
                     return Err(at(
                         *span,
                         format!("cannot assign through immutable loop variable `{root}`"),
                     ));
                 }
-                if self.is_immutable_binding(root) {
+                if !is_global && self.is_immutable_binding(root) {
                     return Err(at(
                         *span,
                         format!("cannot assign through immutable binding `{root}`"),

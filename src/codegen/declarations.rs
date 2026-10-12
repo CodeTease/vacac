@@ -7,11 +7,13 @@ impl<'ctx> Codegen<'ctx> {
         codegen.declare_structs(program)?;
         codegen.define_enums()?;
         codegen.declare_functions(program)?;
+        codegen.declare_globals(program)?;
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
         codegen.emit_allocator_builtin()?;
         codegen.emit_string_concat_builtin()?;
         codegen.emit_vector_runtime()?;
+        codegen.define_globals(program)?;
         for function in &program.functions {
             codegen.module_context = function.module.clone();
             codegen.emit_function(function)?;
@@ -53,6 +55,11 @@ impl<'ctx> Codegen<'ctx> {
             function_visibility: HashMap::new(),
             enum_visibility: HashMap::new(),
             struct_visibility: HashMap::new(),
+            global_declarations: HashMap::new(),
+            global_types: HashMap::new(),
+            globals: HashMap::new(),
+            global_constant_values: HashMap::new(),
+            global_states: HashMap::new(),
         }
     }
 

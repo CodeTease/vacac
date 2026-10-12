@@ -7,17 +7,37 @@ impl Specializer {
         function: &mut Function,
         substitutions: &Substitution,
     ) -> Result<(), Diagnostic> {
+        let previous_module = self.module_context.clone();
+        self.module_context = function.module.clone();
         let mut variables = function
             .params
             .iter()
             .map(|param| (param.name.clone(), param.ty.clone()))
             .collect::<HashMap<_, _>>();
-        self.process_block(
+        for global in self.global_declarations.values() {
+            let Some(ty) = global
+                .ty
+                .clone()
+                .or_else(|| self.infer_expr_type(&global.value, &variables))
+            else {
+                continue;
+            };
+            variables
+                .entry(global.name.clone())
+                .or_insert_with(|| ty.clone());
+            if global.module == function.module {
+                let local_name = global.name.rsplit("::").next().unwrap_or(&global.name);
+                variables.entry(local_name.to_owned()).or_insert(ty);
+            }
+        }
+        let result = self.process_block(
             &mut function.body,
             substitutions,
             &mut variables,
             function.span,
-        )
+        );
+        self.module_context = previous_module;
+        result
     }
 
     pub(super) fn process_block(

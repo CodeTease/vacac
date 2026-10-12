@@ -66,6 +66,7 @@ impl Parser {
     pub fn parse_program(mut self) -> Result<Program, Diagnostic> {
         let mut enums = Vec::new();
         let mut structs = Vec::new();
+        let mut globals = Vec::new();
         let mut functions = Vec::new();
         let mut modules = Vec::new();
         while !self.at(&TokenKind::Eof) {
@@ -90,22 +91,31 @@ impl Parser {
                 enums.push(self.parse_enum(is_public)?);
             } else if self.at(&TokenKind::Struct) {
                 structs.push(self.parse_struct(is_public)?);
+            } else if self.at(&TokenKind::Const) || self.at(&TokenKind::Let) {
+                let mutable = self.at(&TokenKind::Let);
+                globals.push(self.parse_global(is_public, mutable)?);
             } else {
                 if !self.at(&TokenKind::Fn) {
                     return Err(unexpected(
                         self.peek(),
-                        "`fn`, `struct`, `enum`, or `mod` declaration",
+                        "`fn`, `struct`, `enum`, `const`, `let`, or `mod` declaration",
                     ));
                 }
                 functions.push(self.parse_function(is_public)?);
             }
         }
-        if functions.is_empty() && enums.is_empty() && structs.is_empty() && modules.is_empty() {
+        if functions.is_empty()
+            && enums.is_empty()
+            && structs.is_empty()
+            && globals.is_empty()
+            && modules.is_empty()
+        {
             return Err("program must contain at least one declaration".into());
         }
         Ok(Program {
             enums,
             structs,
+            globals,
             functions,
             modules,
             source_files: Vec::new(),

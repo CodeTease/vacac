@@ -15,6 +15,7 @@ pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
         program: Program {
             enums: Vec::new(),
             structs: Vec::new(),
+            globals: Vec::new(),
             functions: Vec::new(),
             modules: Vec::new(),
             source_files: Vec::new(),
@@ -71,6 +72,7 @@ impl Loader {
         let declarations = std::mem::take(&mut parsed.modules);
         self.program.enums.append(&mut parsed.enums);
         self.program.structs.append(&mut parsed.structs);
+        self.program.globals.append(&mut parsed.globals);
         self.program.functions.append(&mut parsed.functions);
         for declaration in declarations {
             if declaration.name == "" || declaration.name.contains("::") {

@@ -40,11 +40,23 @@ pub struct Span {
 pub struct Program {
     pub enums: Vec<EnumDecl>,
     pub structs: Vec<StructDecl>,
+    pub globals: Vec<GlobalDecl>,
     pub functions: Vec<Function>,
     pub modules: Vec<ModuleDecl>,
     pub source_files: Vec<String>,
     pub source_texts: Vec<String>,
     pub functions_are_qualified: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GlobalDecl {
+    pub name: String,
+    pub ty: Option<Type>,
+    pub value: Expr,
+    pub mutable: bool,
+    pub span: Span,
+    pub is_public: bool,
+    pub module: String,
 }
 
 #[derive(Debug, Clone)]

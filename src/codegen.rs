@@ -1,18 +1,18 @@
 use crate::parser::{
-    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchPattern, Program, Span, Stmt,
-    StructDecl, Type, UnaryOp,
+    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, MatchPattern, Program,
+    Span, Stmt, StructDecl, Type, UnaryOp,
 };
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::Module;
+use inkwell::module::{Linkage, Module};
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType};
 use inkwell::values::{
-    BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
-    PointerValue,
+    ArrayValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue,
+    GlobalValue, IntValue, PointerValue,
 };
 use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
 use std::collections::HashMap;
@@ -93,6 +93,11 @@ struct Codegen<'ctx> {
     function_visibility: HashMap<String, (String, bool)>,
     enum_visibility: HashMap<String, (String, bool)>,
     struct_visibility: HashMap<String, (String, bool)>,
+    global_declarations: HashMap<String, GlobalDecl>,
+    global_types: HashMap<String, ValueType>,
+    globals: HashMap<String, GlobalValue<'ctx>>,
+    global_constant_values: HashMap<String, ConstantValue>,
+    global_states: HashMap<String, u8>,
 }
 
 pub fn emit_object(program: &Program, path: &Path) -> Result<(), String> {
@@ -118,6 +123,7 @@ mod calls;
 mod declarations;
 mod equality;
 mod expressions;
+mod globals;
 mod loops;
 mod matching;
 mod operators;
@@ -183,4 +189,26 @@ impl<'ctx> Codegen<'ctx> {
         let element = self.array_element_type_name(shape.element);
         format!("[{element}; {}]", shape.length)
     }
+}
+
+#[derive(Clone)]
+struct ConstantValue {
+    ty: ValueType,
+    data: ConstantData,
+}
+
+#[derive(Clone)]
+enum ConstantData {
+    I64(i64),
+    F32(f32),
+    F64(f64),
+    Bool(bool),
+    Str(String),
+    Array(Vec<ConstantValue>),
+    Tuple(Vec<ConstantValue>),
+    Struct(Vec<ConstantValue>),
+    Enum {
+        variant: usize,
+        payload: Vec<ConstantValue>,
+    },
 }

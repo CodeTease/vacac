@@ -42,6 +42,16 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             declaration.span,
         )?;
     }
+    for declaration in &program.globals {
+        add_symbol(
+            &mut symbols,
+            &declaration.name,
+            &declaration.module,
+            declaration.is_public,
+            "global",
+            declaration.span,
+        )?;
+    }
     for declaration in &program.functions {
         add_symbol(
             &mut symbols,
@@ -91,6 +101,20 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
                 .to_owned()
         })
         .collect::<HashSet<_>>();
+    for declaration in &mut program.globals {
+        let original_name = declaration.name.clone();
+        declaration.name = qualify(&declaration.module, &original_name);
+        if let Some(ty) = &mut declaration.ty {
+            resolve_type(ty, &declaration.module, declaration.span, &symbols)?;
+        }
+        resolve_expr(
+            &mut declaration.value,
+            &declaration.module,
+            &symbols,
+            &struct_names,
+            &enum_names,
+        )?;
+    }
     for function in &mut program.functions {
         let original_name = function.name.clone();
         let is_main = function.module.is_empty() && original_name == "main";
@@ -423,6 +447,26 @@ fn resolve_expr(
                 for value in payload {
                     resolve_expr(value, module, symbols, struct_names, enum_names)?;
                 }
+            }
+        }
+        Expr::Variable(name, span) if name.contains("::") => {
+            if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
+                let resolved_enum = resolve_reference(enum_name, module, *span, symbols)?;
+                if symbols
+                    .get(&resolved_enum)
+                    .is_some_and(|symbol| symbol.kind == "enum")
+                {
+                    *expr = Expr::Variant {
+                        enum_name: resolved_enum,
+                        variant_name: variant_name.to_owned(),
+                        payload: None,
+                        span: *span,
+                    };
+                    return resolve_expr(expr, module, symbols, struct_names, enum_names);
+                }
+            }
+            if let Expr::Variable(name, span) = expr {
+                *name = resolve_reference(name, module, *span, symbols)?;
             }
         }
         Expr::Integer(..)

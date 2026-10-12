@@ -243,7 +243,12 @@ impl Parser {
                         span,
                     });
                 }
-                if path.len() >= 2 {
+                if path.len() >= 2
+                    && self.enum_names.contains(
+                        path.get(path.len() - 2)
+                            .expect("path has at least two segments"),
+                    )
+                {
                     let variant_name = path.pop().expect("path has multiple segments");
                     let enum_name = path.join("::");
                     let payload = if self.take(&TokenKind::LParen) {
@@ -269,6 +274,8 @@ impl Parser {
                         payload,
                         span,
                     })
+                } else if path.len() >= 2 {
+                    Ok(Expr::Variable(name, span))
                 } else if self.struct_names.contains(&name) && self.at(&TokenKind::LBrace) {
                     self.advance();
                     let mut fields = Vec::new();

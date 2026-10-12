@@ -1,7 +1,7 @@
 use crate::diagnostic::Diagnostic;
 use crate::parser::{
-    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, MatchArm, MatchPattern, Program,
-    Span, Stmt, StructDecl, Type, UnaryOp,
+    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, MatchArm,
+    MatchPattern, Program, Span, Stmt, StructDecl, Type, UnaryOp,
 };
 use std::collections::HashMap;
 
@@ -56,6 +56,9 @@ struct Checker {
     vector_shape_ids: HashMap<ArrayElementType, usize>,
     module_context: String,
     function_visibility: HashMap<String, (String, bool)>,
+    global_declarations: HashMap<String, GlobalDecl>,
+    global_types: HashMap<String, ValueType>,
+    global_states: HashMap<String, u8>,
 }
 
 struct LoopContext {
@@ -63,7 +66,7 @@ struct LoopContext {
     result_type: Option<ValueType>,
 }
 
-pub fn check(program: &Program) -> Result<(), Diagnostic> {
+pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
     let mut checker = Checker {
         signatures: HashMap::new(),
         scopes: Vec::new(),
@@ -83,8 +86,20 @@ pub fn check(program: &Program) -> Result<(), Diagnostic> {
         vector_shape_ids: HashMap::new(),
         module_context: String::new(),
         function_visibility: HashMap::new(),
+        global_declarations: HashMap::new(),
+        global_types: HashMap::new(),
+        global_states: HashMap::new(),
     };
     checker.collect_signatures(program)?;
+    for global in &program.globals {
+        checker.check_global(&global.name, global.span)?;
+    }
+    for global in &mut program.globals {
+        if global.ty.is_none() {
+            let ty = checker.global_types[&global.name];
+            global.ty = Some(checker.type_from_value(ty));
+        }
+    }
     for function in &program.functions {
         checker.module_context = function.module.clone();
         checker.check_function(function)?;

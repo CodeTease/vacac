@@ -1,6 +1,19 @@
 use crate::common::*;
 
 #[test]
+fn generic_function_type_inference_reads_global_constants() {
+    let result = compile_and_run(
+        r#"
+const VALUE = 42;
+fn identity<T>(value: T) -> T { value }
+fn main() -> i64 { identity::<i64>(VALUE) - 42 }
+"#,
+        "generics-global-inference",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn generic_functions_infer_types_and_specialize_independently() {
     let result = compile_and_run(
         r#"

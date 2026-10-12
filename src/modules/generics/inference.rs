@@ -115,24 +115,63 @@ impl Specializer {
         expr: &Expr,
         variables: &HashMap<String, Type>,
     ) -> Option<Type> {
+        self.infer_expr_type_inner(expr, variables, &mut std::collections::HashSet::new())
+    }
+
+    fn infer_expr_type_inner(
+        &self,
+        expr: &Expr,
+        variables: &HashMap<String, Type>,
+        visiting_globals: &mut std::collections::HashSet<String>,
+    ) -> Option<Type> {
         match expr {
             Expr::Integer(..) => Some(Type::I64),
             Expr::Float32(..) => Some(Type::F32),
             Expr::Float(..) => Some(Type::F64),
             Expr::Bool(..) => Some(Type::Bool),
             Expr::String(..) => Some(Type::Str),
-            Expr::Variable(name, _) => variables.get(name).cloned(),
+            Expr::Variable(name, _) => {
+                if let Some(ty) = variables.get(name) {
+                    return Some(ty.clone());
+                }
+                if !visiting_globals.insert(name.clone()) {
+                    return None;
+                }
+                let qualified = if self.module_context.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}::{name}", self.module_context)
+                };
+                let global = self
+                    .global_declarations
+                    .get(name)
+                    .or_else(|| self.global_declarations.get(&qualified));
+                let Some(global) = global else {
+                    visiting_globals.remove(name);
+                    return None;
+                };
+                let ty = global.ty.clone().or_else(|| {
+                    self.infer_expr_type_inner(&global.value, variables, visiting_globals)
+                });
+                visiting_globals.remove(name);
+                ty
+            }
             Expr::Array(values, _) => {
-                let first = self.infer_expr_type(values.first()?, variables)?;
+                let first =
+                    self.infer_expr_type_inner(values.first()?, variables, visiting_globals)?;
                 values
                     .iter()
-                    .all(|value| self.infer_expr_type(value, variables).as_ref() == Some(&first))
+                    .all(|value| {
+                        self.infer_expr_type_inner(value, variables, visiting_globals)
+                            .as_ref()
+                            == Some(&first)
+                    })
                     .then(|| Type::Array(Box::new(first), values.len() as u32))
             }
             Expr::Tuple(values, _) => Some(Type::Tuple(
                 values
                     .iter()
-                    .map(|value| self.infer_expr_type(value, variables))
+                    .map(|value| self.infer_expr_type_inner(value, variables, visiting_globals))
                     .collect::<Option<Vec<_>>>()?,
             )),
             Expr::Struct {
@@ -155,7 +194,9 @@ impl Specializer {
                 }
             }
             Expr::Call { name, .. } => self.signatures.get(name).map(|(_, result)| result.clone()),
-            Expr::Unary { value, .. } => self.infer_expr_type(value, variables),
+            Expr::Unary { value, .. } => {
+                self.infer_expr_type_inner(value, variables, visiting_globals)
+            }
             Expr::Binary { op, left, .. } => match op {
                 BinaryOp::Equal
                 | BinaryOp::NotEqual
@@ -165,14 +206,18 @@ impl Specializer {
                 | BinaryOp::GreaterEqual
                 | BinaryOp::And
                 | BinaryOp::Or => Some(Type::Bool),
-                _ => self.infer_expr_type(left, variables),
+                _ => self.infer_expr_type_inner(left, variables, visiting_globals),
             },
-            Expr::Index { array, .. } => match self.infer_expr_type(array, variables)? {
-                Type::Array(element, _) | Type::Vector(element) => Some(*element),
-                _ => None,
-            },
+            Expr::Index { array, .. } => {
+                match self.infer_expr_type_inner(array, variables, visiting_globals)? {
+                    Type::Array(element, _) | Type::Vector(element) => Some(*element),
+                    _ => None,
+                }
+            }
             Expr::Field { value, name, .. } => {
-                let Type::Named(struct_name) = self.infer_expr_type(value, variables)? else {
+                let Type::Named(struct_name) =
+                    self.infer_expr_type_inner(value, variables, visiting_globals)?
+                else {
                     return None;
                 };
                 self.concrete_structs
@@ -190,11 +235,11 @@ impl Specializer {
             Expr::If { then_block, .. } => then_block
                 .tail
                 .as_ref()
-                .and_then(|value| self.infer_expr_type(value, variables)),
+                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
             Expr::Match { arms, .. } => arms
                 .first()
                 .and_then(|arm| arm.body.tail.as_ref())
-                .and_then(|value| self.infer_expr_type(value, variables)),
+                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
             Expr::Variant { enum_name, .. } => self
                 .enum_names
                 .contains(enum_name)

@@ -316,6 +316,108 @@ impl Checker {
             })
             .unwrap_or(false)
     }
+
+    pub(super) fn type_from_value(&self, ty: ValueType) -> Type {
+        match ty {
+            ValueType::I64 => Type::I64,
+            ValueType::F32 => Type::F32,
+            ValueType::F64 => Type::F64,
+            ValueType::Bool => Type::Bool,
+            ValueType::Str => Type::Str,
+            ValueType::Unit => Type::Unit,
+            ValueType::Array(index) => {
+                let shape = self.array_shapes[index];
+                Type::Array(
+                    Box::new(self.type_from_element(shape.element)),
+                    shape.length,
+                )
+            }
+            ValueType::Vector(index) => Type::Vector(Box::new(
+                self.type_from_element(self.vector_shapes[index].element),
+            )),
+            ValueType::Tuple(index) => Type::Tuple(
+                self.tuple_shapes[index]
+                    .iter()
+                    .map(|element| self.type_from_value(*element))
+                    .collect(),
+            ),
+            ValueType::Enum(index) => Type::Named(self.enums[index].name.clone()),
+            ValueType::Struct(index) => Type::Named(self.structs[index].name.clone()),
+        }
+    }
+
+    fn type_from_element(&self, element: ArrayElementType) -> Type {
+        match element {
+            ArrayElementType::I64 => Type::I64,
+            ArrayElementType::F32 => Type::F32,
+            ArrayElementType::F64 => Type::F64,
+            ArrayElementType::Bool => Type::Bool,
+            ArrayElementType::Str => Type::Str,
+            ArrayElementType::Enum(index) => Type::Named(self.enums[index].name.clone()),
+            ArrayElementType::Struct(index) => Type::Named(self.structs[index].name.clone()),
+            ArrayElementType::Array(index) => self.type_from_value(ValueType::Array(index)),
+            ArrayElementType::Vector(index) => self.type_from_value(ValueType::Vector(index)),
+            ArrayElementType::Tuple(index) => self.type_from_value(ValueType::Tuple(index)),
+        }
+    }
+
+    pub(super) fn global_type_is_static(
+        &mut self,
+        ty: ValueType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, Diagnostic> {
+        if !visited.insert(ty) {
+            return Ok(true);
+        }
+        match ty {
+            ValueType::Unit | ValueType::Vector(_) => Ok(false),
+            ValueType::Array(index) => {
+                self.global_element_is_static(self.array_shapes[index].element, visited)
+            }
+            ValueType::Tuple(index) => {
+                let elements = self.tuple_shapes[index].clone();
+                for element in elements {
+                    if !self.global_type_is_static(element, visited)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::Struct(index) => {
+                let fields = self.structs[index].fields.clone();
+                for field in fields {
+                    let field_type = self.resolve_type(&field.ty, field.span)?;
+                    if !self.global_type_is_static(field_type, visited)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::Enum(index) => {
+                let variants = self.enums[index].variants.clone();
+                for variant in variants {
+                    for field in variant.payload {
+                        let field_type = self.resolve_type(&field, variant.span)?;
+                        if !self.global_type_is_static(field_type, visited)? {
+                            return Ok(false);
+                        }
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::I64 | ValueType::F32 | ValueType::F64 | ValueType::Bool | ValueType::Str => {
+                Ok(true)
+            }
+        }
+    }
+
+    fn global_element_is_static(
+        &mut self,
+        element: ArrayElementType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, Diagnostic> {
+        self.global_type_is_static(ValueType::from(element), visited)
+    }
 }
 
 pub(super) fn span_of_expr(expr: &Expr) -> Span {

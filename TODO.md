@@ -7,7 +7,7 @@
 * [x] Floating-point values in arrays, vectors, structs, enums, and match patterns.
 * [x] User-defined generics / parametric polymorphism for functions and structs (monomorphized functions and structs; inferred arguments and full explicit turbofish arguments, without trait bounds or generic enums).
 * [ ] Closures, lambda expressions, and first-class function values.
-* [ ] Global and module-level constants or variables.
+* [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [ ] Manual pointer and reference types (for example, `&T` and `*mut T`).
 * [ ] External C FFI declarations and calls.

@@ -271,9 +271,19 @@ impl Checker {
                 }
                 Ok(self.tuple_type(types))
             }
-            Expr::Variable(name, span) => self
-                .lookup_local(name)
-                .ok_or_else(|| at(*span, format!("undefined variable `{name}`"))),
+            Expr::Variable(name, span) => {
+                if let Some(ty) = self.lookup_local(name) {
+                    Ok(ty)
+                } else if let Some(global) = self.find_global_name(name) {
+                    let declaration = self.global_declarations[&global].clone();
+                    if declaration.module != self.module_context && !declaration.is_public {
+                        return Err(at(*span, format!("global `{name}` is private")));
+                    }
+                    self.check_global(&global, *span)
+                } else {
+                    Err(at(*span, format!("undefined variable `{name}`")))
+                }
+            }
             Expr::Index { array, index, span } => {
                 let array_type = self.check_expr(array, false)?;
                 let index_type = self.check_expr(index, false)?;
