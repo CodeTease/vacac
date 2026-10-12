@@ -167,7 +167,10 @@ fn resolve_reference(
     span: crate::ast::Span,
     symbols: &HashMap<String, Symbol>,
 ) -> Result<String, Diagnostic> {
-    let symbol = if name.contains("::") {
+    let already_qualified = symbols.contains_key(name);
+    let symbol = if already_qualified {
+        symbols.get(name)
+    } else if name.contains("::") {
         symbols.get(name).or_else(|| {
             let local = qualify(module, name);
             symbols.get(&local)
@@ -214,6 +217,11 @@ fn resolve_type(
         crate::ast::Type::Array(element, _) | crate::ast::Type::Vector(element) => {
             resolve_type(element, module, span, symbols)?
         }
+        crate::ast::Type::Tuple(elements) => {
+            for element in elements {
+                resolve_type(element, module, span, symbols)?;
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -230,10 +238,13 @@ fn resolve_block(
     use crate::ast::Stmt;
     for statement in &mut block.statements {
         match statement {
-            Stmt::Let { ty, value, .. } => {
+            Stmt::Let {
+                pattern, ty, value, ..
+            } => {
                 if let Some(ty) = ty {
                     resolve_type(ty, module, span, symbols)?;
                 }
+                resolve_pattern(pattern, module, span, symbols)?;
                 resolve_expr(value, module, symbols, struct_names, enum_names)?;
             }
             Stmt::Assign { value, .. } | Stmt::Expr(value) => {
@@ -290,9 +301,14 @@ fn resolve_expr(
     struct_names: &HashSet<String>,
     enum_names: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
-    use crate::ast::{Expr, MatchPattern};
+    use crate::ast::Expr;
     match expr {
         Expr::Array(values, _) => {
+            for value in values {
+                resolve_expr(value, module, symbols, struct_names, enum_names)?;
+            }
+        }
+        Expr::Tuple(values, _) => {
             for value in values {
                 resolve_expr(value, module, symbols, struct_names, enum_names)?;
             }
@@ -382,9 +398,7 @@ fn resolve_expr(
         Expr::Match { value, arms, span } => {
             resolve_expr(value, module, symbols, struct_names, enum_names)?;
             for arm in arms {
-                if let MatchPattern::Variant { enum_name, .. } = &mut arm.pattern {
-                    *enum_name = resolve_reference(enum_name, module, arm.span, symbols)?;
-                }
+                resolve_pattern(&mut arm.pattern, module, arm.span, symbols)?;
                 resolve_block(
                     &mut arm.body,
                     module,
@@ -417,6 +431,47 @@ fn resolve_expr(
         | Expr::Bool(..)
         | Expr::String(..)
         | Expr::Variable(..) => {}
+    }
+    Ok(())
+}
+
+fn resolve_pattern(
+    pattern: &mut crate::ast::MatchPattern,
+    module: &str,
+    span: crate::ast::Span,
+    symbols: &HashMap<String, Symbol>,
+) -> Result<(), Diagnostic> {
+    use crate::ast::MatchPattern;
+    match pattern {
+        MatchPattern::Tuple(patterns) | MatchPattern::Array(patterns) => {
+            for pattern in patterns {
+                resolve_pattern(pattern, module, span, symbols)?;
+            }
+        }
+        MatchPattern::Struct { name, fields, .. } => {
+            *name = resolve_reference(name, module, span, symbols)?;
+            for (_, pattern, field_span) in fields {
+                resolve_pattern(pattern, module, *field_span, symbols)?;
+            }
+        }
+        MatchPattern::Variant {
+            enum_name,
+            bindings,
+            ..
+        } => {
+            *enum_name = resolve_reference(enum_name, module, span, symbols)?;
+            if let Some(bindings) = bindings {
+                for pattern in bindings {
+                    resolve_pattern(pattern, module, span, symbols)?;
+                }
+            }
+        }
+        MatchPattern::Wildcard
+        | MatchPattern::Binding(_)
+        | MatchPattern::Bool(_)
+        | MatchPattern::I64(_)
+        | MatchPattern::F32(_)
+        | MatchPattern::F64(_) => {}
     }
     Ok(())
 }

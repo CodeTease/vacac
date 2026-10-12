@@ -26,5 +26,7 @@ mod runtime;
 mod strings;
 #[path = "compiler/structs.rs"]
 mod structs;
+#[path = "compiler/tuples.rs"]
+mod tuples;
 #[path = "compiler/vectors.rs"]
 mod vectors;

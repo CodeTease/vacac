@@ -23,6 +23,7 @@ impl<'ctx> Codegen<'ctx> {
                 value: Some(self.string_literal(value)?.into()),
                 ty: ValueType::Str,
             }),
+            Expr::Tuple(elements, span) => self.emit_tuple_literal(elements, *span),
             Expr::Array(elements, span) => self.emit_array_literal(elements, *span),
             Expr::Call {
                 name, args, span, ..

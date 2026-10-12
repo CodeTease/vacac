@@ -9,6 +9,20 @@ impl Checker {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
+            Type::Tuple(elements) => {
+                let mut types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let element_type = self.resolve_type(element, span)?;
+                    if element_type == ValueType::Unit {
+                        return Err(at(span, "tuple elements cannot have type `unit`"));
+                    }
+                    types.push(element_type);
+                }
+                if types.is_empty() {
+                    return Err(at(span, "tuple types must contain at least one element"));
+                }
+                self.tuple_type(types)
+            }
             Type::Array(element, length) => {
                 let element = self.resolve_array_element(element, span)?;
                 self.array_type(element, *length)
@@ -48,6 +62,14 @@ impl Checker {
                 "Vec<{}>",
                 self.array_element_type_name(self.vector_shapes[index].element)
             ),
+            ValueType::Tuple(index) => {
+                let elements = self.tuple_shapes[index]
+                    .iter()
+                    .map(|ty| self.type_name(*ty))
+                    .collect::<Vec<_>>();
+                let trailing_comma = if elements.len() == 1 { "," } else { "" };
+                format!("({}{trailing_comma})", elements.join(", "))
+            }
             ValueType::Enum(index) => self
                 .enums
                 .get(index)
@@ -80,6 +102,14 @@ impl Checker {
             ArrayElementType::Vector(index) => format!(
                 "Vec<{}>",
                 self.array_element_type_name(self.vector_shapes[index].element)
+            ),
+            ArrayElementType::Tuple(index) => format!(
+                "({})",
+                self.tuple_shapes[index]
+                    .iter()
+                    .map(|ty| self.type_name(*ty))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         }
     }
@@ -152,6 +182,19 @@ impl Checker {
                 };
                 ArrayElementType::Vector(index)
             }
+            Type::Tuple(elements) => {
+                let types = elements
+                    .iter()
+                    .map(|element| self.resolve_type(element, span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if types.contains(&ValueType::Unit) {
+                    return Err(at(span, "tuple elements cannot have type `unit`"));
+                }
+                if types.is_empty() {
+                    return Err(at(span, "tuple types must contain at least one element"));
+                }
+                ArrayElementType::Tuple(self.tuple_shape(types))
+            }
             Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
             Type::Applied(name, _) => {
                 return Err(at(
@@ -166,6 +209,21 @@ impl Checker {
                 ));
             }
         })
+    }
+
+    fn tuple_shape(&mut self, elements: Vec<ValueType>) -> usize {
+        if let Some(index) = self.tuple_shape_ids.get(&elements) {
+            *index
+        } else {
+            let index = self.tuple_shapes.len();
+            self.tuple_shapes.push(elements.clone());
+            self.tuple_shape_ids.insert(elements, index);
+            index
+        }
+    }
+
+    pub(super) fn tuple_type(&mut self, elements: Vec<ValueType>) -> ValueType {
+        ValueType::Tuple(self.tuple_shape(elements))
     }
 
     pub(super) fn check_block_result(
@@ -270,6 +328,7 @@ pub(super) fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Array(_, span)
+        | Expr::Tuple(_, span)
         | Expr::Index { span, .. }
         | Expr::Field { span, .. }
         | Expr::Struct { span, .. }
@@ -306,6 +365,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Struct(index) => Self::Struct(index),
             ArrayElementType::Array(index) => Self::Array(index),
             ArrayElementType::Vector(index) => Self::Vector(index),
+            ArrayElementType::Tuple(index) => Self::Tuple(index),
         }
     }
 }

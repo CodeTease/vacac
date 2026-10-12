@@ -67,6 +67,35 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(equal)
             }
+            ValueType::Tuple(tuple_id) => {
+                let element_types = self.tuple_shapes[tuple_id].clone();
+                let mut equal = self.bool_type().const_int(1, false);
+                for (index, element_type) in element_types.into_iter().enumerate() {
+                    let left_element = self
+                        .builder
+                        .build_extract_value(
+                            left.into_struct_value(),
+                            index as u32,
+                            "tuple.eq.left",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let right_element = self
+                        .builder
+                        .build_extract_value(
+                            right.into_struct_value(),
+                            index as u32,
+                            "tuple.eq.right",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let element_equal =
+                        self.emit_value_equality(element_type, left_element, right_element)?;
+                    equal = self
+                        .builder
+                        .build_and(equal, element_equal, "tuple.eq")
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(equal)
+            }
             ValueType::Vector(_) => self
                 .builder
                 .build_int_compare(

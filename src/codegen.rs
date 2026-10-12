@@ -18,7 +18,7 @@ use inkwell::{AddressSpace, FloatPredicate, IntPredicate, OptimizationLevel};
 use std::collections::HashMap;
 use std::path::Path;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ValueType {
     I64,
     F32,
@@ -29,6 +29,7 @@ enum ValueType {
     Array(usize),
     Enum(usize),
     Struct(usize),
+    Tuple(usize),
     Vector(usize),
 }
 
@@ -77,6 +78,8 @@ struct Codegen<'ctx> {
     structs: Vec<StructDecl>,
     struct_ids: HashMap<String, usize>,
     struct_types: Vec<StructType<'ctx>>,
+    tuple_shapes: Vec<Vec<ValueType>>,
+    tuple_shape_ids: HashMap<Vec<ValueType>, usize>,
     array_shapes: Vec<ArrayShape>,
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
     vector_shapes: Vec<VectorShape>,
@@ -138,6 +141,14 @@ impl<'ctx> Codegen<'ctx> {
             ),
             ValueType::Enum(index) => self.enums[index].name.clone(),
             ValueType::Struct(index) => self.structs[index].name.clone(),
+            ValueType::Tuple(index) => {
+                let elements = self.tuple_shapes[index]
+                    .iter()
+                    .map(|ty| self.type_name(*ty))
+                    .collect::<Vec<_>>();
+                let trailing_comma = if elements.len() == 1 { "," } else { "" };
+                format!("({}{trailing_comma})", elements.join(", "))
+            }
         }
     }
 
@@ -154,6 +165,14 @@ impl<'ctx> Codegen<'ctx> {
             ArrayElementType::Vector(index) => format!(
                 "Vec<{}>",
                 self.array_element_type_name(self.vector_shapes[index].element)
+            ),
+            ArrayElementType::Tuple(index) => format!(
+                "({})",
+                self.tuple_shapes[index]
+                    .iter()
+                    .map(|ty| self.type_name(*ty))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         }
     }

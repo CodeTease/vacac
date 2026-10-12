@@ -11,9 +11,12 @@ impl Checker {
                 elements.is_empty()
                     || matches!(
                         self.array_shapes[index].element,
-                        ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+                        ArrayElementType::Array(_)
+                            | ArrayElementType::Vector(_)
+                            | ArrayElementType::Tuple(_)
                     )
             }
+            (Expr::Tuple(elements, _), ValueType::Tuple(_)) => !elements.is_empty(),
             (Expr::Call { name, args, .. }, ValueType::Vector(_)) => {
                 name == "vec_new" && args.is_empty()
             }
@@ -31,6 +34,29 @@ impl Checker {
         expr: &Expr,
         expected: ValueType,
     ) -> Result<ValueType, Diagnostic> {
+        if let (Expr::Tuple(elements, span), ValueType::Tuple(tuple_id)) = (expr, expected) {
+            let expected_elements = self.tuple_shapes[tuple_id].clone();
+            if elements.len() != expected_elements.len() {
+                return Err(at(
+                    *span,
+                    format!(
+                        "tuple expression has {} element(s), expected {}",
+                        elements.len(),
+                        expected_elements.len()
+                    ),
+                ));
+            }
+            for (element, expected_element) in elements.iter().zip(expected_elements) {
+                let actual = self.check_expr_expected(element, expected_element)?;
+                self.expect_type(
+                    actual,
+                    expected_element,
+                    span_of_expr(element),
+                    "tuple element",
+                )?;
+            }
+            return Ok(expected);
+        }
         if let (
             Expr::Call {
                 name, args, span, ..
@@ -78,7 +104,9 @@ impl Checker {
         for element in elements {
             let actual = if matches!(
                 shape.element,
-                ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+                ArrayElementType::Array(_)
+                    | ArrayElementType::Vector(_)
+                    | ArrayElementType::Tuple(_)
             ) || matches!(element, Expr::Array(children, _) if children.is_empty())
             {
                 self.check_expr_with_type(element, element_type)?
@@ -212,15 +240,36 @@ impl Checker {
                     ValueType::Struct(index) => ArrayElementType::Struct(index),
                     ValueType::Array(index) => ArrayElementType::Array(index),
                     ValueType::Vector(index) => ArrayElementType::Vector(index),
+                    ValueType::Tuple(index) => ArrayElementType::Tuple(index),
                     ValueType::Unit => {
                         return Err(at(*span, "array elements cannot have type `unit`"));
                     }
                 };
                 for value in &elements[1..] {
-                    let value_type = self.check_expr(value, false)?;
+                    let value_type = if matches!(
+                        element,
+                        ArrayElementType::Array(_)
+                            | ArrayElementType::Vector(_)
+                            | ArrayElementType::Tuple(_)
+                    ) {
+                        self.check_expr_expected(value, first_type)?
+                    } else {
+                        self.check_expr(value, false)?
+                    };
                     self.expect_type(value_type, first_type, span_of_expr(value), "array element")?;
                 }
                 Ok(self.array_type(element, elements.len() as u32))
+            }
+            Expr::Tuple(elements, span) => {
+                let mut types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let ty = self.check_expr(element, false)?;
+                    if ty == ValueType::Unit {
+                        return Err(at(*span, "tuple elements cannot have type `unit`"));
+                    }
+                    types.push(ty);
+                }
+                Ok(self.tuple_type(types))
             }
             Expr::Variable(name, span) => self
                 .lookup_local(name)

@@ -215,7 +215,25 @@ fn lookup(id: i64) -> User {
 }
 ```
 
-Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `f32`, `f64`, `bool`, `str`, recursively nested fixed-size arrays and vectors of non-`unit` values, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct equality and inequality compare every field recursively, using IEEE equality for floats, string contents for `str` fields and handle identity for vector fields.
+Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `f32`, `f64`, `bool`, `str`, tuples, recursively nested fixed-size arrays and vectors of non-`unit` values, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct equality and inequality compare every field recursively, using IEEE equality for floats, string contents for `str` fields and handle identity for vector fields.
+
+## Tuples and destructuring
+
+Tuple types and values use comma-separated parentheses: `(i64, bool)` and `(42, true)`. A trailing comma distinguishes a one-element tuple `(value,)` from a grouped expression `(value)`. Tuples can be nested, passed to and returned from functions, stored in structs, arrays and vectors, and compared recursively for equality.
+
+`let` and `const` bindings can destructure tuples, fixed arrays, and structs with recursive patterns. Use `_` to ignore a tuple item or an individual fixed-array position. Array patterns list every position. Struct patterns name fields; add `..` to ignore omitted fields:
+
+```vaca
+struct User { id: i64, active: bool, name: str }
+
+fn describe(user: User, values: [(i64, bool); 2]) -> i64 {
+    let User { id, active, .. } = user;
+    let [(first, _), (second, enabled)] = values;
+    if active && enabled { id + first + second } else { 0 }
+}
+```
+
+Match arms accept the same tuple, array and struct patterns, and enum payload bindings may themselves be destructured. Aggregate-value matches currently use one destructuring arm; enum matches remain exhaustive. A bare identifier pattern binds the whole scalar or enum value as a catch-all arm.
 
 Generic structs are monomorphized into concrete layouts at each use. Supply type arguments in a type annotation or struct literal; nested applications are supported:
 
@@ -273,7 +291,7 @@ fn main() -> i64 {
 }
 ```
 
-Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. `match` is an expression. Variant patterns use `EnumName::Variant`; payload variants bind or ignore each field independently, for example `Event::Record(id, _, label)`. The number and types of supplied payload values and pattern fields must match the declaration. Scalar patterns may be booleans, signed integers, or floating-point literals (use the `f32` suffix for an `f32` pattern). Float pattern equality follows IEEE `==`: `+0.0` and `-0.0` are equal and duplicate, while NaN matches no float literal. Floating-point matches always require a `_` wildcard because their pattern set is not exhaustive. For booleans, integers, and enums a final `_` wildcard may handle remaining values; it is optional when every possible value or variant is otherwise covered. Wildcards must be unique and last, and duplicate or unreachable arms are rejected. Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same non-`unit` type. Enum values may be bound, assigned, passed to and returned from functions, stored in fixed-size arrays, inspected with `match`, and compared for equality or inequality. Two enums are equal when they have the same variant and equal payloads; payload strings compare by contents and aggregate payloads compare recursively. Payloads may be any non-`unit` value type, including arrays, structs, and other enums. Recursive by-value aggregate layouts are rejected.
+Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. Match patterns use `EnumName::Variant`; payload variants bind or ignore every field, for example `Event::Record(id, _, label)`, and tuple/array/struct payloads can be recursively destructured. The payload count and types must match the declaration. Scalar patterns may be booleans, signed integers, or floating-point literals (use the `f32` suffix for an `f32` pattern). Float pattern equality follows IEEE `==`: `+0.0` and `-0.0` are equal and duplicate, while NaN matches no float literal. Floating-point matches always require a `_` wildcard because their pattern set is not exhaustive. For booleans, integers, and enums a final `_` wildcard or identifier binding may handle remaining values; it is optional when every possible value or variant is otherwise covered. Wildcards and identifier catch-alls must be unique and last, and duplicate or unreachable arms are rejected. Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same non-`unit` type. Enum values may be bound, assigned, passed to and returned from functions, stored in fixed-size arrays, inspected with `match`, and compared for equality or inequality. Two enums are equal when they have the same variant and equal payloads; payload strings compare by contents and aggregate payloads compare recursively. Payloads may be any non-`unit` value type, including tuples, arrays, structs, and other enums. Recursive by-value aggregate layouts are rejected.
 
 ## Vaca v0.1 syntax
 

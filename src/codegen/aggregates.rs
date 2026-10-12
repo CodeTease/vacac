@@ -1,6 +1,135 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    pub(super) fn emit_pattern_bindings(
+        &mut self,
+        pattern: &MatchPattern,
+        ty: ValueType,
+        value: BasicValueEnum<'ctx>,
+        immutable: bool,
+        span: Span,
+    ) -> Result<(), String> {
+        match pattern {
+            MatchPattern::Wildcard => Ok(()),
+            MatchPattern::Binding(name) => {
+                if self
+                    .scopes
+                    .last()
+                    .is_some_and(|scope| scope.contains_key(name))
+                {
+                    return Err(format!(
+                        "line {}:{}: `{name}` is already declared in this scope",
+                        span.line, span.column
+                    ));
+                }
+                let alloca = self.create_entry_alloca(ty, name)?;
+                self.builder
+                    .build_store(alloca, value)
+                    .map_err(|error| error.to_string())?;
+                self.scopes
+                    .last_mut()
+                    .ok_or("pattern binding outside scope")?
+                    .insert(
+                        name.clone(),
+                        Local {
+                            pointer: alloca,
+                            ty,
+                            immutable,
+                            loop_variable: false,
+                        },
+                    );
+                Ok(())
+            }
+            MatchPattern::Tuple(patterns) => {
+                let ValueType::Tuple(tuple_id) = ty else {
+                    return Err("tuple pattern type mismatch".into());
+                };
+                let types = self.tuple_shapes[tuple_id].clone();
+                if patterns.len() != types.len() {
+                    return Err("tuple pattern arity mismatch".into());
+                }
+                for (index, (pattern, element_type)) in patterns.iter().zip(types).enumerate() {
+                    let element = self
+                        .builder
+                        .build_extract_value(
+                            value.into_struct_value(),
+                            index as u32,
+                            "tuple.pattern.element",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    self.emit_pattern_bindings(pattern, element_type, element, immutable, span)?;
+                }
+                Ok(())
+            }
+            MatchPattern::Array(patterns) => {
+                let ValueType::Array(array_id) = ty else {
+                    return Err("array pattern type mismatch".into());
+                };
+                let shape = self.array_shapes[array_id];
+                if patterns.len() != shape.length as usize {
+                    return Err("array pattern arity mismatch".into());
+                }
+                let element_type = ValueType::from(shape.element);
+                for (index, pattern) in patterns.iter().enumerate() {
+                    let element = self
+                        .builder
+                        .build_extract_value(
+                            value.into_array_value(),
+                            index as u32,
+                            "array.pattern.element",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    self.emit_pattern_bindings(pattern, element_type, element, immutable, span)?;
+                }
+                Ok(())
+            }
+            MatchPattern::Struct { name, fields, .. } => {
+                let ValueType::Struct(struct_id) = ty else {
+                    return Err("struct pattern type mismatch".into());
+                };
+                if name != &self.structs[struct_id].name {
+                    return Err("struct pattern name mismatch".into());
+                }
+                if self
+                    .struct_visibility
+                    .get(name)
+                    .is_some_and(|(owner, public)| owner != &self.module_context && !public)
+                {
+                    return Err(format!(
+                        "line {}:{}: struct `{name}` is private",
+                        span.line, span.column
+                    ));
+                }
+                let declarations = self.structs[struct_id].fields.clone();
+                for (field_name, pattern, field_span) in fields {
+                    let index = declarations
+                        .iter()
+                        .position(|field| field.name == *field_name)
+                        .ok_or_else(|| format!("struct `{name}` has no field `{field_name}`"))?;
+                    let field_ty =
+                        self.resolve_type(&declarations[index].ty, declarations[index].span)?;
+                    let element = self
+                        .builder
+                        .build_extract_value(
+                            value.into_struct_value(),
+                            index as u32,
+                            "struct.pattern.field",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    self.emit_pattern_bindings(pattern, field_ty, element, immutable, *field_span)?;
+                }
+                Ok(())
+            }
+            MatchPattern::Variant { .. } => {
+                Err("nested enum variant patterns are not supported".into())
+            }
+            MatchPattern::Bool(_)
+            | MatchPattern::I64(_)
+            | MatchPattern::F32(_)
+            | MatchPattern::F64(_) => Err("literal patterns are unsupported here".into()),
+        }
+    }
+
     pub(super) fn enum_payload_field(
         &self,
         _enum_id: usize,
@@ -218,6 +347,38 @@ impl<'ctx> Codegen<'ctx> {
         let value = self.emit_expression(value_expr)?;
         if matches!(
             value.ty,
+            ValueType::Tuple(_) | ValueType::Array(_) | ValueType::Struct(_)
+        ) {
+            if arms.len() != 1 {
+                return Err(format!(
+                    "line {}:{}: tuple, array, and struct matches require exactly one destructuring arm",
+                    span.line, span.column
+                ));
+            }
+            let arm = &arms[0];
+            if matches!(
+                arm.pattern,
+                MatchPattern::Wildcard | MatchPattern::Binding(_)
+            ) {
+                return Err(format!(
+                    "line {}:{}: destructuring match arm must use a tuple, array, or struct pattern",
+                    arm.span.line, arm.span.column
+                ));
+            }
+            let aggregate = value
+                .value
+                .ok_or("destructured match value has no LLVM value")?;
+            self.scopes.push(HashMap::new());
+            self.emit_pattern_bindings(&arm.pattern, value.ty, aggregate, false, arm.span)?;
+            let (terminated, result) = self.emit_block(&arm.body, true)?;
+            self.scopes.pop();
+            if terminated {
+                return Err("destructuring match arm unexpectedly terminated".into());
+            }
+            return result.ok_or_else(|| "destructuring match arm must produce a value".to_owned());
+        }
+        if matches!(
+            value.ty,
             ValueType::Bool | ValueType::I64 | ValueType::F32 | ValueType::F64
         ) {
             return self.emit_scalar_match(value, arms, span);
@@ -245,7 +406,10 @@ impl<'ctx> Codegen<'ctx> {
             .collect();
         let fallback_bb = self.context.append_basic_block(function, "match.invalid");
         for (index, arm) in arms.iter().enumerate() {
-            if matches!(arm.pattern, MatchPattern::Wildcard) {
+            if matches!(
+                arm.pattern,
+                MatchPattern::Wildcard | MatchPattern::Binding(_)
+            ) {
                 self.builder
                     .build_unconditional_branch(arm_blocks[index])
                     .map_err(|e| e.to_string())?;
@@ -296,53 +460,52 @@ impl<'ctx> Codegen<'ctx> {
         for (index, arm) in arms.iter().enumerate() {
             self.builder.position_at_end(arm_blocks[index]);
             self.scopes.push(HashMap::new());
-            let bindings = match &arm.pattern {
+            match &arm.pattern {
                 MatchPattern::Variant {
                     bindings: Some(bindings),
+                    variant_name,
                     ..
-                } => Some(bindings),
-                _ => None,
-            };
-            if let Some(bindings) = bindings {
-                let MatchPattern::Variant { variant_name, .. } = &arm.pattern else {
-                    return Err("internal error: wildcard match arm cannot bind a payload".into());
-                };
-                let variant_index = self.enums[enum_id]
-                    .variants
-                    .iter()
-                    .position(|variant| variant.name == *variant_name)
-                    .ok_or("unknown match variant")?;
-                let payload_types = self.enums[enum_id].variants[variant_index].payload.clone();
-                for (payload_index, (binding, payload_type)) in
-                    bindings.iter().zip(&payload_types).enumerate()
-                {
-                    let Some(binding) = binding else { continue };
-                    let ty = self.resolve_type(payload_type, arm.span)?;
-                    let (variant_field, payload_field) =
-                        self.enum_payload_field(enum_id, variant_index, payload_index);
-                    let payload_tuple = self
-                        .builder
-                        .build_extract_value(enum_value, variant_field, "enum.match.tuple")
-                        .map_err(|e| e.to_string())?
-                        .into_struct_value();
-                    let payload = self
-                        .builder
-                        .build_extract_value(payload_tuple, payload_field, "enum.match.payload")
-                        .map_err(|e| e.to_string())?;
-                    let alloca = self.create_entry_alloca(ty, binding)?;
+                } => {
+                    let variant_index = self.enums[enum_id]
+                        .variants
+                        .iter()
+                        .position(|variant| variant.name == *variant_name)
+                        .ok_or("unknown match variant")?;
+                    let payload_types = self.enums[enum_id].variants[variant_index].payload.clone();
+                    for (payload_index, (pattern, payload_type)) in
+                        bindings.iter().zip(&payload_types).enumerate()
+                    {
+                        let ty = self.resolve_type(payload_type, arm.span)?;
+                        let (variant_field, payload_field) =
+                            self.enum_payload_field(enum_id, variant_index, payload_index);
+                        let payload_tuple = self
+                            .builder
+                            .build_extract_value(enum_value, variant_field, "enum.match.tuple")
+                            .map_err(|e| e.to_string())?
+                            .into_struct_value();
+                        let payload = self
+                            .builder
+                            .build_extract_value(payload_tuple, payload_field, "enum.match.payload")
+                            .map_err(|e| e.to_string())?;
+                        self.emit_pattern_bindings(pattern, ty, payload, false, arm.span)?;
+                    }
+                }
+                MatchPattern::Binding(name) => {
+                    let alloca = self.create_entry_alloca(value.ty, name)?;
                     self.builder
-                        .build_store(alloca, payload)
-                        .map_err(|e| e.to_string())?;
+                        .build_store(alloca, value.value.ok_or("match value has no LLVM value")?)
+                        .map_err(|error| error.to_string())?;
                     self.scopes.last_mut().unwrap().insert(
-                        binding.clone(),
+                        name.clone(),
                         Local {
                             pointer: alloca,
-                            ty,
+                            ty: value.ty,
                             immutable: false,
                             loop_variable: false,
                         },
                     );
                 }
+                _ => {}
             }
             let (terminated, result) = self.emit_block(&arm.body, true)?;
             self.scopes.pop();
@@ -427,30 +590,76 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                     wildcard_seen = true;
+                    if is_bool && seen_bool.len() == 2 {
+                        return Err(format!(
+                            "line {}:{}: unreachable wildcard match arm after all values are covered",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
                     None
                 }
-                MatchPattern::Bool(pattern) if is_bool => {
-                    if wildcard_seen || !seen_bool.insert(*pattern) {
+                MatchPattern::Binding(_) => {
+                    if wildcard_seen {
                         return Err(format!(
-                            "line {}:{}: duplicate or unreachable boolean match arm",
+                            "line {}:{}: unreachable match arm after wildcard",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    if is_bool && seen_bool.len() == 2 {
+                        return Err(format!(
+                            "line {}:{}: unreachable wildcard match arm after all values are covered",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    wildcard_seen = true;
+                    None
+                }
+                MatchPattern::Tuple(_) | MatchPattern::Array(_) | MatchPattern::Struct { .. } => {
+                    return Err(
+                        "internal error: aggregate patterns are unsupported for scalar dispatch"
+                            .into(),
+                    );
+                }
+                MatchPattern::Bool(pattern) if is_bool => {
+                    if wildcard_seen {
+                        return Err(format!(
+                            "line {}:{}: unreachable match arm after wildcard",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    if !seen_bool.insert(*pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate match arm for `{pattern}`",
                             arm.span.line, arm.span.column
                         ));
                     }
                     Some(MatchPattern::Bool(*pattern))
                 }
                 MatchPattern::I64(pattern) if !is_bool && !is_float => {
-                    if wildcard_seen || !seen_i64.insert(*pattern) {
+                    if wildcard_seen {
                         return Err(format!(
-                            "line {}:{}: duplicate or unreachable integer match arm",
+                            "line {}:{}: unreachable match arm after wildcard",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    if !seen_i64.insert(*pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate match arm for `{pattern}`",
                             arm.span.line, arm.span.column
                         ));
                     }
                     Some(MatchPattern::I64(*pattern))
                 }
                 MatchPattern::F32(pattern) if value.ty == ValueType::F32 => {
-                    if wildcard_seen || seen_f32.iter().any(|seen| *seen == *pattern) {
+                    if wildcard_seen {
                         return Err(format!(
-                            "line {}:{}: duplicate or unreachable f32 match arm",
+                            "line {}:{}: unreachable match arm after wildcard",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    if seen_f32.iter().any(|seen| *seen == *pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate match arm for `{pattern}`",
                             arm.span.line, arm.span.column
                         ));
                     }
@@ -458,9 +667,15 @@ impl<'ctx> Codegen<'ctx> {
                     Some(MatchPattern::F32(*pattern))
                 }
                 MatchPattern::F64(pattern) if value.ty == ValueType::F64 => {
-                    if wildcard_seen || seen_f64.iter().any(|seen| *seen == *pattern) {
+                    if wildcard_seen {
                         return Err(format!(
-                            "line {}:{}: duplicate or unreachable f64 match arm",
+                            "line {}:{}: unreachable match arm after wildcard",
+                            arm.span.line, arm.span.column
+                        ));
+                    }
+                    if seen_f64.iter().any(|seen| *seen == *pattern) {
+                        return Err(format!(
+                            "line {}:{}: duplicate match arm for `{pattern}`",
                             arm.span.line, arm.span.column
                         ));
                     }
@@ -536,7 +751,10 @@ impl<'ctx> Codegen<'ctx> {
             } else if test_pattern.is_some() {
                 self.builder.position_at_end(fallback_bb);
             }
-            if matches!(arm.pattern, MatchPattern::Wildcard) {
+            if matches!(
+                arm.pattern,
+                MatchPattern::Wildcard | MatchPattern::Binding(_)
+            ) {
                 break;
             }
         }
@@ -566,6 +784,21 @@ impl<'ctx> Codegen<'ctx> {
         for (index, arm) in arms.iter().enumerate() {
             self.builder.position_at_end(arm_blocks[index]);
             self.scopes.push(HashMap::new());
+            if let MatchPattern::Binding(name) = &arm.pattern {
+                let alloca = self.create_entry_alloca(value.ty, name)?;
+                self.builder
+                    .build_store(alloca, scalar_value)
+                    .map_err(|error| error.to_string())?;
+                self.scopes.last_mut().unwrap().insert(
+                    name.clone(),
+                    Local {
+                        pointer: alloca,
+                        ty: value.ty,
+                        immutable: false,
+                        loop_variable: false,
+                    },
+                );
+            }
             let result = self.emit_block(&arm.body, true);
             self.scopes.pop();
             let (terminated, result) = result?;

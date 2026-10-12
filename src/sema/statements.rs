@@ -48,22 +48,12 @@ impl Checker {
     ) -> Result<bool, Diagnostic> {
         match statement {
             Stmt::Let {
-                name,
+                pattern,
                 ty,
                 value,
                 immutable,
                 span,
             } => {
-                if self
-                    .scopes
-                    .last()
-                    .is_some_and(|scope| scope.contains_key(name))
-                {
-                    return Err(at(
-                        *span,
-                        format!("`{name}` is already declared in this scope"),
-                    ));
-                }
                 let value_type = if let Some(ty) = ty {
                     let expected = self.resolve_type(ty, *span)?;
                     self.check_expr_expected(value, expected)?
@@ -92,21 +82,31 @@ impl Checker {
                     Some(ty) => self.resolve_type(ty, *span)?,
                     None => value_type,
                 };
-                self.expect_type(
-                    value_type,
-                    binding_type,
-                    span_of_expr(value),
-                    &format!("initializer for `{name}`"),
-                )?;
-                self.scopes
+                let context = match (pattern, ty) {
+                    (MatchPattern::Binding(name), Some(_)) => format!("initializer for `{name}`"),
+                    _ => "binding initializer".to_owned(),
+                };
+                self.expect_type(value_type, binding_type, span_of_expr(value), &context)?;
+                let mut bindings = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                self.check_pattern(pattern, binding_type, *span, &mut bindings, &mut seen)?;
+                let scope = self.scopes.last_mut().expect("block scope exists");
+                if let Some((name, _)) = bindings.iter().find(|(name, _)| scope.contains_key(name))
+                {
+                    return Err(at(
+                        *span,
+                        format!("`{name}` is already declared in this scope"),
+                    ));
+                }
+                let immutable_scope = self
+                    .immutable_scopes
                     .last_mut()
-                    .expect("block scope exists")
-                    .insert(name.clone(), binding_type);
-                if *immutable {
-                    self.immutable_scopes
-                        .last_mut()
-                        .expect("block scope exists")
-                        .insert(name.clone());
+                    .expect("block scope exists");
+                for (name, binding_type) in bindings {
+                    scope.insert(name.clone(), binding_type);
+                    if *immutable {
+                        immutable_scope.insert(name);
+                    }
                 }
                 Ok(false)
             }

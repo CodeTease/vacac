@@ -241,6 +241,18 @@ fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
             Type::Array(element, _) | Type::Vector(element) => {
                 check_type(element, parameters, generic_structs, known_types, span)
             }
+            Type::Tuple(elements) => {
+                if elements.is_empty() {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        "tuple types must contain at least one element",
+                    ));
+                }
+                for element in elements {
+                    check_type(element, parameters, generic_structs, known_types, span)?;
+                }
+                Ok(())
+            }
             Type::Parameter(_)
             | Type::Named(_)
             | Type::I64
@@ -329,6 +341,127 @@ fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
 }
 
 impl Specializer {
+    fn normalize_pattern(
+        &mut self,
+        pattern: &mut MatchPattern,
+        _substitutions: &Substitution,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        match pattern {
+            MatchPattern::Tuple(patterns) | MatchPattern::Array(patterns) => {
+                for pattern in patterns {
+                    self.normalize_pattern(pattern, _substitutions, span)?;
+                }
+            }
+            MatchPattern::Struct { name, fields, .. } => {
+                if let Some(template_name) = self
+                    .struct_instances
+                    .get(name)
+                    .map(|(template, _)| template.clone())
+                {
+                    *name = template_name;
+                }
+                for (_, pattern, field_span) in fields {
+                    self.normalize_pattern(pattern, _substitutions, *field_span)?;
+                }
+            }
+            MatchPattern::Variant { bindings, .. } => {
+                if let Some(patterns) = bindings {
+                    for pattern in patterns {
+                        self.normalize_pattern(pattern, _substitutions, span)?;
+                    }
+                }
+            }
+            MatchPattern::Wildcard
+            | MatchPattern::Binding(_)
+            | MatchPattern::Bool(_)
+            | MatchPattern::I64(_)
+            | MatchPattern::F32(_)
+            | MatchPattern::F64(_) => {}
+        }
+        Ok(())
+    }
+
+    fn infer_pattern_bindings(
+        &self,
+        pattern: &mut MatchPattern,
+        ty: &Type,
+        variables: &mut HashMap<String, Type>,
+    ) {
+        match pattern {
+            MatchPattern::Binding(name) => {
+                variables.insert(name.clone(), ty.clone());
+            }
+            MatchPattern::Tuple(patterns) => {
+                if let Type::Tuple(types) = ty {
+                    for (pattern, ty) in patterns.iter_mut().zip(types) {
+                        self.infer_pattern_bindings(pattern, ty, variables);
+                    }
+                }
+            }
+            MatchPattern::Array(patterns) => {
+                if let Type::Array(element, _) = ty {
+                    for pattern in patterns {
+                        self.infer_pattern_bindings(pattern, element, variables);
+                    }
+                }
+            }
+            MatchPattern::Struct { name, fields, .. } => {
+                if let Type::Named(actual_name) = ty {
+                    if name.rsplit("::").next() == actual_name.rsplit("::").next()
+                        || actual_name.starts_with(&format!("{name}::<"))
+                    {
+                        *name = actual_name.clone();
+                    }
+                }
+                let declaration = self.concrete_structs.get(name).cloned().or_else(|| {
+                    self.generated_structs
+                        .iter()
+                        .find(|declaration| declaration.name == *name)
+                        .cloned()
+                });
+                if let Some(declaration) = declaration {
+                    for (field_name, pattern, _) in fields {
+                        if let Some(field) = declaration
+                            .fields
+                            .iter()
+                            .find(|field| field.name == *field_name)
+                        {
+                            self.infer_pattern_bindings(pattern, &field.ty, variables);
+                        }
+                    }
+                }
+            }
+            MatchPattern::Variant {
+                enum_name,
+                variant_name,
+                bindings: Some(patterns),
+            } => {
+                let variant = self
+                    .enum_declarations
+                    .get(enum_name)
+                    .and_then(|declaration| {
+                        declaration
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == *variant_name)
+                            .cloned()
+                    });
+                if let Some(variant) = variant {
+                    for (pattern, ty) in patterns.iter_mut().zip(&variant.payload) {
+                        self.infer_pattern_bindings(pattern, ty, variables);
+                    }
+                }
+            }
+            MatchPattern::Wildcard
+            | MatchPattern::Bool(_)
+            | MatchPattern::I64(_)
+            | MatchPattern::F32(_)
+            | MatchPattern::F64(_)
+            | MatchPattern::Variant { bindings: None, .. } => {}
+        }
+    }
+
     fn new_instance(&mut self, span: Span) -> Result<(), Diagnostic> {
         self.instance_count += 1;
         if self.instance_count > MAX_INSTANCES {
@@ -374,6 +507,12 @@ impl Specializer {
             Type::Array(element, length) => Type::Array(
                 Box::new(self.normalize_type(*element, substitutions, span)?),
                 length,
+            ),
+            Type::Tuple(elements) => Type::Tuple(
+                elements
+                    .into_iter()
+                    .map(|element| self.normalize_type(element, substitutions, span))
+                    .collect::<Result<Vec<_>, _>>()?,
             ),
             Type::Vector(element) => Type::Vector(Box::new(self.normalize_type(
                 *element,
@@ -529,17 +668,22 @@ impl Specializer {
         for statement in &mut block.statements {
             match statement {
                 Stmt::Let {
-                    name, ty, value, ..
+                    pattern,
+                    ty,
+                    value,
+                    span,
+                    ..
                 } => {
                     if let Some(ty) = ty {
-                        *ty = self.normalize_type(ty.clone(), substitutions, span)?;
+                        *ty = self.normalize_type(ty.clone(), substitutions, *span)?;
                     }
                     self.process_expr(value, substitutions, variables)?;
+                    self.normalize_pattern(pattern, substitutions, *span)?;
                     if let Some(ty) = ty
                         .clone()
                         .or_else(|| self.infer_expr_type(value, variables))
                     {
-                        variables.insert(name.clone(), ty);
+                        self.infer_pattern_bindings(pattern, &ty, variables);
                     }
                 }
                 Stmt::Assign { name, value, .. } => {
@@ -621,6 +765,11 @@ impl Specializer {
     ) -> Result<(), Diagnostic> {
         match expr {
             Expr::Array(values, _) => {
+                for value in values {
+                    self.process_expr(value, substitutions, variables)?;
+                }
+            }
+            Expr::Tuple(values, _) => {
                 for value in values {
                     self.process_expr(value, substitutions, variables)?;
                 }
@@ -773,30 +922,13 @@ impl Specializer {
                 let matched_type = self.infer_expr_type(value, variables);
                 for arm in arms {
                     let mut arm_variables = variables.clone();
-                    if let (
-                        Some(Type::Named(enum_name)),
-                        MatchPattern::Variant {
-                            enum_name: pattern_enum,
-                            variant_name,
-                            bindings: Some(bindings),
-                        },
-                    ) = (&matched_type, &arm.pattern)
-                        && enum_name == pattern_enum
-                        && let Some(variant) =
-                            self.enum_declarations
-                                .get(enum_name)
-                                .and_then(|declaration| {
-                                    declaration
-                                        .variants
-                                        .iter()
-                                        .find(|variant| variant.name == *variant_name)
-                                })
-                    {
-                        for (binding, payload_type) in bindings.iter().zip(&variant.payload) {
-                            if let Some(binding) = binding {
-                                arm_variables.insert(binding.clone(), payload_type.clone());
-                            }
-                        }
+                    self.normalize_pattern(&mut arm.pattern, substitutions, *span)?;
+                    if let Some(matched_type) = &matched_type {
+                        self.infer_pattern_bindings(
+                            &mut arm.pattern,
+                            matched_type,
+                            &mut arm_variables,
+                        );
                     }
                     self.process_block(&mut arm.body, substitutions, &mut arm_variables, *span)?;
                 }
@@ -859,6 +991,16 @@ impl Specializer {
                 }
                 self.unify(pattern, actual, substitutions, span)
             }
+            (Type::Tuple(patterns), Type::Tuple(actuals)) if patterns.len() == actuals.len() => {
+                for (pattern, actual) in patterns.iter().zip(actuals) {
+                    self.unify(pattern, actual, substitutions, span)?;
+                }
+                Ok(())
+            }
+            (Type::Tuple(_), Type::Tuple(_)) => Err(Diagnostic::at(
+                span.into(),
+                "generic tuple argument arities do not match",
+            )),
             (Type::Applied(pattern_name, pattern_args), Type::Named(actual_name)) => {
                 let Some((actual_template, actual_args)) = self.struct_instances.get(actual_name)
                 else {
@@ -936,6 +1078,12 @@ impl Specializer {
                     .all(|value| self.infer_expr_type(value, variables).as_ref() == Some(&first))
                     .then(|| Type::Array(Box::new(first), values.len() as u32))
             }
+            Expr::Tuple(values, _) => Some(Type::Tuple(
+                values
+                    .iter()
+                    .map(|value| self.infer_expr_type(value, variables))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             Expr::Struct {
                 name,
                 type_arguments,
@@ -1019,6 +1167,13 @@ fn type_key(ty: &Type) -> String {
             arguments.iter().map(type_key).collect::<Vec<_>>().join(",")
         ),
         Type::Array(element, length) => format!("[{};{length}]", type_key(element)),
+        Type::Tuple(elements) => {
+            let trailing_comma = if elements.len() == 1 { "," } else { "" };
+            format!(
+                "({}{trailing_comma})",
+                elements.iter().map(type_key).collect::<Vec<_>>().join(",")
+            )
+        }
         Type::Vector(element) => format!("Vec<{}>", type_key(element)),
     }
 }

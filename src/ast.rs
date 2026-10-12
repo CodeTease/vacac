@@ -6,6 +6,7 @@ pub enum Type {
     Bool,
     Str,
     Unit,
+    Tuple(Vec<Type>),
     Array(Box<Type>, u32),
     Vector(Box<Type>),
     Named(String),
@@ -22,6 +23,7 @@ pub enum ArrayElementType {
     Str,
     Enum(usize),
     Struct(usize),
+    Tuple(usize),
     Array(usize),
     Vector(usize),
 }
@@ -112,7 +114,7 @@ pub struct Block {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Let {
-        name: String,
+        pattern: MatchPattern,
         ty: Option<Type>,
         value: Expr,
         immutable: bool,
@@ -170,6 +172,7 @@ pub enum Expr {
     Float(f64, Span),
     Bool(bool, Span),
     String(String, Span),
+    Tuple(Vec<Expr>, Span),
     Array(Vec<Expr>, Span),
     Variable(String, Span),
     Index {
@@ -238,14 +241,22 @@ pub struct MatchArm {
 #[derive(Debug, Clone)]
 pub enum MatchPattern {
     Wildcard,
+    Binding(String),
     Bool(bool),
     I64(i64),
     F32(f32),
     F64(f64),
+    Tuple(Vec<MatchPattern>),
+    Array(Vec<MatchPattern>),
+    Struct {
+        name: String,
+        fields: Vec<(String, MatchPattern, Span)>,
+        rest: bool,
+    },
     Variant {
         enum_name: String,
         variant_name: String,
-        bindings: Option<Vec<Option<String>>>,
+        bindings: Option<Vec<MatchPattern>>,
     },
 }
 

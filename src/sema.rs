@@ -5,7 +5,7 @@ use crate::parser::{
 };
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum ValueType {
     I64,
     F32,
@@ -16,6 +16,7 @@ enum ValueType {
     Array(usize),
     Enum(usize),
     Struct(usize),
+    Tuple(usize),
     Vector(usize),
 }
 
@@ -47,6 +48,8 @@ struct Checker {
     enums: Vec<EnumDecl>,
     struct_ids: HashMap<String, usize>,
     structs: Vec<StructDecl>,
+    tuple_shapes: Vec<Vec<ValueType>>,
+    tuple_shape_ids: HashMap<Vec<ValueType>, usize>,
     array_shapes: Vec<ArrayShape>,
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
     vector_shapes: Vec<VectorShape>,
@@ -72,6 +75,8 @@ pub fn check(program: &Program) -> Result<(), Diagnostic> {
         enums: Vec::new(),
         struct_ids: HashMap::new(),
         structs: Vec::new(),
+        tuple_shapes: Vec::new(),
+        tuple_shape_ids: HashMap::new(),
         array_shapes: Vec::new(),
         array_shape_ids: HashMap::new(),
         vector_shapes: Vec::new(),

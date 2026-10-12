@@ -85,6 +85,30 @@ impl Parser {
                 self.consume(&TokenKind::RBracket, "`]` after array literal")?;
                 Ok(Expr::Array(elements, span))
             }
+            TokenKind::LParen => {
+                if self.take(&TokenKind::RParen) {
+                    return Err(unexpected(
+                        self.previous(),
+                        "at least one tuple element; empty tuples are not supported",
+                    ));
+                }
+                let first = self.parse_expression(0)?;
+                if !self.take(&TokenKind::Comma) {
+                    self.consume(&TokenKind::RParen, "`)` after grouped expression")?;
+                    return Ok(first);
+                }
+                let mut elements = vec![first];
+                if !self.at(&TokenKind::RParen) {
+                    loop {
+                        elements.push(self.parse_expression(0)?);
+                        if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(&TokenKind::RParen, "`)` after tuple expression")?;
+                Ok(Expr::Tuple(elements, span))
+            }
             TokenKind::If => {
                 let condition = self.parse_expression(0)?;
                 let then_block = self.parse_block()?;
@@ -290,11 +314,6 @@ impl Parser {
                 } else {
                     Ok(Expr::Variable(name, span))
                 }
-            }
-            TokenKind::LParen => {
-                let expr = self.parse_expression(0)?;
-                self.consume(&TokenKind::RParen, "`)`")?;
-                Ok(expr)
             }
             _ => Err(unexpected(&token, "expression")),
         }

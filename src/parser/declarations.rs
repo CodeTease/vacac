@@ -134,7 +134,30 @@ impl Parser {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
-        if self.take(&TokenKind::I64) {
+        if self.take(&TokenKind::LParen) {
+            if self.take(&TokenKind::RParen) {
+                return Err(unexpected(
+                    self.previous(),
+                    "at least one tuple type element; empty tuple types are not supported",
+                ));
+            }
+            let first = self.parse_type()?;
+            if !self.take(&TokenKind::Comma) {
+                self.consume(&TokenKind::RParen, "`)` after grouped type")?;
+                return Ok(first);
+            }
+            let mut elements = vec![first];
+            if !self.at(&TokenKind::RParen) {
+                loop {
+                    elements.push(self.parse_type()?);
+                    if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                        break;
+                    }
+                }
+            }
+            self.consume(&TokenKind::RParen, "`)` after tuple type")?;
+            Ok(Type::Tuple(elements))
+        } else if self.take(&TokenKind::I64) {
             Ok(Type::I64)
         } else if self.take(&TokenKind::F32) {
             Ok(Type::F32)
@@ -202,7 +225,7 @@ impl Parser {
         } else {
             Err(unexpected(
                 self.peek(),
-                "type `i64`, `f32`, `f64`, `bool`, `str`, `unit`, a named type, or `[element; length]`",
+                "type `i64`, `f32`, `f64`, `bool`, `str`, `unit`, a named type, tuple type, or `[element; length]`",
             ))
         }
     }

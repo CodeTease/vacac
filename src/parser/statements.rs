@@ -9,7 +9,7 @@ impl Parser {
             if self.at(&TokenKind::Let) || self.at(&TokenKind::Const) {
                 let immutable = self.at(&TokenKind::Const);
                 let start = self.advance().clone();
-                let name = self.take_ident("binding name")?;
+                let pattern = self.parse_pattern()?;
                 let ty = if self.take(&TokenKind::Colon) {
                     Some(self.parse_type()?)
                 } else {
@@ -19,7 +19,7 @@ impl Parser {
                 let value = self.parse_expression(0)?;
                 self.consume(&TokenKind::Semicolon, "`;`")?;
                 statements.push(Stmt::Let {
-                    name,
+                    pattern,
                     ty,
                     value,
                     immutable,

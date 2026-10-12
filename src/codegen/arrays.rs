@@ -33,9 +33,12 @@ impl<'ctx> Codegen<'ctx> {
                 elements.is_empty()
                     || matches!(
                         self.array_shapes[index].element,
-                        ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+                        ArrayElementType::Array(_)
+                            | ArrayElementType::Vector(_)
+                            | ArrayElementType::Tuple(_)
                     )
             }
+            (Expr::Tuple(_, _), ValueType::Tuple(_)) => true,
             (Expr::Call { name, args, .. }, ValueType::Vector(_)) => {
                 name == "vec_new" && args.is_empty()
             }
@@ -44,6 +47,7 @@ impl<'ctx> Codegen<'ctx> {
         if needs_context {
             let span = match expression {
                 Expr::Array(_, span) => *span,
+                Expr::Tuple(_, span) => *span,
                 Expr::Call { span, .. } => *span,
                 _ => unreachable!(),
             };
@@ -81,6 +85,48 @@ impl<'ctx> Codegen<'ctx> {
                 .ok_or("vector constructor returned void")?;
             return Ok(TypedValue {
                 value: Some(value),
+                ty: array_type,
+            });
+        }
+        if let (Expr::Tuple(elements, tuple_span), ValueType::Tuple(tuple_id)) =
+            (expression, array_type)
+        {
+            let expected_elements = self.tuple_shapes[tuple_id].clone();
+            if elements.len() != expected_elements.len() {
+                return Err(format!(
+                    "line {}:{}: tuple expression has {} element(s), expected {}",
+                    tuple_span.line,
+                    tuple_span.column,
+                    elements.len(),
+                    expected_elements.len()
+                ));
+            }
+            let llvm_type = self.llvm_type(array_type).ok_or("tuple has no LLVM type")?;
+            let mut aggregate = llvm_type.const_zero().as_basic_value_enum();
+            for (index, (expression, element_type)) in
+                elements.iter().zip(expected_elements).enumerate()
+            {
+                let value = self.emit_expression_expected(expression, element_type)?;
+                if value.ty != element_type {
+                    return Err(format!(
+                        "tuple element has type {}, expected {}",
+                        self.type_name(value.ty),
+                        self.type_name(element_type)
+                    ));
+                }
+                aggregate = self
+                    .builder
+                    .build_insert_value(
+                        aggregate.into_struct_value(),
+                        value.value.ok_or("tuple element has no value")?,
+                        index as u32,
+                        "tuple.insert",
+                    )
+                    .map_err(|error| error.to_string())?
+                    .as_basic_value_enum();
+            }
+            return Ok(TypedValue {
+                value: Some(aggregate),
                 ty: array_type,
             });
         }
@@ -124,7 +170,9 @@ impl<'ctx> Codegen<'ctx> {
             let element_type = ValueType::from(shape.element);
             let value = if matches!(
                 shape.element,
-                ArrayElementType::Array(_) | ArrayElementType::Vector(_)
+                ArrayElementType::Array(_)
+                    | ArrayElementType::Vector(_)
+                    | ArrayElementType::Tuple(_)
             ) {
                 self.emit_expression_expected(expression, element_type)?
             } else {
@@ -188,6 +236,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Struct(index) => ArrayElementType::Struct(index),
             ValueType::Array(index) => ArrayElementType::Array(index),
             ValueType::Vector(index) => ArrayElementType::Vector(index),
+            ValueType::Tuple(index) => ArrayElementType::Tuple(index),
             ValueType::Unit => return Err("array elements cannot have type `unit`".into()),
         };
         let array_type = self.array_type(element, elements.len() as u32);
@@ -205,7 +254,16 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?
             .as_basic_value_enum();
         for (index, expression) in elements.iter().enumerate().skip(1) {
-            let value = self.emit_expression(expression)?;
+            let value = if matches!(
+                element,
+                ArrayElementType::Array(_)
+                    | ArrayElementType::Vector(_)
+                    | ArrayElementType::Tuple(_)
+            ) {
+                self.emit_expression_expected(expression, ValueType::from(element))?
+            } else {
+                self.emit_expression(expression)?
+            };
             if value.ty != ValueType::from(element) {
                 return Err(format!(
                     "array element has type {}, expected {}",
@@ -227,6 +285,51 @@ impl<'ctx> Codegen<'ctx> {
         Ok(TypedValue {
             value: Some(aggregate),
             ty: array_type,
+        })
+    }
+
+    pub(super) fn emit_tuple_literal(
+        &mut self,
+        elements: &[Expr],
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, String> {
+        if elements.is_empty() {
+            return Err(format!(
+                "line {}:{}: tuple literals must contain at least one element",
+                span.line, span.column
+            ));
+        }
+        let mut values = Vec::with_capacity(elements.len());
+        let mut types = Vec::with_capacity(elements.len());
+        for element in elements {
+            let value = self.emit_expression(element)?;
+            if value.ty == ValueType::Unit {
+                return Err(format!(
+                    "line {}:{}: tuple elements cannot have type `unit`",
+                    span.line, span.column
+                ));
+            }
+            types.push(value.ty);
+            values.push(value.value.ok_or("tuple element has no value")?);
+        }
+        let tuple_type = self.tuple_type(types);
+        let llvm_type = self.llvm_type(tuple_type).ok_or("tuple has no LLVM type")?;
+        let mut aggregate = llvm_type.const_zero().as_basic_value_enum();
+        for (index, value) in values.into_iter().enumerate() {
+            aggregate = self
+                .builder
+                .build_insert_value(
+                    aggregate.into_struct_value(),
+                    value,
+                    index as u32,
+                    "tuple.insert",
+                )
+                .map_err(|error| error.to_string())?
+                .as_basic_value_enum();
+        }
+        Ok(TypedValue {
+            value: Some(aggregate),
+            ty: tuple_type,
         })
     }
 

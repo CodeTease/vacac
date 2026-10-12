@@ -38,6 +38,8 @@ impl<'ctx> Codegen<'ctx> {
             structs: Vec::new(),
             struct_ids: HashMap::new(),
             struct_types: Vec::new(),
+            tuple_shapes: Vec::new(),
+            tuple_shape_ids: HashMap::new(),
             array_shapes: Vec::new(),
             array_shape_ids: HashMap::new(),
             vector_shapes: Vec::new(),
@@ -70,6 +72,14 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
             ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
+            ValueType::Tuple(index) => {
+                let elements = self.tuple_shapes[index].clone();
+                let types = elements
+                    .into_iter()
+                    .map(|ty| self.llvm_type(ty))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(self.context.struct_type(&types, false).into())
+            }
             ValueType::Vector(_) => Some(self.context.ptr_type(AddressSpace::default()).into()),
             ValueType::Enum(index) => self.enum_types.get(index).copied().map(Into::into),
             ValueType::Struct(index) => self.struct_types.get(index).copied().map(Into::into),
@@ -104,6 +114,26 @@ impl<'ctx> Codegen<'ctx> {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
+            Type::Tuple(elements) => {
+                if elements.is_empty() {
+                    return Err(format!(
+                        "line {}:{}: tuple types must contain at least one element",
+                        span.line, span.column
+                    ));
+                }
+                let mut types = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let ty = self.resolve_type(element, span)?;
+                    if ty == ValueType::Unit {
+                        return Err(format!(
+                            "line {}:{}: tuple elements cannot have type `unit`",
+                            span.line, span.column
+                        ));
+                    }
+                    types.push(ty);
+                }
+                self.tuple_type(types)
+            }
             Type::Array(element, length) => {
                 let element = match element.as_ref() {
                     Type::I64 => ArrayElementType::I64,
@@ -125,6 +155,7 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     Type::Array(_, _) => self.resolve_array_element(element, span)?,
                     Type::Vector(_) => self.resolve_array_element(element, span)?,
+                    Type::Tuple(_) => self.resolve_array_element(element, span)?,
                     Type::Unit => {
                         return Err(format!(
                             "line {}:{}: array elements cannot have type `unit`",
@@ -176,6 +207,18 @@ impl<'ctx> Codegen<'ctx> {
             index
         };
         ValueType::Array(index)
+    }
+
+    pub(super) fn tuple_type(&mut self, elements: Vec<ValueType>) -> ValueType {
+        let index = if let Some(index) = self.tuple_shape_ids.get(&elements) {
+            *index
+        } else {
+            let index = self.tuple_shapes.len();
+            self.tuple_shapes.push(elements.clone());
+            self.tuple_shape_ids.insert(elements, index);
+            index
+        };
+        ValueType::Tuple(index)
     }
 
     pub(super) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {
@@ -529,6 +572,12 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 Ok(ArrayElementType::Array(index))
             }
+            Type::Tuple(_) => {
+                let ValueType::Tuple(index) = self.resolve_type(element, span)? else {
+                    unreachable!()
+                };
+                Ok(ArrayElementType::Tuple(index))
+            }
             Type::Vector(_) => {
                 let ValueType::Vector(index) = self.resolve_type(element, span)? else {
                     unreachable!()
@@ -662,6 +711,7 @@ impl<'ctx> Codegen<'ctx> {
             for field in &declaration.fields {
                 match &field.ty {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) | Type::Vector(_) => {}
+                    Type::Tuple(_) => {}
                     Type::F32 | Type::F64 => {}
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
                     Type::Named(name) if self.enum_ids.contains_key(name) => {}

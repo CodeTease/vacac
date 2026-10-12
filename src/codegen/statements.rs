@@ -115,22 +115,12 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn emit_statement(&mut self, statement: &Stmt) -> Result<bool, String> {
         match statement {
             Stmt::Let {
-                name,
+                pattern,
                 ty,
                 value,
                 immutable,
                 span,
             } => {
-                if self
-                    .scopes
-                    .last()
-                    .is_some_and(|scope| scope.contains_key(name))
-                {
-                    return Err(format!(
-                        "line {}:{}: `{name}` is already declared in this scope",
-                        span.line, span.column
-                    ));
-                }
                 let value = if let Some(ty) = ty.as_ref() {
                     let array_type = self.resolve_type(ty, *span)?;
                     self.emit_expression_expected(value, array_type)?
@@ -148,27 +138,20 @@ impl<'ctx> Codegen<'ctx> {
                     None => value.ty,
                 };
                 if ty != value.ty {
+                    let context = match pattern {
+                        MatchPattern::Binding(name) => format!("initializer for `{name}`"),
+                        _ => "binding initializer".to_owned(),
+                    };
                     return Err(format!(
-                        "line {}:{}: binding `{name}` has type {}, but its initializer has type {}",
+                        "line {}:{}: {context} has type {}, expected {}",
                         span.line,
                         span.column,
-                        self.type_name(ty),
-                        self.type_name(value.ty)
+                        self.type_name(value.ty),
+                        self.type_name(ty)
                     ));
                 }
-                let alloca = self.create_entry_alloca(ty, name)?;
-                self.builder
-                    .build_store(alloca, value.value.ok_or("missing initializer value")?)
-                    .map_err(|e| e.to_string())?;
-                self.scopes.last_mut().unwrap().insert(
-                    name.clone(),
-                    Local {
-                        pointer: alloca,
-                        ty,
-                        immutable: *immutable,
-                        loop_variable: false,
-                    },
-                );
+                let aggregate = value.value.ok_or("missing initializer value")?;
+                self.emit_pattern_bindings(pattern, ty, aggregate, *immutable, *span)?;
                 Ok(false)
             }
             Stmt::Assign { .. } | Stmt::AssignPlace { .. } => {

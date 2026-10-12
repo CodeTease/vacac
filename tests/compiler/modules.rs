@@ -53,6 +53,58 @@ fn nested_modules_resolve_qualified_functions_types_and_enums() {
 }
 
 #[test]
+fn module_struct_patterns_resolve_qualified_names_and_visibility() {
+    let (directory, compile) = module_project(
+        "module-struct-pattern",
+        "mod geometry;\nfn main() -> i64 { let geometry::Point { x, .. } = geometry::make(); x - 42 }\n",
+        &[(
+            "geometry.vca",
+            "pub struct Point { x: i64, y: bool }\npub fn make() -> Point { Point { x: 42, y: true } }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "private-struct-pattern",
+        "mod geometry;\nfn main() -> i64 { let geometry::Point { x, .. } = geometry::make(); x }\n",
+        &[(
+            "geometry.vca",
+            "struct Point { x: i64, y: bool }\npub fn make() -> Point { Point { x: 42, y: true } }\n",
+        )],
+    );
+    assert!(!compile.status.success());
+    assert!(String::from_utf8_lossy(&compile.stderr).contains("type `geometry::Point` is private"));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn public_enum_patterns_resolve_from_child_modules() {
+    let (directory, compile) = module_project(
+        "module-enum-pattern",
+        "mod events;\nfn main() -> i64 { events::classify(events::Kind::Value(42)) - 42 }\n",
+        &[(
+            "events.vca",
+            "pub enum Kind { Value(i64), Empty }\npub fn classify(value: Kind) -> i64 { match value { Kind::Value(number) => { number }, Kind::Empty => { 0 } } }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn directory_modules_load_mod_vca_sources() {
     let (directory, compile) = module_project(
         "directory-module",
