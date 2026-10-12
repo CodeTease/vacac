@@ -64,6 +64,7 @@ impl Parser {
         let span = Span::from(&token);
         match token.kind {
             TokenKind::Integer(n) => Ok(Expr::Integer(n, span)),
+            TokenKind::Float32(n) => Ok(Expr::Float32(n, span)),
             TokenKind::Float(n) => Ok(Expr::Float(n, span)),
             TokenKind::True => Ok(Expr::Bool(true, span)),
             TokenKind::False => Ok(Expr::Bool(false, span)),

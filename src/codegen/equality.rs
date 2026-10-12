@@ -8,7 +8,7 @@ impl<'ctx> Codegen<'ctx> {
         right: BasicValueEnum<'ctx>,
     ) -> Result<IntValue<'ctx>, String> {
         match ty {
-            ValueType::F64 => self
+            ValueType::F32 | ValueType::F64 => self
                 .builder
                 .build_float_compare(
                     FloatPredicate::OEQ,

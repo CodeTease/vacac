@@ -76,7 +76,7 @@ impl<'ctx> Codegen<'ctx> {
         if left.ty == ValueType::Str {
             return Err("operator is not supported for str".into());
         }
-        if left.ty == ValueType::F64 {
+        if matches!(left.ty, ValueType::F32 | ValueType::F64) {
             let lhs = left
                 .value
                 .ok_or("left operand has no value")?
@@ -85,7 +85,7 @@ impl<'ctx> Codegen<'ctx> {
                 .value
                 .ok_or("right operand has no value")?
                 .into_float_value();
-            return self.emit_f64_operation(op, lhs, rhs);
+            return self.emit_float_operation(op, left.ty, lhs, rhs);
         }
         let lhs = left
             .value
@@ -216,24 +216,25 @@ impl<'ctx> Codegen<'ctx> {
         Ok(result)
     }
 
-    fn emit_f64_operation(
+    fn emit_float_operation(
         &mut self,
         op: BinaryOp,
+        ty: ValueType,
         lhs: FloatValue<'ctx>,
         rhs: FloatValue<'ctx>,
     ) -> Result<TypedValue<'ctx>, String> {
         let value = match op {
-            BinaryOp::Add => Some(self.builder.build_float_add(lhs, rhs, "f64.add")),
-            BinaryOp::Subtract => Some(self.builder.build_float_sub(lhs, rhs, "f64.sub")),
-            BinaryOp::Multiply => Some(self.builder.build_float_mul(lhs, rhs, "f64.mul")),
-            BinaryOp::Divide => Some(self.builder.build_float_div(lhs, rhs, "f64.div")),
-            BinaryOp::Remainder => Some(self.builder.build_float_rem(lhs, rhs, "f64.rem")),
+            BinaryOp::Add => Some(self.builder.build_float_add(lhs, rhs, "float.add")),
+            BinaryOp::Subtract => Some(self.builder.build_float_sub(lhs, rhs, "float.sub")),
+            BinaryOp::Multiply => Some(self.builder.build_float_mul(lhs, rhs, "float.mul")),
+            BinaryOp::Divide => Some(self.builder.build_float_div(lhs, rhs, "float.div")),
+            BinaryOp::Remainder => Some(self.builder.build_float_rem(lhs, rhs, "float.rem")),
             _ => None,
         };
         if let Some(value) = value {
             return Ok(TypedValue {
                 value: Some(value.map_err(|e| e.to_string())?.into()),
-                ty: ValueType::F64,
+                ty,
             });
         }
 
@@ -246,7 +247,8 @@ impl<'ctx> Codegen<'ctx> {
             BinaryOp::GreaterEqual => FloatPredicate::OGE,
             _ => {
                 return Err(format!(
-                    "operator is not supported for f64: {}",
+                    "operator is not supported for {}: {}",
+                    self.type_name(ty),
                     match op {
                         BinaryOp::BitAnd => "&",
                         BinaryOp::BitXor => "^",
@@ -262,7 +264,7 @@ impl<'ctx> Codegen<'ctx> {
         };
         let value = self
             .builder
-            .build_float_compare(predicate, lhs, rhs, "f64.cmp")
+            .build_float_compare(predicate, lhs, rhs, "float.cmp")
             .map_err(|e| e.to_string())?;
         Ok(TypedValue {
             value: Some(value.into()),

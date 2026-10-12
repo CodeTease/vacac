@@ -6,6 +6,7 @@ impl<'ctx> Codegen<'ctx> {
         let printf_type = self.context.i32_type().fn_type(&[i8_ptr.into()], true);
         let printf = self.module.add_function("printf", printf_type, None);
         self.emit_printf_wrapper(printf, "print_i64", ValueType::I64, "%lld\n")?;
+        self.emit_printf_wrapper(printf, "print_f32", ValueType::F32, "%.9g\n")?;
         self.emit_printf_wrapper(printf, "print_f64", ValueType::F64, "%.17g\n")?;
         self.emit_printf_wrapper(printf, "print", ValueType::Str, "%s")?;
         self.emit_printf_wrapper(printf, "println", ValueType::Str, "%s\n")?;
@@ -30,6 +31,18 @@ impl<'ctx> Codegen<'ctx> {
         let value = function
             .get_nth_param(0)
             .ok_or_else(|| format!("missing {name} parameter"))?;
+        let value = if param == ValueType::F32 {
+            self.builder
+                .build_float_ext(
+                    value.into_float_value(),
+                    self.context.f64_type(),
+                    "print_f32.promoted",
+                )
+                .map_err(|e| e.to_string())?
+                .into()
+        } else {
+            value
+        };
         self.builder
             .build_call(
                 printf,

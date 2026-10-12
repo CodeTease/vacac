@@ -11,6 +11,9 @@ impl Checker {
         if value_type == ValueType::F64 {
             return Err(at(span, "match does not support `f64` values"));
         }
+        if value_type == ValueType::F32 {
+            return Err(at(span, "match does not support `f32` values"));
+        }
         if matches!(value_type, ValueType::Bool | ValueType::I64) {
             self.check_scalar_match(value_type, arms, span)
         } else {

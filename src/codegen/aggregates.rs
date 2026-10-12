@@ -222,6 +222,12 @@ impl<'ctx> Codegen<'ctx> {
                 span.line, span.column
             ));
         }
+        if value.ty == ValueType::F32 {
+            return Err(format!(
+                "line {}:{}: match does not support `f32` values",
+                span.line, span.column
+            ));
+        }
         if matches!(value.ty, ValueType::Bool | ValueType::I64) {
             return self.emit_scalar_match(value, arms, span);
         }

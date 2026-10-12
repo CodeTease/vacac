@@ -21,6 +21,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ValueType {
     I64,
+    F32,
     F64,
     Bool,
     Str,
@@ -125,6 +126,7 @@ impl<'ctx> Codegen<'ctx> {
     fn type_name(&self, ty: ValueType) -> String {
         match ty {
             ValueType::I64 => "i64".into(),
+            ValueType::F32 => "f32".into(),
             ValueType::F64 => "f64".into(),
             ValueType::Bool => "bool".into(),
             ValueType::Str => "str".into(),

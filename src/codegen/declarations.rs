@@ -64,6 +64,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn llvm_type(&self, ty: ValueType) -> Option<BasicTypeEnum<'ctx>> {
         match ty {
             ValueType::I64 => Some(self.i64_type().into()),
+            ValueType::F32 => Some(self.context.f32_type().into()),
             ValueType::F64 => Some(self.context.f64_type().into()),
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
@@ -97,6 +98,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, String> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
+            Type::F32 => ValueType::F32,
             Type::F64 => ValueType::F64,
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
@@ -104,6 +106,12 @@ impl<'ctx> Codegen<'ctx> {
             Type::Array(element, length) => {
                 let element = match element.as_ref() {
                     Type::I64 => ArrayElementType::I64,
+                    Type::F32 => {
+                        return Err(format!(
+                            "line {}:{}: f32 is not supported in arrays or vectors",
+                            span.line, span.column
+                        ));
+                    }
                     Type::F64 => {
                         return Err(format!(
                             "line {}:{}: f64 is not supported in arrays or vectors",
@@ -547,6 +555,10 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<ArrayElementType, String> {
         match element {
             Type::I64 => Ok(ArrayElementType::I64),
+            Type::F32 => Err(format!(
+                "line {}:{}: f32 is not supported in arrays or vectors",
+                span.line, span.column
+            )),
             Type::F64 => Err(format!(
                 "line {}:{}: f64 is not supported in arrays or vectors",
                 span.line, span.column
@@ -651,6 +663,12 @@ impl<'ctx> Codegen<'ctx> {
                             variant.span.line, variant.span.column
                         ));
                     }
+                    if value_type == ValueType::F32 {
+                        return Err(format!(
+                            "line {}:{}: enum payloads cannot have type `f32`",
+                            variant.span.line, variant.span.column
+                        ));
+                    }
                     payload_fields.push(
                         self.llvm_type(value_type)
                             .ok_or("enum payload has no LLVM type")?,
@@ -696,6 +714,12 @@ impl<'ctx> Codegen<'ctx> {
             for field in &declaration.fields {
                 match &field.ty {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) | Type::Vector(_) => {}
+                    Type::F32 => {
+                        return Err(format!(
+                            "line {}:{}: struct fields cannot have type `f32`",
+                            field.span.line, field.span.column
+                        ));
+                    }
                     Type::F64 => {
                         return Err(format!(
                             "line {}:{}: struct fields cannot have type `f64`",
@@ -752,6 +776,7 @@ impl<'ctx> Codegen<'ctx> {
             if matches!(
                 function.name.as_str(),
                 "print_i64"
+                    | "print_f32"
                     | "print_f64"
                     | "print"
                     | "println"
@@ -834,6 +859,8 @@ impl<'ctx> Codegen<'ctx> {
             .insert("print_i64".into(), (vec![ValueType::I64], ValueType::Unit));
         self.signatures
             .insert("print_f64".into(), (vec![ValueType::F64], ValueType::Unit));
+        self.signatures
+            .insert("print_f32".into(), (vec![ValueType::F32], ValueType::Unit));
         for name in ["print", "println"] {
             self.signatures
                 .insert(name.into(), (vec![ValueType::Str], ValueType::Unit));

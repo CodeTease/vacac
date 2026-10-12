@@ -173,6 +173,7 @@ impl Parser {
 fn span_of_expr_parser(expr: &Expr) -> Span {
     match expr {
         Expr::Integer(_, span)
+        | Expr::Float32(_, span)
         | Expr::Float(_, span)
         | Expr::Bool(_, span)
         | Expr::String(_, span)

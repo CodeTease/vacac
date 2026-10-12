@@ -4,6 +4,7 @@ use crate::diagnostic::{Diagnostic, SourceSpan};
 pub enum TokenKind {
     Ident(String),
     Integer(u64),
+    Float32(f32),
     Float(f64),
     StringLit(String),
     Fn,
@@ -26,6 +27,7 @@ pub enum TokenKind {
     True,
     False,
     I64,
+    F32,
     F64,
     Bool,
     Str,
@@ -80,6 +82,7 @@ impl Token {
         match &self.kind {
             TokenKind::Ident(s) => format!("identifier `{s}`"),
             TokenKind::Integer(n) => format!("integer `{n}`"),
+            TokenKind::Float32(n) => format!("f32 floating-point literal `{n}`"),
             TokenKind::Float(n) => format!("floating-point literal `{n}`"),
             TokenKind::StringLit(s) => format!("string literal {s:?}"),
             kind => format!("`{}`", token_name(kind)),
@@ -109,6 +112,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
         TokenKind::True => "true",
         TokenKind::False => "false",
         TokenKind::I64 => "i64",
+        TokenKind::F32 => "f32",
         TokenKind::F64 => "f64",
         TokenKind::Bool => "bool",
         TokenKind::Str => "str",
@@ -149,6 +153,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
         TokenKind::Eof => "end of file",
         TokenKind::Ident(_) => "identifier",
         TokenKind::Integer(_) => "integer",
+        TokenKind::Float32(_) => "f32 floating-point literal",
         TokenKind::Float(_) => "floating-point literal",
         TokenKind::StringLit(_) => "string literal",
     }
@@ -247,6 +252,7 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                 "true" => TokenKind::True,
                 "false" => TokenKind::False,
                 "i64" => TokenKind::I64,
+                "f32" => TokenKind::F32,
                 "f64" => TokenKind::F64,
                 "bool" => TokenKind::Bool,
                 "str" => TokenKind::Str,
@@ -297,8 +303,52 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                     ));
                 }
             }
-            let text = &input[start..i];
-            if is_float {
+            let number_end = i;
+            let is_f32 = bytes.get(i..i + 3) == Some(b"f32");
+            if is_f32 {
+                i += 3;
+                column += 3;
+                if bytes
+                    .get(i)
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                {
+                    return Err(Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column + 1,
+                            file: source_id,
+                        },
+                        "invalid numeric literal suffix",
+                    ));
+                }
+            }
+            let text = &input[start..number_end];
+            if is_f32 {
+                let value = text.parse::<f32>().map_err(|_| {
+                    Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column,
+                            file: source_id,
+                        },
+                        "invalid f32 literal",
+                    )
+                })?;
+                if !value.is_finite() {
+                    return Err(Diagnostic::at(
+                        SourceSpan {
+                            line: start_line,
+                            column: start_column,
+                            end_column: column,
+                            file: source_id,
+                        },
+                        "f32 literal is out of range",
+                    ));
+                }
+                TokenKind::Float32(value)
+            } else if is_float {
                 let value = text.parse::<f64>().map_err(|_| {
                     Diagnostic::at(
                         SourceSpan {

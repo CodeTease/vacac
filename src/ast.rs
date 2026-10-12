@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     I64,
+    F32,
     F64,
     Bool,
     Str,
@@ -159,6 +160,7 @@ pub enum Stmt {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Integer(u64, Span),
+    Float32(f32, Span),
     Float(f64, Span),
     Bool(bool, Span),
     String(String, Span),

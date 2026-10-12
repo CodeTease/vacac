@@ -91,6 +91,27 @@ fn module_functions_can_use_the_print_f64_builtin() {
 }
 
 #[test]
+fn module_functions_can_use_the_print_f32_builtin() {
+    let (directory, compile) = module_project(
+        "module-print-f32",
+        "mod math;\nfn main() -> i64 { math::report(1.25f32); 0 }\n",
+        &[(
+            "math.vca",
+            "pub fn report(value: f32) -> unit { print_f32(value); }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1.25\n");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn private_module_function_cannot_be_called_from_root() {
     let (directory, compile) = module_project(
         "private-function",

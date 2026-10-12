@@ -74,6 +74,9 @@ impl Checker {
                         ValueType::F64 => {
                             return Err(at(variant.span, "enum payloads cannot have type `f64`"));
                         }
+                        ValueType::F32 => {
+                            return Err(at(variant.span, "enum payloads cannot have type `f32`"));
+                        }
                         _ => {}
                     }
                 }
@@ -88,6 +91,9 @@ impl Checker {
                     }
                     ValueType::F64 => {
                         return Err(at(field.span, "struct fields cannot have type `f64`"));
+                    }
+                    ValueType::F32 => {
+                        return Err(at(field.span, "struct fields cannot have type `f32`"));
                     }
                     _ => {}
                 }
@@ -110,6 +116,7 @@ impl Checker {
             if matches!(
                 function.name.as_str(),
                 "print_i64"
+                    | "print_f32"
                     | "print_f64"
                     | "print"
                     | "println"
@@ -194,6 +201,13 @@ impl Checker {
             "print_f64".into(),
             Signature {
                 params: vec![ValueType::F64],
+                return_type: ValueType::Unit,
+            },
+        );
+        self.signatures.insert(
+            "print_f32".into(),
+            Signature {
+                params: vec![ValueType::F32],
                 return_type: ValueType::Unit,
             },
         );
