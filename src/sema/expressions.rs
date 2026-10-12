@@ -31,7 +31,12 @@ impl Checker {
         expr: &Expr,
         expected: ValueType,
     ) -> Result<ValueType, Diagnostic> {
-        if let (Expr::Call { name, args, span }, ValueType::Vector(index)) = (expr, expected)
+        if let (
+            Expr::Call {
+                name, args, span, ..
+            },
+            ValueType::Vector(index),
+        ) = (expr, expected)
             && name == "vec_new"
         {
             if !args.is_empty() {
@@ -261,7 +266,9 @@ impl Checker {
                 let field_span = field.span;
                 self.resolve_type(&field_type, field_span)
             }
-            Expr::Struct { name, fields, span } => {
+            Expr::Struct {
+                name, fields, span, ..
+            } => {
                 let struct_id = self
                     .struct_ids
                     .get(name)
@@ -391,7 +398,9 @@ impl Checker {
                 };
                 Ok(result_type)
             }
-            Expr::Call { name, args, span } => {
+            Expr::Call {
+                name, args, span, ..
+            } => {
                 if name == "vec_new" {
                     if !args.is_empty() {
                         return Err(at(

@@ -26,6 +26,18 @@ impl Checker {
                     return Err(at(span, format!("unknown type `{name}`")));
                 }
             }
+            Type::Applied(name, _) => {
+                return Err(at(
+                    span,
+                    format!("generic type `{name}` was not specialized"),
+                ));
+            }
+            Type::Parameter(name) => {
+                return Err(at(
+                    span,
+                    format!("generic parameter `{name}` was not specialized"),
+                ));
+            }
         })
     }
 
@@ -141,6 +153,18 @@ impl Checker {
                 ArrayElementType::Vector(index)
             }
             Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
+            Type::Applied(name, _) => {
+                return Err(at(
+                    span,
+                    format!("generic type `{name}` was not specialized"),
+                ));
+            }
+            Type::Parameter(name) => {
+                return Err(at(
+                    span,
+                    format!("generic parameter `{name}` was not specialized"),
+                ));
+            }
         })
     }
 

@@ -24,7 +24,9 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ValueType::Str,
             }),
             Expr::Array(elements, span) => self.emit_array_literal(elements, *span),
-            Expr::Call { name, args, span } if name == "vec_new" => {
+            Expr::Call {
+                name, args, span, ..
+            } if name == "vec_new" => {
                 if !args.is_empty() {
                     return Err(format!(
                         "line {}:{}: `vec_new` expects 0 arguments",
@@ -204,7 +206,9 @@ impl<'ctx> Codegen<'ctx> {
                     ty: field_ty,
                 })
             }
-            Expr::Struct { name, fields, span } => self.emit_struct_literal(name, fields, *span),
+            Expr::Struct {
+                name, fields, span, ..
+            } => self.emit_struct_literal(name, fields, *span),
             Expr::Unary { op, value, .. } => {
                 if matches!(op, UnaryOp::Negate)
                     && matches!(value.as_ref(), Expr::Integer(n, _) if *n == (i64::MAX as u64) + 1)
@@ -275,7 +279,9 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Binary {
                 op, left, right, ..
             } => self.emit_binary(*op, left, right),
-            Expr::Call { name, args, span } => self.emit_call(name, args, *span),
+            Expr::Call {
+                name, args, span, ..
+            } => self.emit_call(name, args, *span),
             Expr::If {
                 condition,
                 then_block,

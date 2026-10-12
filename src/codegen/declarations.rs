@@ -130,6 +130,12 @@ impl<'ctx> Codegen<'ctx> {
                             span.line, span.column
                         ));
                     }
+                    Type::Applied(name, _) => {
+                        return Err(format!("generic type `{name}` was not specialized"));
+                    }
+                    Type::Parameter(name) => {
+                        return Err(format!("generic parameter `{name}` was not specialized"));
+                    }
                 };
                 self.array_type(element, *length)
             }
@@ -148,6 +154,12 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 }
+            }
+            Type::Applied(name, _) => {
+                return Err(format!("generic type `{name}` was not specialized"));
+            }
+            Type::Parameter(name) => {
+                return Err(format!("generic parameter `{name}` was not specialized"));
             }
         })
     }
@@ -575,6 +587,8 @@ impl<'ctx> Codegen<'ctx> {
                 "line {}:{}: unknown type `{name}`",
                 span.line, span.column
             )),
+            Type::Applied(name, _) => Err(format!("generic type `{name}` was not specialized")),
+            Type::Parameter(name) => Err(format!("generic parameter `{name}` was not specialized")),
         }
     }
 
@@ -700,6 +714,12 @@ impl<'ctx> Codegen<'ctx> {
                             "line {}:{}: struct fields cannot have type `unit`",
                             field.span.line, field.span.column
                         ));
+                    }
+                    Type::Applied(name, _) => {
+                        return Err(format!("generic type `{name}` was not specialized"));
+                    }
+                    Type::Parameter(name) => {
+                        return Err(format!("generic parameter `{name}` was not specialized"));
                     }
                 }
             }

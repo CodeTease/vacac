@@ -9,6 +9,8 @@ pub enum Type {
     Array(Box<Type>, u32),
     Vector(Box<Type>),
     Named(String),
+    Applied(String, Vec<Type>),
+    Parameter(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,6 +54,7 @@ pub struct ModuleDecl {
 #[derive(Debug, Clone)]
 pub struct StructDecl {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub fields: Vec<StructField>,
     pub span: Span,
     pub is_public: bool,
@@ -84,6 +87,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Block,
@@ -180,6 +184,7 @@ pub enum Expr {
     },
     Struct {
         name: String,
+        type_arguments: Vec<Type>,
         fields: Vec<(String, Expr, Span)>,
         span: Span,
     },
@@ -196,6 +201,7 @@ pub enum Expr {
     },
     Call {
         name: String,
+        type_arguments: Vec<Type>,
         args: Vec<Expr>,
         span: Span,
     },

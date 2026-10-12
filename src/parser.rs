@@ -28,6 +28,7 @@ pub struct Parser {
     module: String,
     parsing_match_value: bool,
     type_close_debt: usize,
+    type_parameters: HashSet<String>,
 }
 
 impl Parser {
@@ -58,6 +59,7 @@ impl Parser {
             module,
             parsing_match_value: false,
             type_close_debt: 0,
+            type_parameters: HashSet::new(),
         }
     }
 

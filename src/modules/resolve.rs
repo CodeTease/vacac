@@ -204,6 +204,13 @@ fn resolve_type(
 ) -> Result<(), Diagnostic> {
     match ty {
         crate::ast::Type::Named(name) => *name = resolve_reference(name, module, span, symbols)?,
+        crate::ast::Type::Applied(name, arguments) => {
+            *name = resolve_reference(name, module, span, symbols)?;
+            for argument in arguments {
+                resolve_type(argument, module, span, symbols)?;
+            }
+        }
+        crate::ast::Type::Parameter(_) => {}
         crate::ast::Type::Array(element, _) | crate::ast::Type::Vector(element) => {
             resolve_type(element, module, span, symbols)?
         }
@@ -297,8 +304,16 @@ fn resolve_expr(
         Expr::Field { value, .. } | Expr::Unary { value, .. } => {
             resolve_expr(value, module, symbols, struct_names, enum_names)?
         }
-        Expr::Struct { name, fields, span } => {
+        Expr::Struct {
+            name,
+            type_arguments,
+            fields,
+            span,
+        } => {
             *name = resolve_reference(name, module, *span, symbols)?;
+            for argument in type_arguments {
+                resolve_type(argument, module, *span, symbols)?;
+            }
             for (_, value, _) in fields {
                 resolve_expr(value, module, symbols, struct_names, enum_names)?;
             }
@@ -307,7 +322,12 @@ fn resolve_expr(
             resolve_expr(left, module, symbols, struct_names, enum_names)?;
             resolve_expr(right, module, symbols, struct_names, enum_names)?;
         }
-        Expr::Call { name, args, span } => {
+        Expr::Call {
+            name,
+            type_arguments,
+            args,
+            span,
+        } => {
             let enum_constructor = if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
                 let resolved_enum = resolve_reference(enum_name, module, *span, symbols)?;
                 let is_enum = symbols
@@ -341,6 +361,9 @@ fn resolve_expr(
                 )
             {
                 *name = resolve_reference(name, module, *span, symbols)?;
+            }
+            for argument in type_arguments {
+                resolve_type(argument, module, *span, symbols)?;
             }
             for arg in args {
                 resolve_expr(arg, module, symbols, struct_names, enum_names)?;

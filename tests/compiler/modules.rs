@@ -112,6 +112,40 @@ fn module_functions_can_use_the_print_f32_builtin() {
 }
 
 #[test]
+fn public_generic_functions_and_structs_work_across_modules() {
+    let (directory, compile) = module_project(
+        "generic-module",
+        "mod common;\nfn main() -> i64 { let wrapped = common::Box<i64> { value: common::identity(42) }; wrapped.value - 42 }\n",
+        &[(
+            "common.vca",
+            "pub struct Box<T> { value: T }\npub fn identity<T>(value: T) -> T { value }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn private_generic_module_declarations_remain_private() {
+    let (directory, compile) = module_project(
+        "private-generic-module",
+        "mod common;\nfn main() -> i64 { common::identity(42) }\n",
+        &[("common.vca", "fn identity<T>(value: T) -> T { value }\n")],
+    );
+    assert!(!compile.status.success());
+    assert!(
+        String::from_utf8_lossy(&compile.stderr).contains("function `common::identity` is private")
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn private_module_function_cannot_be_called_from_root() {
     let (directory, compile) = module_project(
         "private-function",

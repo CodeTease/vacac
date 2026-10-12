@@ -5,7 +5,7 @@
 * [x] Define and test signed `i64` overflow semantics: addition, subtraction, multiplication, and negation trap at runtime; the minimum literal remains valid.
 * [x] Scalar `f32` / `f64` support, including suffixed literals, arithmetic, comparisons, functions, and printing.
 * [x] Floating-point values in arrays, vectors, structs, enums, and match patterns.
-* [ ] User-defined generics / parametric polymorphism for functions and structs (beyond the built-in `Vec<T>` type).
+* [x] User-defined generics / parametric polymorphism for functions and structs (monomorphized functions and structs; inferred arguments and full explicit turbofish arguments, without trait bounds or generic enums).
 * [ ] Closures, lambda expressions, and first-class function values.
 * [ ] Global and module-level constants or variables.
 * [ ] Destructuring patterns for structs, arrays, and tuples; tuple types and values.

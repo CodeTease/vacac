@@ -12,6 +12,8 @@ mod enums;
 mod equality;
 #[path = "compiler/floats.rs"]
 mod floats;
+#[path = "compiler/generics.rs"]
+mod generics;
 #[path = "compiler/language.rs"]
 mod language;
 #[path = "compiler/matching_loops.rs"]

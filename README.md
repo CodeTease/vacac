@@ -217,6 +217,36 @@ fn lookup(id: i64) -> User {
 
 Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `f32`, `f64`, `bool`, `str`, recursively nested fixed-size arrays and vectors of non-`unit` values, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct equality and inequality compare every field recursively, using IEEE equality for floats, string contents for `str` fields and handle identity for vector fields.
 
+Generic structs are monomorphized into concrete layouts at each use. Supply type arguments in a type annotation or struct literal; nested applications are supported:
+
+```vaca
+struct Box<T> { value: T }
+struct Pair<L, R> { left: L, right: R }
+
+fn main() -> i64 {
+    let pair: Pair<i64, Box<str>> = Pair<i64, Box<str>> {
+        left: 42,
+        right: Box<str> { value: "generic" },
+    };
+    println(pair.right.value);
+    pair.left - 42
+}
+```
+
+Generic functions use the same declaration syntax. Type parameters are inferred from argument types when possible; use turbofish syntax `function::<Type, ...>(...)` when a parameter cannot be inferred. Explicit generic arguments must list every parameter. Generic functions and structs can be public module declarations and retain normal module visibility checks. The compiler specializes concrete instances, deduplicates repeated instances, and rejects programs requiring more than 512 concrete generic function/struct instances. Generic enums, trait bounds, and partial type-argument lists are not supported. Built-in `Vec<T>` remains supported as a generic function parameter and return type, with its existing built-in runtime behavior.
+
+```vaca
+fn identity<T>(value: T) -> T { value }
+fn make<T>() -> i64 { 42 }
+
+fn main() -> i64 {
+    let value = identity(42);       // inferred as i64
+    let explicit = identity::<str>("vaca");
+    println(explicit);
+    value - make::<bool>()
+}
+```
+
 ## Enums and exhaustive matching
 
 Enums are top-level declarations with uniquely named variants. A variant has no payload or an ordered tuple of one or more non-`unit` value payloads (primitives including `f32` and `f64`, named structs and enums, fixed-size arrays, or vectors):

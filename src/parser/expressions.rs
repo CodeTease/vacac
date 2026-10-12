@@ -106,11 +106,19 @@ impl Parser {
                 let mut path = vec![first];
                 while self.at(&TokenKind::DoubleColon)
                     && matches!(&self.peek_n(1).kind, TokenKind::Ident(_))
-                    && matches!(&self.peek_n(2).kind, TokenKind::DoubleColon)
                 {
                     self.advance();
                     path.push(self.take_ident("name after `::`")?);
                 }
+                let mut type_arguments = if self.at(&TokenKind::DoubleColon)
+                    && matches!(&self.peek_n(1).kind, TokenKind::Less)
+                {
+                    self.advance();
+                    self.advance();
+                    self.parse_type_arguments()?
+                } else {
+                    Vec::new()
+                };
                 if self.at(&TokenKind::DoubleColon) {
                     self.advance();
                     path.push(self.take_ident("name after `::`")?);
@@ -127,7 +135,12 @@ impl Parser {
                         }
                     }
                     self.consume(&TokenKind::RParen, "`)`")?;
-                    return Ok(Expr::Call { name, args, span });
+                    return Ok(Expr::Call {
+                        name,
+                        type_arguments,
+                        args,
+                        span,
+                    });
                 }
                 if path.len() >= 2 && !self.parsing_match_value && self.at(&TokenKind::LBrace) {
                     let type_name = path.last().expect("path has at least two segments");
@@ -162,7 +175,49 @@ impl Parser {
                         }
                     }
                     self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
-                    return Ok(Expr::Struct { name, fields, span });
+                    return Ok(Expr::Struct {
+                        name,
+                        type_arguments,
+                        fields,
+                        span,
+                    });
+                }
+                if (path.len() >= 2
+                    || self
+                        .struct_names
+                        .contains(path.last().expect("path is non-empty")))
+                    && self.at(&TokenKind::Less)
+                    && self.generic_struct_literal_ahead()
+                {
+                    self.advance();
+                    type_arguments = self.parse_type_arguments()?;
+                    if !self.at(&TokenKind::LBrace) {
+                        return Err(unexpected(
+                            self.peek(),
+                            "`{` after generic struct type arguments",
+                        ));
+                    }
+                    self.advance();
+                    let mut fields = Vec::new();
+                    if !self.at(&TokenKind::RBrace) {
+                        loop {
+                            let field_token = self.peek().clone();
+                            let field_name = self.take_ident("field name")?;
+                            self.consume(&TokenKind::Colon, "`:` after field name")?;
+                            let value = self.parse_expression(0)?;
+                            fields.push((field_name, value, Span::from(&field_token)));
+                            if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RBrace) {
+                                break;
+                            }
+                        }
+                    }
+                    self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
+                    return Ok(Expr::Struct {
+                        name,
+                        type_arguments,
+                        fields,
+                        span,
+                    });
                 }
                 if path.len() >= 2 {
                     let variant_name = path.pop().expect("path has multiple segments");
@@ -209,7 +264,12 @@ impl Parser {
                         }
                     }
                     self.consume(&TokenKind::RBrace, "`}` after struct initializer")?;
-                    Ok(Expr::Struct { name, fields, span })
+                    Ok(Expr::Struct {
+                        name,
+                        type_arguments,
+                        fields,
+                        span,
+                    })
                 } else if self.take(&TokenKind::LParen) {
                     let mut args = Vec::new();
                     if !self.at(&TokenKind::RParen) {
@@ -221,7 +281,12 @@ impl Parser {
                         }
                     }
                     self.consume(&TokenKind::RParen, "`)`")?;
-                    Ok(Expr::Call { name, args, span })
+                    Ok(Expr::Call {
+                        name,
+                        type_arguments,
+                        args,
+                        span,
+                    })
                 } else {
                     Ok(Expr::Variable(name, span))
                 }
@@ -233,6 +298,60 @@ impl Parser {
             }
             _ => Err(unexpected(&token, "expression")),
         }
+    }
+
+    fn parse_type_arguments(&mut self) -> Result<Vec<Type>, Diagnostic> {
+        let mut arguments = Vec::new();
+        if self.at(&TokenKind::Greater) || self.at(&TokenKind::ShiftRight) {
+            return Err(unexpected(
+                self.peek(),
+                "at least one generic type argument",
+            ));
+        }
+        loop {
+            arguments.push(self.parse_type()?);
+            if !self.take(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.consume_type_greater()?;
+        Ok(arguments)
+    }
+
+    fn generic_struct_literal_ahead(&self) -> bool {
+        let mut depth = 0usize;
+        for (offset, token) in self.tokens[self.current..].iter().enumerate() {
+            match token.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    let Some(next_depth) = depth.checked_sub(1) else {
+                        return false;
+                    };
+                    depth = next_depth;
+                    if depth == 0 {
+                        return self
+                            .tokens
+                            .get(self.current + offset + 1)
+                            .is_some_and(|next| matches!(next.kind, TokenKind::LBrace));
+                    }
+                }
+                TokenKind::ShiftRight => {
+                    let Some(next_depth) = depth.checked_sub(2) else {
+                        return false;
+                    };
+                    depth = next_depth;
+                    if depth == 0 {
+                        return self
+                            .tokens
+                            .get(self.current + offset + 1)
+                            .is_some_and(|next| matches!(next.kind, TokenKind::LBrace));
+                    }
+                }
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     fn binary_operator(&self) -> Option<(BinaryOp, u8)> {
