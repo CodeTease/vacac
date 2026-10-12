@@ -1,0 +1,25 @@
+// Compile-time constants and mutable globals use static storage.
+const BASE: i64 = 40 + 2;
+const INITIAL_COUNT = BASE / 2;
+let visits: i64 = INITIAL_COUNT;
+
+fn record_visit() -> i64 {
+    visits = visits + 1;
+    visits
+}
+
+fn main() -> i64 {
+    println("Compile-time global values:");
+    print("Base: ");
+    print_i64(BASE);
+    print("Initial count: ");
+    print_i64(INITIAL_COUNT);
+
+    print("After one update: ");
+    print_i64(record_visit());
+    print("After two updates: ");
+    print_i64(record_visit());
+
+    // Return zero on success; this also confirms the global's final value.
+    visits - 23
+}
