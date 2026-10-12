@@ -1,0 +1,37 @@
+// Tuple values and recursive tuple, array, and struct destructuring.
+struct Report {
+    summary: (str, i64),
+    scores: [i64; 3],
+}
+
+fn main() -> i64 {
+    let pair: (i64, bool) = (40, true);
+    let (score, passed) = pair;
+
+    let report = Report {
+        summary: ("points", score + 2),
+        scores: [10, 20, 30],
+    };
+
+    // Nested patterns bind selected fields and ignore the second array slot.
+    let Report {
+        summary: (label, total),
+        scores: [first, _, last],
+        ..
+    } = report;
+
+    print(label);
+    print(": ");
+    print_i64(total);
+    print("; first and last scores: ");
+    print_i64(first);
+    print_i64(last);
+
+    // Aggregate matches use a destructuring arm. A wildcard can ignore tuple
+    // positions, just as it can in a let pattern.
+    let (matched_score, _) = match (score, passed) {
+        (value, _) => { (value, false) },
+    };
+
+    matched_score - 40
+}
