@@ -1,0 +1,24 @@
+// Checks if a given integer is a prime number
+fn is_prime(n: i64) -> bool {
+    if n <= 1 {
+        return false;
+    }
+    let mut_i: i64 = 2;
+    while mut_i * mut_i <= n {
+        if n % mut_i == 0 {
+            return false;
+        }
+        mut_i = mut_i + 1;
+    }
+    true
+}
+
+fn main() -> i64 {
+    let num: i64 = 29;
+    if is_prime(num) {
+        println("29 is prime");
+    } else {
+        println("29 is not prime");
+    }
+    0
+}

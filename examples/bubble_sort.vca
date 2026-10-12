@@ -1,0 +1,23 @@
+// Sorts a fixed-size array in ascending order using bubble sort
+fn main() -> i64 {
+    let numbers: [i64; 6] = [5, 2, 9, 1, 5, 6];
+    let count: i64 = len(numbers);
+
+    for i in 0..count {
+        for j in 0..(count - i - 1) {
+            if numbers[j] > numbers[j + 1] {
+                let temp: i64 = numbers[j];
+                numbers[j] = numbers[j + 1];
+                numbers[j + 1] = temp;
+            }
+        }
+    }
+
+    print("Sorted array: ");
+    for val in numbers {
+        print_i64(val);
+        print(" ");
+    }
+    println("");
+    0
+}
