@@ -1,0 +1,20 @@
+// Scalar floating-point examples: unsuffixed literals are f64, while f32
+// literals carry an explicit suffix.
+fn add_f32(left: f32, right: f32) -> f32 {
+    left + right
+}
+
+fn add_f64(left: f64, right: f64) -> f64 {
+    left + right
+}
+
+fn main() -> i64 {
+    let small: f32 = add_f32(1.25f32, 2.5f32);
+    let precise: f64 = add_f64(1.25, 2.5);
+
+    print("f32 sum: ");
+    print_f32(small);
+    print("f64 sum: ");
+    print_f64(precise);
+    0
+}
