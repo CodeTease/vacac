@@ -1,0 +1,45 @@
+// Generic functions infer types from their arguments and specialize per type.
+fn identity<T>(value: T) -> T {
+    value
+}
+
+fn first<T>(values: Vec<T>) -> T {
+    values[0]
+}
+
+// Generic structs become concrete layouts at each use.
+struct Box<T> {
+    value: T,
+}
+
+struct Pair<L, R> {
+    left: L,
+    right: R,
+}
+
+fn unbox<T>(boxed: Box<T>) -> T {
+    boxed.value
+}
+
+fn main() -> i64 {
+    let numbers: Vec<i64> = vec_new();
+    vec_push(numbers, 21);
+
+    // The type parameter is inferred as i64.
+    let number = identity(first(numbers));
+
+    // Explicit turbofish syntax is useful when a type cannot be inferred.
+    let label = identity::<str>("answer");
+    let boxed = Box<str> { value: label };
+    let pair = Pair<i64, Box<str>> {
+        left: number * 2,
+        right: boxed,
+    };
+
+    print(pair.right.value);
+    print(": ");
+    print_i64(pair.left);
+    print("; unboxed label: ");
+    print(unbox(pair.right));
+    pair.left - 42
+}
