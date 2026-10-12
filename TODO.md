@@ -22,6 +22,15 @@
 * [ ] Recoverable error handling and propagation (for example, `Result`/`?` or try/catch); current runtime failures terminate the process.
 * [ ] Async/await and concurrency (threads / multithreading).
 
+## Compiler diagnostics
+
+* [ ] Carry structured diagnostics through code generation and the CLI instead of embedding source locations in error strings and parsing them back.
+* [ ] Preserve source-file and module identity through codegen so backend errors point to the file containing the relevant declaration.
+* [ ] Add source spans to entry-point validation and other user-facing errors that currently lack a location when a useful location is available.
+* [ ] Make human-readable, `Display`, and JSON diagnostic output consistent; define and test the JSON output contract and escaping.
+* [ ] Improve source underline alignment for tabs and Unicode, define the column-counting convention, and add regression tests for it.
+* [ ] Expand diagnostic tests across lexer, parser, semantic analysis, modules, and codegen to cover locations, excerpts, underlines, and JSON output.
+
 ## Future
 
 * [ ] Consider a package manager and reusable library distribution once the standard library and module system mature.
