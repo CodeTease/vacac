@@ -159,6 +159,54 @@ impl Parser {
         })
     }
 
+    pub(super) fn parse_extern_function(
+        &mut self,
+        is_public: bool,
+    ) -> Result<ExternFunction, Diagnostic> {
+        let start = self.consume(&TokenKind::Extern, "`extern`")?;
+        match self.advance().kind.clone() {
+            TokenKind::StringLit(abi) if abi == "C" => {}
+            _ => return Err(unexpected(self.previous(), "the ABI string `\"C\"`")),
+        }
+        self.consume(&TokenKind::Fn, "`fn` after the ABI string")?;
+        let name = self.take_ident("external function name")?;
+        let link_name = name.clone();
+        self.consume(&TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.at(&TokenKind::RParen) {
+            loop {
+                let param_name = self.take_ident("parameter name")?;
+                let param_span = Span::from(self.previous());
+                self.consume(&TokenKind::Colon, "`:`")?;
+                let ty = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                    span: param_span,
+                });
+                if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RParen, "`)`")?;
+        self.consume(&TokenKind::Arrow, "`->`")?;
+        let return_type = self.parse_type()?;
+        self.consume(
+            &TokenKind::Semicolon,
+            "`;` after external function declaration",
+        )?;
+        Ok(ExternFunction {
+            name,
+            link_name,
+            params,
+            return_type,
+            span: Span::from(&start),
+            is_public,
+            module: self.module.clone(),
+        })
+    }
+
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.take(&TokenKind::LParen) {
             if self.take(&TokenKind::RParen) {

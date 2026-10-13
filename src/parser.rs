@@ -68,6 +68,7 @@ impl Parser {
         let mut structs = Vec::new();
         let mut globals = Vec::new();
         let mut functions = Vec::new();
+        let mut extern_functions = Vec::new();
         let mut modules = Vec::new();
         while !self.at(&TokenKind::Eof) {
             let is_public = self.take(&TokenKind::Pub);
@@ -94,17 +95,20 @@ impl Parser {
             } else if self.at(&TokenKind::Const) || self.at(&TokenKind::Let) {
                 let mutable = self.at(&TokenKind::Let);
                 globals.push(self.parse_global(is_public, mutable)?);
+            } else if self.at(&TokenKind::Extern) {
+                extern_functions.push(self.parse_extern_function(is_public)?);
             } else {
                 if !self.at(&TokenKind::Fn) {
                     return Err(unexpected(
                         self.peek(),
-                        "`fn`, `struct`, `enum`, `const`, `let`, or `mod` declaration",
+                        "`fn`, `extern`, `struct`, `enum`, `const`, `let`, or `mod` declaration",
                     ));
                 }
                 functions.push(self.parse_function(is_public)?);
             }
         }
         if functions.is_empty()
+            && extern_functions.is_empty()
             && enums.is_empty()
             && structs.is_empty()
             && globals.is_empty()
@@ -117,6 +121,7 @@ impl Parser {
             structs,
             globals,
             functions,
+            extern_functions,
             modules,
             source_files: Vec::new(),
             source_texts: Vec::new(),

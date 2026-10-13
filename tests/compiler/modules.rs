@@ -184,6 +184,40 @@ fn public_generic_functions_and_structs_work_across_modules() {
 }
 
 #[test]
+fn public_extern_declarations_resolve_across_modules() {
+    let directory =
+        std::env::temp_dir().join(format!("vacac-module-extern-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let root = directory.join("main.vca");
+    fs::write(
+        &root,
+        "mod native;\nfn main() -> i64 { native::labs(-42) - 42 }\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("native.vca"),
+        "pub extern \"C\" fn labs(value: i64) -> i64;\n",
+    )
+    .unwrap();
+    let executable = directory.join("program");
+    let compile = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .arg(root)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(executable).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn public_globals_work_across_modules_and_private_globals_stay_private() {
     let (directory, compile) = module_project(
         "module-globals",

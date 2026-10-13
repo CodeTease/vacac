@@ -62,6 +62,16 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             declaration.span,
         )?;
     }
+    for declaration in &program.extern_functions {
+        add_symbol(
+            &mut symbols,
+            &declaration.name,
+            &declaration.module,
+            declaration.is_public,
+            "function",
+            declaration.span,
+        )?;
+    }
 
     for declaration in &mut program.enums {
         declaration.name = qualify(&declaration.module, &declaration.name);
@@ -146,6 +156,19 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             &struct_names,
             &enum_names,
         )?;
+    }
+    for function in &mut program.extern_functions {
+        let original_name = function.name.clone();
+        for param in &mut function.params {
+            resolve_type(&mut param.ty, &function.module, param.span, &symbols)?;
+        }
+        resolve_type(
+            &mut function.return_type,
+            &function.module,
+            function.span,
+            &symbols,
+        )?;
+        function.name = qualify(&function.module, &original_name);
     }
     Ok(())
 }

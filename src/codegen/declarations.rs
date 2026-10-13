@@ -401,6 +401,7 @@ impl<'ctx> Codegen<'ctx> {
 
     pub(super) fn declare_functions(&mut self, program: &Program) -> Result<(), String> {
         let mut saw_main = false;
+        let mut c_symbols = std::collections::HashMap::<String, Span>::new();
         for function in &program.functions {
             self.module_context = function.module.clone();
             if matches!(
@@ -470,6 +471,7 @@ impl<'ctx> Codegen<'ctx> {
             let llvm_fn =
                 self.module
                     .add_function(llvm_name, self.llvm_fn_type(&params, ret)?, None);
+            c_symbols.insert(llvm_name.to_owned(), function.span);
             self.functions.insert(function.name.clone(), llvm_fn);
             self.signatures.insert(function.name.clone(), (params, ret));
             if function.name == "main" {
@@ -478,6 +480,70 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 saw_main = true;
             }
+            self.function_visibility.insert(
+                function.name.clone(),
+                (function.module.clone(), function.is_public),
+            );
+        }
+        for function in &program.extern_functions {
+            self.module_context = function.module.clone();
+            if function
+                .params
+                .iter()
+                .any(|param| !matches!(param.ty, Type::I64 | Type::F32 | Type::F64))
+                || !matches!(
+                    function.return_type,
+                    Type::I64 | Type::F32 | Type::F64 | Type::Unit
+                )
+            {
+                return Err(format!(
+                    "line {}:{}: unsupported C ABI type in extern function `{}`",
+                    function.span.line, function.span.column, function.name
+                ));
+            }
+            if let Some(previous) = c_symbols.get(&function.link_name) {
+                return Err(format!(
+                    "line {}:{}: C symbol `{}` conflicts with another LLVM function declared at line {}:{}",
+                    function.span.line,
+                    function.span.column,
+                    function.link_name,
+                    previous.line,
+                    previous.column
+                ));
+            }
+            if self.signatures.contains_key(&function.name) {
+                return Err(format!(
+                    "line {}:{}: function `{}` is defined more than once",
+                    function.span.line, function.span.column, function.name
+                ));
+            }
+            let params = function
+                .params
+                .iter()
+                .map(|param| self.resolve_type(&param.ty, param.span))
+                .collect::<Result<Vec<_>, _>>()?;
+            let ret = self.resolve_type(&function.return_type, function.span)?;
+            if params
+                .iter()
+                .any(|ty| !matches!(ty, ValueType::I64 | ValueType::F32 | ValueType::F64))
+                || !matches!(
+                    ret,
+                    ValueType::I64 | ValueType::F32 | ValueType::F64 | ValueType::Unit
+                )
+            {
+                return Err(format!(
+                    "line {}:{}: unsupported C ABI type in extern function `{}`",
+                    function.span.line, function.span.column, function.name
+                ));
+            }
+            let external = self.module.add_function(
+                &function.link_name,
+                self.llvm_fn_type(&params, ret)?,
+                None,
+            );
+            c_symbols.insert(function.link_name.clone(), function.span);
+            self.functions.insert(function.name.clone(), external);
+            self.signatures.insert(function.name.clone(), (params, ret));
             self.function_visibility.insert(
                 function.name.clone(),
                 (function.module.clone(), function.is_public),

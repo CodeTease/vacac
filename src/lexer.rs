@@ -8,6 +8,7 @@ pub enum TokenKind {
     Float(f64),
     StringLit(String),
     Fn,
+    Extern,
     Mod,
     Pub,
     Enum,
@@ -93,6 +94,7 @@ impl Token {
 fn token_name(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Fn => "fn",
+        TokenKind::Extern => "extern",
         TokenKind::Mod => "mod",
         TokenKind::Pub => "pub",
         TokenKind::Enum => "enum",
@@ -233,6 +235,7 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
             let text = &input[start..i];
             match text {
                 "fn" => TokenKind::Fn,
+                "extern" => TokenKind::Extern,
                 "mod" => TokenKind::Mod,
                 "pub" => TokenKind::Pub,
                 "enum" => TokenKind::Enum,

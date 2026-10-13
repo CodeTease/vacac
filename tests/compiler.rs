@@ -10,6 +10,8 @@ mod common;
 mod enums;
 #[path = "compiler/equality.rs"]
 mod equality;
+#[path = "compiler/ffi.rs"]
+mod ffi;
 #[path = "compiler/floats.rs"]
 mod floats;
 #[path = "compiler/generics.rs"]

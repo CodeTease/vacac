@@ -210,6 +210,117 @@ impl Checker {
                 saw_main = true;
             }
         }
+        let mut c_symbols = std::collections::HashMap::<&str, Span>::new();
+        for function in &program.functions {
+            let symbol = if function.name == "main" {
+                "vaca_main"
+            } else {
+                function.name.as_str()
+            };
+            c_symbols.insert(symbol, function.span);
+        }
+        const RESERVED_LINK_SYMBOLS: &[&str] = &[
+            "print_i64",
+            "print_f32",
+            "print_f64",
+            "print",
+            "println",
+            "read_i64",
+            "printf",
+            "strcmp",
+            "vaca_main",
+            "getchar",
+            "exit",
+            "strlen",
+            "malloc",
+            "vaca_alloc",
+            "memcpy",
+            "vaca_str_concat",
+            "len",
+            "vec_new",
+            "vec_push",
+            "realloc",
+            "vaca_vec_new",
+            "vaca_vec_push",
+            "main",
+        ];
+        for function in &program.extern_functions {
+            self.module_context = function.module.clone();
+            let mut params_seen = std::collections::HashSet::new();
+            for param in &function.params {
+                if !params_seen.insert(param.name.as_str()) {
+                    return Err(at(
+                        param.span,
+                        format!("duplicate parameter `{}`", param.name),
+                    ));
+                }
+            }
+            if RESERVED_LINK_SYMBOLS.contains(&function.link_name.as_str()) {
+                return Err(at(
+                    function.span,
+                    format!(
+                        "C symbol `{}` conflicts with a reserved compiler/runtime symbol",
+                        function.link_name
+                    ),
+                ));
+            }
+            if let Some(previous) = c_symbols.insert(&function.link_name, function.span) {
+                return Err(at(
+                    function.span,
+                    format!(
+                        "C symbol `{}` is declared more than once (previous declaration at line {}:{})",
+                        function.link_name, previous.line, previous.column
+                    ),
+                ));
+            }
+            if function
+                .params
+                .iter()
+                .any(|param| !matches!(param.ty, Type::I64 | Type::F32 | Type::F64))
+            {
+                let param = function
+                    .params
+                    .iter()
+                    .find(|param| !matches!(param.ty, Type::I64 | Type::F32 | Type::F64))
+                    .unwrap();
+                return Err(at(
+                    param.span,
+                    "C extern parameters support only `i64`, `f32`, and `f64`",
+                ));
+            }
+            if !matches!(
+                function.return_type,
+                Type::I64 | Type::F32 | Type::F64 | Type::Unit
+            ) {
+                return Err(at(
+                    function.span,
+                    "C extern return types support only `i64`, `f32`, `f64`, and `unit`",
+                ));
+            }
+            if self.signatures.contains_key(&function.name) {
+                return Err(at(
+                    function.span,
+                    format!("function `{}` is defined more than once", function.name),
+                ));
+            }
+            let params = function
+                .params
+                .iter()
+                .map(|param| self.resolve_type(&param.ty, param.span))
+                .collect::<Result<_, _>>()?;
+            let return_type = self.resolve_type(&function.return_type, function.span)?;
+            self.signatures.insert(
+                function.name.clone(),
+                Signature {
+                    params,
+                    return_type,
+                },
+            );
+            visibility.insert(
+                function.name.clone(),
+                (function.module.clone(), function.is_public),
+            );
+        }
         if !saw_main {
             return Err("program must define the required entry point `fn main() -> i64`".into());
         }

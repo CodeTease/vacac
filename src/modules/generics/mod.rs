@@ -175,6 +175,19 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
             substitutions: Substitution::new(),
         });
     }
+    for function in &program.extern_functions {
+        specializer.signatures.insert(
+            function.name.clone(),
+            (
+                function
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                function.return_type.clone(),
+            ),
+        );
+    }
 
     while let Some(mut pending) = specializer.function_queue.pop_front() {
         specializer.process_function(&mut pending.function, &pending.substitutions)?;

@@ -8,6 +8,7 @@ mod parser;
 mod sema;
 
 use diagnostic::Diagnostic;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -22,6 +23,9 @@ Usage:
 Options:
   -o <path>            Set executable output path (default: a.out)
   --emit-obj <path>    Set object-file output path
+  --link-object <path> Add an object file to the linker (repeatable)
+  --link-search <dir>  Add a native library search directory (repeatable)
+  --link-lib <name>    Link a native library (repeatable; e.g. m)
   --run                Build and run the program without keeping build artifacts
   --check              Type-check and verify without writing build artifacts
   --emit-llvm <path>   Write verified LLVM IR to a file
@@ -45,6 +49,9 @@ struct Options {
     source: PathBuf,
     mode: OutputMode,
     quiet: bool,
+    link_objects: Vec<PathBuf>,
+    link_search: Vec<PathBuf>,
+    link_libs: Vec<OsString>,
 }
 
 enum ParseArgs {
@@ -70,6 +77,9 @@ fn parse_args() -> Result<ParseArgs, String> {
     let mut object = None;
     let mut output_was_set = false;
     let mut object_was_set = false;
+    let mut link_objects = Vec::new();
+    let mut link_search = Vec::new();
+    let mut link_libs = Vec::new();
     let mut mode: Option<OutputMode> = None;
     let mut quiet = false;
     while let Some(arg) = args.next() {
@@ -90,6 +100,19 @@ fn parse_args() -> Result<ParseArgs, String> {
                         .ok_or("--emit-obj requires a path")?,
                 );
                 object_was_set = true;
+            }
+            Some("--link-object") => link_objects.push(
+                args.next()
+                    .map(PathBuf::from)
+                    .ok_or("--link-object requires a path")?,
+            ),
+            Some("--link-search") => link_search.push(
+                args.next()
+                    .map(PathBuf::from)
+                    .ok_or("--link-search requires a directory")?,
+            ),
+            Some("--link-lib") => {
+                link_libs.push(args.next().ok_or("--link-lib requires a library name")?)
             }
             Some("--check") => set_mode(&mut mode, OutputMode::Check)?,
             Some("--run") => set_mode(&mut mode, OutputMode::Run)?,
@@ -112,12 +135,18 @@ fn parse_args() -> Result<ParseArgs, String> {
     }
     let mode = match mode {
         Some(OutputMode::Check) => {
+            if !link_objects.is_empty() || !link_search.is_empty() || !link_libs.is_empty() {
+                return Err("linker inputs cannot be used with --check".into());
+            }
             if output_was_set || object_was_set {
                 return Err("-o and --emit-obj cannot be used with --check".into());
             }
             OutputMode::Check
         }
         Some(OutputMode::EmitLlvm(path)) => {
+            if !link_objects.is_empty() || !link_search.is_empty() || !link_libs.is_empty() {
+                return Err("linker inputs cannot be used with --emit-llvm".into());
+            }
             if output_was_set || object_was_set {
                 return Err("-o and --emit-obj cannot be used with --emit-llvm".into());
             }
@@ -136,6 +165,9 @@ fn parse_args() -> Result<ParseArgs, String> {
         source,
         mode,
         quiet,
+        link_objects,
+        link_search,
+        link_libs,
     }))
 }
 
@@ -172,6 +204,9 @@ fn run() -> Result<i32, Diagnostic> {
         source: source_path,
         mode,
         quiet,
+        link_objects,
+        link_search,
+        link_libs,
         ..
     } = options;
     let mut program = modules::load(&source_path)?;
@@ -225,7 +260,7 @@ fn run() -> Result<i32, Diagnostic> {
                     &e,
                 )
             })?;
-            let status = link_object(&object, &output)?;
+            let status = link_object(&object, &output, &link_objects, &link_search, &link_libs)?;
             if !status.success() {
                 return Err(Diagnostic::new(format!(
                     "linker exited with status {status}"
@@ -247,7 +282,13 @@ fn run() -> Result<i32, Diagnostic> {
                     &e,
                 )
             })?;
-            let status = link_object(&object, &executable)?;
+            let status = link_object(
+                &object,
+                &executable,
+                &link_objects,
+                &link_search,
+                &link_libs,
+            )?;
             if !status.success() {
                 return Err(Diagnostic::new(format!(
                     "linker exited with status {status}"
@@ -262,11 +303,24 @@ fn run() -> Result<i32, Diagnostic> {
     Ok(0)
 }
 
-fn link_object(object: &Path, output: &Path) -> Result<std::process::ExitStatus, Diagnostic> {
-    Command::new("cc")
-        .arg(object)
-        .arg("-o")
-        .arg(output)
+fn link_object(
+    object: &Path,
+    output: &Path,
+    link_objects: &[PathBuf],
+    link_search: &[PathBuf],
+    link_libs: &[OsString],
+) -> Result<std::process::ExitStatus, Diagnostic> {
+    let mut command = Command::new("cc");
+    command.arg(object).args(link_objects).arg("-o").arg(output);
+    for path in link_search {
+        command.arg("-L").arg(path);
+    }
+    for library in link_libs {
+        let mut argument = OsString::from("-l");
+        argument.push(library);
+        command.arg(argument);
+    }
+    command
         .arg("-lm")
         .status()
         .map_err(|e| Diagnostic::new(format!("failed to run cc: {e}")))

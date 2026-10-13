@@ -17,6 +17,7 @@ pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
             structs: Vec::new(),
             globals: Vec::new(),
             functions: Vec::new(),
+            extern_functions: Vec::new(),
             modules: Vec::new(),
             source_files: Vec::new(),
             source_texts: Vec::new(),
@@ -74,6 +75,9 @@ impl Loader {
         self.program.structs.append(&mut parsed.structs);
         self.program.globals.append(&mut parsed.globals);
         self.program.functions.append(&mut parsed.functions);
+        self.program
+            .extern_functions
+            .append(&mut parsed.extern_functions);
         for declaration in declarations {
             if declaration.name == "" || declaration.name.contains("::") {
                 return Err(Diagnostic::at(

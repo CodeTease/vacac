@@ -42,6 +42,7 @@ pub struct Program {
     pub structs: Vec<StructDecl>,
     pub globals: Vec<GlobalDecl>,
     pub functions: Vec<Function>,
+    pub extern_functions: Vec<ExternFunction>,
     pub modules: Vec<ModuleDecl>,
     pub source_files: Vec<String>,
     pub source_texts: Vec<String>,
@@ -105,6 +106,19 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Block,
+    pub span: Span,
+    pub is_public: bool,
+    pub module: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFunction {
+    /// Vaca-visible name, qualified during module name resolution.
+    pub name: String,
+    /// C linker symbol, retained as written in the source declaration.
+    pub link_name: String,
+    pub params: Vec<Param>,
+    pub return_type: Type,
     pub span: Span,
     pub is_public: bool,
     pub module: String,
