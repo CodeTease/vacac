@@ -10,7 +10,7 @@
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [ ] Manual pointer and reference types (for example, `&T` and `*mut T`).
-* [ ] External C FFI declarations and calls.
+* [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [ ] Interfaces / traits / protocols.
 * [ ] Object-oriented features such as methods, classes, inheritance, and polymorphism.
 * [ ] Macros and compile-time metaprogramming.

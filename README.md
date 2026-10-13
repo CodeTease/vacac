@@ -88,6 +88,8 @@ Some examples to explore:
   in a range loop.
 - [`read_number.vca`](examples/read_number.vca) — read and classify an integer
   from standard input.
+- [`c_ffi.vca`](examples/c_ffi.vca) — call the C standard library's `labs()`
+  through a scalar `extern "C"` declaration.
 - [`array_stats.vca`](examples/array_stats.vca) — iterate over a fixed-size
   array.
 - [`array_iteration.vca`](examples/array_iteration.vca) — use read-only array

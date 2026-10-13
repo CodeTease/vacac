@@ -1,0 +1,18 @@
+// Call the C standard library's labs() function through Vaca's scalar FFI.
+extern "C" fn labs(value: i64) -> i64;
+
+fn main() -> i64 {
+    let value: i64 = -42;
+    let magnitude: i64 = labs(value);
+
+    print("labs(");
+    print_i64(value);
+    print(") = ");
+    print_i64(magnitude);
+
+    if magnitude == 42 {
+        0
+    } else {
+        1
+    }
+}
