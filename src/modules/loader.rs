@@ -22,6 +22,7 @@ pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
             source_files: Vec::new(),
             source_texts: Vec::new(),
             functions_are_qualified: false,
+            lambda_captures: HashMap::new(),
         },
     };
     loader.visit(&root, String::new())?;

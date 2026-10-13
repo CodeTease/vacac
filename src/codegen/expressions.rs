@@ -65,10 +65,16 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     let (params, result) = self.signatures[&function_name].clone();
                     let ty = self.function_type(params, result);
-                    return Ok(TypedValue {
-                        value: Some(function.as_global_value().as_pointer_value().into()),
+                    let adapter = self
+                        .function_adapters
+                        .get(&function_name)
+                        .copied()
+                        .unwrap_or(function);
+                    return self.make_closure(
+                        adapter.as_global_value().as_pointer_value(),
+                        self.context.ptr_type(AddressSpace::default()).const_null(),
                         ty,
-                    });
+                    );
                 }
                 let global_name = self.resolve_global_name(name).ok_or_else(|| {
                     format!(
@@ -354,9 +360,28 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|param| self.resolve_type(&param.ty, param.span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.resolve_type(&synthetic.return_type, synthetic.span)?;
+                let capture_names = self
+                    .lambda_captures
+                    .get(&(span.file, span.line, span.column))
+                    .cloned()
+                    .unwrap_or_default();
+                let mut captures = Vec::with_capacity(capture_names.len());
+                for capture_name in capture_names {
+                    let local = self.lookup_local(&capture_name).ok_or_else(|| {
+                        format!("internal error: captured local `{capture_name}` is unavailable")
+                    })?;
+                    captures.push((capture_name, local.ty, local.pointer));
+                }
+                self.lambda_capture_types.insert(
+                    name.clone(),
+                    captures
+                        .iter()
+                        .map(|(capture, ty, _)| (capture.clone(), *ty))
+                        .collect(),
+                );
                 let llvm_function = self.module.add_function(
                     &name,
-                    self.llvm_fn_type(&params, ret)?,
+                    self.closure_function_type(&params, ret)?,
                     Some(Linkage::Internal),
                 );
                 self.functions.insert(name.clone(), llvm_function);
@@ -382,10 +407,68 @@ impl<'ctx> Codegen<'ctx> {
                 lambda_result?;
 
                 let function_type = self.function_type(params, ret);
-                Ok(TypedValue {
-                    value: Some(llvm_function.as_global_value().as_pointer_value().into()),
-                    ty: function_type,
-                })
+                let environment = if captures.is_empty() {
+                    self.context.ptr_type(AddressSpace::default()).const_null()
+                } else {
+                    let capture_layout = captures
+                        .iter()
+                        .map(|(capture, ty, _)| (capture.clone(), *ty))
+                        .collect::<Vec<_>>();
+                    let environment_type = self.closure_environment_type(&capture_layout)?;
+                    let allocator = self
+                        .module
+                        .get_function("vaca_alloc")
+                        .ok_or("missing allocator runtime function")?;
+                    let size = environment_type
+                        .size_of()
+                        .ok_or("closure environment has no size")?;
+                    let environment = self
+                        .builder
+                        .build_call(
+                            allocator,
+                            &[
+                                self.context
+                                    .ptr_type(AddressSpace::default())
+                                    .const_null()
+                                    .into(),
+                                size.into(),
+                            ],
+                            "closure.environment",
+                        )
+                        .map_err(|error| error.to_string())?
+                        .try_as_basic_value()
+                        .basic()
+                        .ok_or("closure allocator returned void")?
+                        .into_pointer_value();
+                    for (index, (_, ty, source)) in captures.iter().enumerate() {
+                        let field = self
+                            .builder
+                            .build_struct_gep(
+                                environment_type,
+                                environment,
+                                index as u32,
+                                "closure.capture.ptr",
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let value = self
+                            .builder
+                            .build_load(
+                                self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
+                                *source,
+                                "closure.capture",
+                            )
+                            .map_err(|error| error.to_string())?;
+                        self.builder
+                            .build_store(field, value)
+                            .map_err(|error| error.to_string())?;
+                    }
+                    environment
+                };
+                self.make_closure(
+                    llvm_function.as_global_value().as_pointer_value(),
+                    environment,
+                    function_type,
+                )
             }
             Expr::If {
                 condition,

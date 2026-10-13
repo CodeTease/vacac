@@ -363,10 +363,23 @@ impl Checker {
         {
             Err(at(
                 span,
-                format!("lambda captures are not supported (`{name}` is captured)"),
+                format!("cannot assign to captured binding `{name}`"),
             ))
         } else {
             Ok(())
+        }
+    }
+
+    pub(super) fn record_lambda_capture(&mut self, name: &str, scope_index: usize) {
+        for (boundary, captures) in self
+            .lambda_scope_boundaries
+            .iter()
+            .copied()
+            .zip(self.lambda_capture_scopes.iter_mut())
+        {
+            if scope_index < boundary && !captures.iter().any(|capture| capture == name) {
+                captures.push(name.to_owned());
+            }
         }
     }
 

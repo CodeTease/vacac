@@ -64,16 +64,114 @@ fn nested_lambdas_are_non_capturing_and_have_unique_functions() {
 }
 
 #[test]
-fn lambdas_reject_lexical_captures() {
-    assert_compile_error(
-        "fn main() -> i64 { let captured = 1; let f = fn(value: i64) -> i64 { value + captured }; f(0) }",
-        "function-values-capture-rejected",
-        "lambda captures are not supported (`captured` is captured)",
+fn returned_closures_keep_by_value_captures_alive() {
+    let result = compile_and_run(
+        r#"
+        fn make(value: i64) -> fn() -> i64 {
+            let captured = value;
+            let closure: fn() -> i64 = fn() -> i64 { captured };
+            captured = 0;
+            closure
+        }
+
+        fn main() -> i64 {
+            let first = make(40);
+            let copy = first;
+            let second = make(40);
+            if first == copy && first != second { first() - 40 } else { 1 }
+        }
+        "#,
+        "function-values-captured-closure",
     );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn mutable_locals_are_captured_as_creation_time_snapshots() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let value = 40;
+            let closure: fn() -> i64 = fn() -> i64 { value };
+            value = 2;
+            closure() - 40
+        }
+        "#,
+        "function-values-capture-snapshot",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn lambda_parameters_and_locals_shadow_capture_candidates() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let value = 40;
+            let parameter_shadow: fn(i64) -> i64 = fn(value: i64) -> i64 { value + 1 };
+            let local_shadow: fn() -> i64 = fn() -> i64 {
+                let value = 2;
+                value
+            };
+            parameter_shadow(40) + local_shadow() - 43
+        }
+        "#,
+        "function-values-capture-shadowing",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn nested_returned_closures_propagate_captures() {
+    let result = compile_and_run(
+        r#"
+        fn make(value: i64) -> fn() -> fn() -> i64 {
+            fn() -> fn() -> i64 {
+                fn() -> i64 { value }
+            }
+        }
+
+        fn main() -> i64 {
+            let outer = make(42);
+            let inner = outer();
+            inner() - 42
+        }
+        "#,
+        "function-values-nested-capture",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn captured_closures_can_be_stored_in_aggregates() {
+    let result = compile_and_run(
+        r#"
+        struct Handler { call: fn(i64) -> i64 }
+
+        fn main() -> i64 {
+            let amount = 2;
+            let handler = Handler {
+                call: fn(value: i64) -> i64 { value + amount },
+            };
+            handler.call(40) - 42
+        }
+        "#,
+        "function-values-captured-closure-aggregate",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn captured_bindings_cannot_be_assigned_in_a_closure() {
     assert_compile_error(
         "fn main() -> i64 { let captured = 1; let f = fn() -> i64 { captured = 2; 0 }; f() }",
         "function-values-capture-assignment-rejected",
-        "lambda captures are not supported (`captured` is captured)",
+        "cannot assign to captured binding `captured`",
+    );
+    assert_compile_error(
+        "struct Item { value: i64 } fn main() -> i64 { let item = Item { value: 1 }; let f = fn() -> i64 { item.value = 2; 0 }; f() }",
+        "function-values-capture-field-assignment-rejected",
+        "cannot assign to captured binding `item`",
     );
 }
 
@@ -119,4 +217,20 @@ fn function_values_support_unit_returns_and_pointer_equality() {
         "function-values-unit-and-equality",
     );
     assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn builtin_functions_use_the_closure_abi_when_used_as_values() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let printer: fn(i64) -> unit = print_i64;
+            printer(42);
+            0
+        }
+        "#,
+        "function-values-builtin-adapter",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(result.stdout, b"42\n");
 }

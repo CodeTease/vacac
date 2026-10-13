@@ -113,23 +113,49 @@ impl<'ctx> Codegen<'ctx> {
                     "vec.eq",
                 )
                 .map_err(|e| e.to_string()),
-            ValueType::Function(_) => self
-                .builder
-                .build_int_compare(
-                    IntPredicate::EQ,
-                    self.builder
-                        .build_ptr_to_int(left.into_pointer_value(), self.i64_type(), "fn.eq.left")
-                        .map_err(|error| error.to_string())?,
-                    self.builder
-                        .build_ptr_to_int(
-                            right.into_pointer_value(),
-                            self.i64_type(),
-                            "fn.eq.right",
+            ValueType::Function(_) => {
+                let left = left.into_struct_value();
+                let right = right.into_struct_value();
+                let mut equal = self.bool_type().const_int(1, false);
+                for index in 0..2 {
+                    let left_field = self
+                        .builder
+                        .build_extract_value(left, index, "closure.eq.left")
+                        .map_err(|error| error.to_string())?
+                        .into_pointer_value();
+                    let right_field = self
+                        .builder
+                        .build_extract_value(right, index, "closure.eq.right")
+                        .map_err(|error| error.to_string())?
+                        .into_pointer_value();
+                    let field_equal = self
+                        .builder
+                        .build_int_compare(
+                            IntPredicate::EQ,
+                            self.builder
+                                .build_ptr_to_int(
+                                    left_field,
+                                    self.i64_type(),
+                                    "closure.eq.left.int",
+                                )
+                                .map_err(|error| error.to_string())?,
+                            self.builder
+                                .build_ptr_to_int(
+                                    right_field,
+                                    self.i64_type(),
+                                    "closure.eq.right.int",
+                                )
+                                .map_err(|error| error.to_string())?,
+                            "closure.eq.field",
                         )
-                        .map_err(|error| error.to_string())?,
-                    "fn.eq",
-                )
-                .map_err(|error| error.to_string()),
+                        .map_err(|error| error.to_string())?;
+                    equal = self
+                        .builder
+                        .build_and(equal, field_equal, "closure.eq")
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(equal)
+            }
             ValueType::Struct(struct_id) => {
                 let fields = self.structs[struct_id].fields.clone();
                 let mut equal = self.bool_type().const_int(1, false);

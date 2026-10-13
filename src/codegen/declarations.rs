@@ -3,6 +3,7 @@ use super::*;
 impl<'ctx> Codegen<'ctx> {
     pub(super) fn for_program(context: &'ctx Context, program: &Program) -> Result<Self, String> {
         let mut codegen = Self::new(context, "vaca");
+        codegen.lambda_captures = program.lambda_captures.clone();
         codegen.declare_enums(program)?;
         codegen.declare_structs(program)?;
         codegen.define_enums()?;
@@ -13,6 +14,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.emit_allocator_builtin()?;
         codegen.emit_string_concat_builtin()?;
         codegen.emit_vector_runtime()?;
+        codegen.emit_function_adapters()?;
         codegen.define_globals(program)?;
         for function in &program.functions {
             codegen.module_context = function.module.clone();
@@ -63,6 +65,9 @@ impl<'ctx> Codegen<'ctx> {
             global_constant_values: HashMap::new(),
             global_states: HashMap::new(),
             next_lambda_id: 0,
+            lambda_captures: HashMap::new(),
+            lambda_capture_types: HashMap::new(),
+            function_adapters: HashMap::new(),
         }
     }
 
@@ -81,7 +86,17 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::F64 => Some(self.context.f64_type().into()),
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
-            ValueType::Function(_) => Some(self.context.ptr_type(AddressSpace::default()).into()),
+            ValueType::Function(_) => Some(
+                self.context
+                    .struct_type(
+                        &[
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                            self.context.ptr_type(AddressSpace::default()).into(),
+                        ],
+                        false,
+                    )
+                    .into(),
+            ),
             ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
             ValueType::Tuple(index) => {
                 let elements = self.tuple_shapes[index].clone();
@@ -278,7 +293,118 @@ impl<'ctx> Codegen<'ctx> {
         function_id: usize,
     ) -> Result<FunctionType<'ctx>, String> {
         let shape = &self.function_shapes[function_id];
-        self.llvm_fn_type(&shape.params, shape.return_type)
+        self.closure_function_type(&shape.params, shape.return_type)
+    }
+
+    pub(super) fn closure_function_type(
+        &self,
+        params: &[ValueType],
+        ret: ValueType,
+    ) -> Result<FunctionType<'ctx>, String> {
+        let mut closure_params = vec![self.context.ptr_type(AddressSpace::default()).into()];
+        for ty in params {
+            closure_params.push(
+                self.llvm_type(*ty)
+                    .ok_or("unit is not a valid parameter type")?
+                    .into(),
+            );
+        }
+        match self.llvm_type(ret) {
+            Some(ret) => Ok(ret.fn_type(&closure_params, false)),
+            None => Ok(self.context.void_type().fn_type(&closure_params, false)),
+        }
+    }
+
+    fn emit_function_adapters(&mut self) -> Result<(), String> {
+        let functions = self
+            .functions
+            .iter()
+            .filter(|(name, _)| {
+                !name.starts_with("vaca.lambda.") && !name.starts_with("vaca.adapter.")
+            })
+            .map(|(name, function)| (name.clone(), *function, self.signatures[name].clone()))
+            .collect::<Vec<_>>();
+        for (index, (name, target, (params, ret))) in functions.into_iter().enumerate() {
+            let adapter_name = format!("vaca.adapter.{index}");
+            let adapter = self.module.add_function(
+                &adapter_name,
+                self.closure_function_type(&params, ret)?,
+                Some(Linkage::Internal),
+            );
+            let entry = self.context.append_basic_block(adapter, "entry");
+            let builder = &self.builder;
+            builder.position_at_end(entry);
+            let mut arguments = Vec::with_capacity(params.len());
+            for (param_index, _) in params.iter().enumerate() {
+                arguments.push(
+                    adapter
+                        .get_nth_param(param_index as u32 + 1)
+                        .ok_or("adapter parameter missing")?
+                        .into(),
+                );
+            }
+            let _environment = adapter
+                .get_nth_param(0)
+                .ok_or("adapter environment parameter missing")?
+                .into_pointer_value();
+            let call = builder
+                .build_call(target, &arguments, "adapter.call")
+                .map_err(|error| error.to_string())?;
+            let value = call.try_as_basic_value().basic();
+            if ret == ValueType::Unit {
+                builder
+                    .build_return(None)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                builder
+                    .build_return(Some(&value.ok_or("adapter call returned void")?))
+                    .map_err(|error| error.to_string())?;
+            }
+            self.function_adapters.insert(name, adapter);
+        }
+        Ok(())
+    }
+
+    pub(super) fn closure_environment_type(
+        &self,
+        captures: &[(String, ValueType)],
+    ) -> Result<StructType<'ctx>, String> {
+        let fields = captures
+            .iter()
+            .map(|(_, ty)| self.llvm_type(*ty).ok_or("capture has no LLVM type"))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.context.struct_type(&fields, false))
+    }
+
+    pub(super) fn make_closure(
+        &mut self,
+        code: PointerValue<'ctx>,
+        environment: PointerValue<'ctx>,
+        function_type: ValueType,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let ValueType::Function(_) = function_type else {
+            return Err("internal error: closure requires a function type".into());
+        };
+        let mut result = self
+            .llvm_type(function_type)
+            .ok_or("function has no LLVM type")?
+            .into_struct_type()
+            .const_zero()
+            .as_basic_value_enum();
+        result = self
+            .builder
+            .build_insert_value(result.into_struct_value(), code, 0, "closure.code")
+            .map_err(|error| error.to_string())?
+            .as_basic_value_enum();
+        result = self
+            .builder
+            .build_insert_value(result.into_struct_value(), environment, 1, "closure.env")
+            .map_err(|error| error.to_string())?
+            .as_basic_value_enum();
+        Ok(TypedValue {
+            value: Some(result),
+            ty: function_type,
+        })
     }
 
     pub(super) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {

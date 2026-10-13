@@ -23,7 +23,22 @@ impl<'ctx> Codegen<'ctx> {
                 args.len()
             ));
         }
-        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len());
+        let closure = callee
+            .value
+            .ok_or("function value has no closure")?
+            .into_struct_value();
+        let code_pointer = self
+            .builder
+            .build_extract_value(closure, 0, "closure.code")
+            .map_err(|error| error.to_string())?
+            .into_pointer_value();
+        let environment = self
+            .builder
+            .build_extract_value(closure, 1, "closure.environment")
+            .map_err(|error| error.to_string())?
+            .into_pointer_value();
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len() + 1);
+        values.push(environment.into());
         for (index, (arg, expected)) in args.iter().zip(shape.params.iter()).enumerate() {
             let value = self.emit_expression_expected(arg, *expected)?;
             if value.ty != *expected {
@@ -38,15 +53,11 @@ impl<'ctx> Codegen<'ctx> {
             }
             values.push(value.value.ok_or("call argument has no value")?.into());
         }
-        let pointer = callee
-            .value
-            .ok_or("function value has no pointer")?
-            .into_pointer_value();
         let result = self
             .builder
             .build_indirect_call(
                 self.llvm_function_type(function_id)?,
-                pointer,
+                code_pointer,
                 &values,
                 "call.indirect",
             )

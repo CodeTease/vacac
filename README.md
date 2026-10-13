@@ -163,7 +163,7 @@ let larger = if left > right { left } else { right };
 
 Both branches must end with a value expression of the same non-`unit` type. Branches may contain local bindings or expression statements before their final value.
 
-## Function values and non-capturing lambdas
+## Function values and closures
 
 Functions can be used as values and called indirectly. Function types use
 `fn(parameter_types...) -> result_type`; lambdas use the same fully annotated
@@ -184,13 +184,30 @@ fn main() -> i64 {
 ```
 
 Function values may be passed to and returned from functions, stored in local
-bindings, and used as struct or tuple fields. Lambdas cannot capture local
-variables; attempted captures are rejected with a diagnostic. Module functions
-used as values obey the same `pub` visibility rules as direct calls. A function
-value cannot itself be a direct fixed-array or vector element;
-aggregate values (such as a struct or tuple) may contain function fields.
-Global function-value initializers are not supported. Capturing closures are
-planned separately because they need explicit environment and lifetime semantics.
+bindings, and used as struct or tuple fields. Lambdas may capture local bindings;
+each captured value is copied when the closure is created into a heap-backed
+environment retained until process exit. Captures are snapshots, not shared
+mutable cells, and a closure cannot assign to a captured binding. This allows a
+returned closure to outlive the scope that created it:
+
+```vaca
+fn make_adder(amount: i64) -> fn(i64) -> i64 {
+    fn(value: i64) -> i64 { value + amount }
+}
+
+fn main() -> i64 {
+    let add_two = make_adder(2);
+    add_two(40) - 42
+}
+```
+
+Function values compare equal when both their code and environment pointers
+match; separately created closures therefore need not compare equal even when
+they capture identical values. Module functions used as values obey the same
+`pub` visibility rules as direct calls. A function value cannot itself be a
+direct fixed-array or vector element; aggregate values (such as a struct or
+tuple) may contain function fields. Global function-value initializers are not
+supported.
 
 ## Scalar matching and value-producing loops
 

@@ -1,6 +1,6 @@
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind, unexpected};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub use crate::ast::*;
 
@@ -126,6 +126,7 @@ impl Parser {
             source_files: Vec::new(),
             source_texts: Vec::new(),
             functions_are_qualified: false,
+            lambda_captures: HashMap::new(),
         })
     }
 

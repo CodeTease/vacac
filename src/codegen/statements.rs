@@ -15,9 +15,59 @@ impl<'ctx> Codegen<'ctx> {
         self.loop_targets.clear();
         self.scopes.push(HashMap::new());
 
+        let is_lambda = function.name.starts_with("vaca.lambda.");
+        let captures = self
+            .lambda_capture_types
+            .get(&function.name)
+            .cloned()
+            .unwrap_or_default();
+        let mut parameter_offset = 0;
+        if is_lambda {
+            let environment = function_value
+                .get_nth_param(0)
+                .ok_or("internal error: lambda is missing its environment parameter")?
+                .into_pointer_value();
+            if !captures.is_empty() {
+                let environment_type = self.closure_environment_type(&captures)?;
+                for (index, (name, ty)) in captures.iter().enumerate() {
+                    let field = self
+                        .builder
+                        .build_struct_gep(
+                            environment_type,
+                            environment,
+                            index as u32,
+                            "capture.ptr",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let value = self
+                        .builder
+                        .build_load(
+                            self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
+                            field,
+                            name,
+                        )
+                        .map_err(|error| error.to_string())?;
+                    let alloca = self.create_entry_alloca(*ty, name)?;
+                    self.builder
+                        .build_store(alloca, value)
+                        .map_err(|error| error.to_string())?;
+                    self.scopes[0].insert(
+                        name.clone(),
+                        Local {
+                            pointer: alloca,
+                            ty: *ty,
+                            immutable: true,
+                            loop_variable: false,
+                        },
+                    );
+                }
+            }
+            parameter_offset = 1;
+        }
+
         for (index, param) in function.params.iter().enumerate() {
             let param_value = function_value
-                .get_nth_param(index as u32)
+                .get_nth_param(index as u32 + parameter_offset)
                 .ok_or("internal error: missing LLVM parameter")?;
             param_value.set_name(&param.name);
             let ty: ValueType = self.resolve_type(&param.ty, param.span)?;

@@ -64,6 +64,8 @@ struct Checker {
     function_shapes: Vec<FunctionShape>,
     function_shape_ids: HashMap<FunctionShape, usize>,
     lambda_scope_boundaries: Vec<usize>,
+    lambda_capture_scopes: Vec<Vec<String>>,
+    lambda_captures: HashMap<(Option<usize>, usize, usize), Vec<String>>,
     module_context: String,
     function_visibility: HashMap<String, (String, bool)>,
     global_declarations: HashMap<String, GlobalDecl>,
@@ -97,6 +99,8 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         function_shapes: Vec::new(),
         function_shape_ids: HashMap::new(),
         lambda_scope_boundaries: Vec::new(),
+        lambda_capture_scopes: Vec::new(),
+        lambda_captures: HashMap::new(),
         module_context: String::new(),
         function_visibility: HashMap::new(),
         global_declarations: HashMap::new(),
@@ -117,6 +121,7 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         checker.module_context = function.module.clone();
         checker.check_function(function)?;
     }
+    program.lambda_captures = checker.lambda_captures;
     Ok(())
 }
 

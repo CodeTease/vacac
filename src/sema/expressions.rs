@@ -279,16 +279,7 @@ impl Checker {
             }
             Expr::Variable(name, span) => {
                 if let Some((scope_index, ty)) = self.lookup_local_with_scope(name) {
-                    if self
-                        .lambda_scope_boundaries
-                        .last()
-                        .is_some_and(|boundary| scope_index < *boundary)
-                    {
-                        return Err(at(
-                            *span,
-                            format!("lambda captures are not supported (`{name}` is captured)"),
-                        ));
-                    }
+                    self.record_lambda_capture(name, scope_index);
                     Ok(ty)
                 } else if let Some(global) = self.find_global_name(name) {
                     let declaration = self.global_declarations[&global].clone();
@@ -623,6 +614,7 @@ impl Checker {
                 let return_type = self.resolve_type(return_type, *span)?;
                 let boundary = self.scopes.len();
                 self.lambda_scope_boundaries.push(boundary);
+                self.lambda_capture_scopes.push(Vec::new());
                 self.scopes.push(HashMap::new());
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
@@ -642,6 +634,9 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.lambda_scope_boundaries.pop();
+                let captures = self.lambda_capture_scopes.pop().unwrap_or_default();
+                self.lambda_captures
+                    .insert((span.file, span.line, span.column), captures);
                 let returns = checked?;
                 if return_type != ValueType::Unit && !returns {
                     return Err(at(

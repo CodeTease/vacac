@@ -48,6 +48,8 @@ pub struct Program {
     pub source_files: Vec<String>,
     pub source_texts: Vec<String>,
     pub functions_are_qualified: bool,
+    /// Local bindings copied into each lambda's heap-backed closure environment.
+    pub lambda_captures: std::collections::HashMap<(Option<usize>, usize, usize), Vec<String>>,
 }
 
 #[derive(Debug, Clone)]

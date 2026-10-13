@@ -108,6 +108,9 @@ struct Codegen<'ctx> {
     global_constant_values: HashMap<String, ConstantValue>,
     global_states: HashMap<String, u8>,
     next_lambda_id: usize,
+    lambda_captures: HashMap<(Option<usize>, usize, usize), Vec<String>>,
+    lambda_capture_types: HashMap<String, Vec<(String, ValueType)>>,
+    function_adapters: HashMap<String, FunctionValue<'ctx>>,
 }
 
 pub fn emit_object(program: &Program, path: &Path) -> Result<(), String> {

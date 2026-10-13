@@ -1,4 +1,4 @@
-// Function values support named functions, non-capturing lambdas, and indirect calls.
+// Function values support named functions, capturing lambdas, and indirect calls.
 fn apply(operation: fn(i64) -> i64, value: i64) -> i64 {
     operation(value)
 }
@@ -7,11 +7,16 @@ fn double(value: i64) -> i64 {
     value * 2
 }
 
+fn make_adder(amount: i64) -> fn(i64) -> i64 {
+    fn(value: i64) -> i64 { value + amount }
+}
+
 fn main() -> i64 {
     let increment: fn(i64) -> i64 = fn(value: i64) -> i64 { value + 1 };
     let doubler: fn(i64) -> i64 = double;
+    let add_two = make_adder(2);
 
-    let answer = apply(increment, 40) + apply(doubler, 1);
+    let answer = apply(increment, 40) + apply(doubler, 1) + add_two(0) - 2;
     print("Function values computed: ");
     print_i64(answer);
 
