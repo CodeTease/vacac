@@ -111,6 +111,7 @@ impl Checker {
                 Ok(false)
             }
             Stmt::Assign { name, value, span } => {
+                self.reject_lambda_capture(name, *span)?;
                 let binding_type = if let Some(ty) = self.lookup_local(name) {
                     ty
                 } else if let Some(global) = self.find_global_name(name) {
@@ -156,6 +157,7 @@ impl Checker {
             } => {
                 let root = assignment_root(target)
                     .ok_or_else(|| at(*span, "assignment target must start with a variable"))?;
+                self.reject_lambda_capture(root, *span)?;
                 let binding_type = if let Some(ty) = self.lookup_local(root) {
                     ty
                 } else if let Some(global) = self.find_global_name(root) {

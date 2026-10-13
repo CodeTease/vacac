@@ -7,6 +7,7 @@ pub enum Type {
     Str,
     Unit,
     Tuple(Vec<Type>),
+    Function(Vec<Type>, Box<Type>),
     Array(Box<Type>, u32),
     Vector(Box<Type>),
     Named(String),
@@ -232,6 +233,17 @@ pub enum Expr {
         name: String,
         type_arguments: Vec<Type>,
         args: Vec<Expr>,
+        span: Span,
+    },
+    CallValue {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    Lambda {
+        params: Vec<Param>,
+        return_type: Type,
+        body: Box<Block>,
         span: Span,
     },
     If {

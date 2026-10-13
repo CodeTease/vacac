@@ -469,6 +469,12 @@ impl Checker {
                 }
                 let global = self.find_global_name(name);
                 let Some(global) = global else {
+                    if self.find_function_name(name).is_some() {
+                        return Err(at(
+                            *span,
+                            "global initializers must be compile-time constant expressions",
+                        ));
+                    }
                     return Err(at(*span, format!("undefined variable `{name}`")));
                 };
                 if self.global_declarations[&global].mutable {
@@ -506,7 +512,7 @@ impl Checker {
                 self.check_constant_initializer(array)?;
                 self.check_constant_initializer(index)?;
             }
-            Expr::Call { span, .. } => {
+            Expr::Call { span, .. } | Expr::CallValue { span, .. } | Expr::Lambda { span, .. } => {
                 return Err(at(
                     *span,
                     "global initializers must be compile-time constant expressions",
@@ -532,6 +538,21 @@ impl Checker {
                 format!("{}::{name}", self.module_context)
             };
             self.global_declarations
+                .contains_key(&qualified)
+                .then_some(qualified)
+        }
+    }
+
+    pub(super) fn find_function_name(&self, name: &str) -> Option<String> {
+        if self.signatures.contains_key(name) {
+            Some(name.to_owned())
+        } else {
+            let qualified = if self.module_context.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{}::{name}", self.module_context)
+            };
+            self.signatures
                 .contains_key(&qualified)
                 .then_some(qualified)
         }

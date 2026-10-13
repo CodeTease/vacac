@@ -6,7 +6,8 @@
 * [x] Scalar `f32` / `f64` support, including suffixed literals, arithmetic, comparisons, functions, and printing.
 * [x] Floating-point values in arrays, vectors, structs, enums, and match patterns.
 * [x] User-defined generics / parametric polymorphism for functions and structs (monomorphized functions and structs; inferred arguments and full explicit turbofish arguments, without trait bounds or generic enums).
-* [ ] Closures, lambda expressions, and first-class function values.
+* [x] Non-capturing lambdas and first-class function values (locals, parameters, returns, indirect calls, and function types).
+* [ ] Capturing closures / environments; function values in fixed arrays and vectors.
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [ ] Manual pointer and reference types (for example, `&T` and `*mut T`).

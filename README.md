@@ -163,6 +163,35 @@ let larger = if left > right { left } else { right };
 
 Both branches must end with a value expression of the same non-`unit` type. Branches may contain local bindings or expression statements before their final value.
 
+## Function values and non-capturing lambdas
+
+Functions can be used as values and called indirectly. Function types use
+`fn(parameter_types...) -> result_type`; lambdas use the same fully annotated
+signature before their body:
+
+```vaca
+fn apply(function: fn(i64) -> i64, value: i64) -> i64 {
+    function(value)
+}
+
+fn increment(value: i64) -> i64 { value + 1 }
+
+fn main() -> i64 {
+    let named: fn(i64) -> i64 = increment;
+    let doubled: fn(i64) -> i64 = fn(value: i64) -> i64 { value * 2 };
+    apply(named, doubled(21)) - 43
+}
+```
+
+Function values may be passed to and returned from functions, stored in local
+bindings, and used as struct or tuple fields. Lambdas cannot capture local
+variables; attempted captures are rejected with a diagnostic. Module functions
+used as values obey the same `pub` visibility rules as direct calls. A function
+value cannot itself be a direct fixed-array or vector element;
+aggregate values (such as a struct or tuple) may contain function fields.
+Global function-value initializers are not supported. Capturing closures are
+planned separately because they need explicit environment and lifetime semantics.
+
 ## Scalar matching and value-producing loops
 
 `match` also accepts `bool` and `i64` values. Boolean matches must cover both

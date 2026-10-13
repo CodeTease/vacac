@@ -18,6 +18,13 @@ enum ValueType {
     Struct(usize),
     Tuple(usize),
     Vector(usize),
+    Function(usize),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct FunctionShape {
+    params: Vec<ValueType>,
+    return_type: ValueType,
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +61,9 @@ struct Checker {
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
     vector_shapes: Vec<VectorShape>,
     vector_shape_ids: HashMap<ArrayElementType, usize>,
+    function_shapes: Vec<FunctionShape>,
+    function_shape_ids: HashMap<FunctionShape, usize>,
+    lambda_scope_boundaries: Vec<usize>,
     module_context: String,
     function_visibility: HashMap<String, (String, bool)>,
     global_declarations: HashMap<String, GlobalDecl>,
@@ -84,6 +94,9 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         array_shape_ids: HashMap::new(),
         vector_shapes: Vec::new(),
         vector_shape_ids: HashMap::new(),
+        function_shapes: Vec::new(),
+        function_shape_ids: HashMap::new(),
+        lambda_scope_boundaries: Vec::new(),
         module_context: String::new(),
         function_visibility: HashMap::new(),
         global_declarations: HashMap::new(),

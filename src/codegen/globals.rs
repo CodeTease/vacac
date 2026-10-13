@@ -423,6 +423,8 @@ impl<'ctx> Codegen<'ctx> {
                 values[index].clone()
             }
             Expr::Call { span, .. }
+            | Expr::CallValue { span, .. }
+            | Expr::Lambda { span, .. }
             | Expr::If { span, .. }
             | Expr::Match { span, .. }
             | Expr::Loop { span, .. } => {
@@ -748,6 +750,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Struct(index) => Some(ArrayElementType::Struct(index)),
             ValueType::Tuple(index) => Some(ArrayElementType::Tuple(index)),
             ValueType::Unit => None,
+            ValueType::Function(_) => None,
         }
     }
 }
@@ -805,6 +808,8 @@ fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
+        | Expr::CallValue { span, .. }
+        | Expr::Lambda { span, .. }
         | Expr::If { span, .. }
         | Expr::Match { span, .. }
         | Expr::Loop { span, .. }

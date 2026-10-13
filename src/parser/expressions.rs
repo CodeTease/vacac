@@ -25,6 +25,16 @@ impl Parser {
                 };
                 continue;
             }
+            if self.at(&TokenKind::LParen) {
+                let span = Span::from(self.advance());
+                let args = self.parse_call_arguments()?;
+                left = Expr::CallValue {
+                    callee: Box::new(left),
+                    args,
+                    span,
+                };
+                continue;
+            }
             let Some((op, precedence)) = self.binary_operator() else {
                 break;
             };
@@ -58,6 +68,37 @@ impl Parser {
                 op: UnaryOp::Not,
                 value: Box::new(self.parse_expression(11)?),
                 span: Span::from(&operator),
+            });
+        }
+        if self.at(&TokenKind::Fn) {
+            let start = self.advance().clone();
+            self.consume(&TokenKind::LParen, "`(` after `fn` in lambda")?;
+            let mut params = Vec::new();
+            if !self.at(&TokenKind::RParen) {
+                loop {
+                    let name = self.take_ident("lambda parameter name")?;
+                    let param_span = Span::from(self.previous());
+                    self.consume(&TokenKind::Colon, "`:` after lambda parameter name")?;
+                    let ty = self.parse_type()?;
+                    params.push(Param {
+                        name,
+                        ty,
+                        span: param_span,
+                    });
+                    if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                        break;
+                    }
+                }
+            }
+            self.consume(&TokenKind::RParen, "`)` after lambda parameters")?;
+            self.consume(&TokenKind::Arrow, "`->` after lambda parameters")?;
+            let return_type = self.parse_type()?;
+            let body = self.parse_block()?;
+            return Ok(Expr::Lambda {
+                params,
+                return_type,
+                body: Box::new(body),
+                span: Span::from(&start),
             });
         }
         let token = self.advance().clone();
@@ -148,7 +189,8 @@ impl Parser {
                     path.push(self.take_ident("name after `::`")?);
                 }
                 let name = path.join("::");
-                if path.len() >= 2 && self.take(&TokenKind::LParen) {
+                if (path.len() >= 2 || !type_arguments.is_empty()) && self.take(&TokenKind::LParen)
+                {
                     let mut args = Vec::new();
                     if !self.at(&TokenKind::RParen) {
                         loop {
@@ -166,7 +208,11 @@ impl Parser {
                         span,
                     });
                 }
-                if path.len() >= 2 && !self.parsing_match_value && self.at(&TokenKind::LBrace) {
+                if path.len() >= 2
+                    && type_arguments.is_empty()
+                    && !self.parsing_match_value
+                    && self.at(&TokenKind::LBrace)
+                {
                     let type_name = path.last().expect("path has at least two segments");
                     let enum_name = path
                         .get(path.len() - 2)
@@ -342,6 +388,20 @@ impl Parser {
         }
         self.consume_type_greater()?;
         Ok(arguments)
+    }
+
+    fn parse_call_arguments(&mut self) -> Result<Vec<Expr>, Diagnostic> {
+        let mut args = Vec::new();
+        if !self.at(&TokenKind::RParen) {
+            loop {
+                args.push(self.parse_expression(0)?);
+                if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RParen, "`)` after call arguments")?;
+        Ok(args)
     }
 
     fn generic_struct_literal_ahead(&self) -> bool {

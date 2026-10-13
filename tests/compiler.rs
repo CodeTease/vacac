@@ -14,6 +14,8 @@ mod equality;
 mod ffi;
 #[path = "compiler/floats.rs"]
 mod floats;
+#[path = "compiler/function_values.rs"]
+mod function_values;
 #[path = "compiler/generics.rs"]
 mod generics;
 #[path = "compiler/globals.rs"]

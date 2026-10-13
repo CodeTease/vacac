@@ -23,6 +23,18 @@ impl Checker {
                 }
                 self.tuple_type(types)
             }
+            Type::Function(params, result) => {
+                let mut param_types = Vec::with_capacity(params.len());
+                for param in params {
+                    let param_type = self.resolve_type(param, span)?;
+                    if param_type == ValueType::Unit {
+                        return Err(at(span, "function type parameters cannot have type `unit`"));
+                    }
+                    param_types.push(param_type);
+                }
+                let return_type = self.resolve_type(result, span)?;
+                self.function_type(param_types, return_type)
+            }
             Type::Array(element, length) => {
                 let element = self.resolve_array_element(element, span)?;
                 self.array_type(element, *length)
@@ -69,6 +81,19 @@ impl Checker {
                     .collect::<Vec<_>>();
                 let trailing_comma = if elements.len() == 1 { "," } else { "" };
                 format!("({}{trailing_comma})", elements.join(", "))
+            }
+            ValueType::Function(index) => {
+                let shape = &self.function_shapes[index];
+                format!(
+                    "fn({}) -> {}",
+                    shape
+                        .params
+                        .iter()
+                        .map(|ty| self.type_name(*ty))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    self.type_name(shape.return_type)
+                )
             }
             ValueType::Enum(index) => self
                 .enums
@@ -195,6 +220,12 @@ impl Checker {
                 }
                 ArrayElementType::Tuple(self.tuple_shape(types))
             }
+            Type::Function(_, _) => {
+                return Err(at(
+                    span,
+                    "function values cannot be stored in arrays or vectors",
+                ));
+            }
             Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
             Type::Applied(name, _) => {
                 return Err(at(
@@ -224,6 +255,26 @@ impl Checker {
 
     pub(super) fn tuple_type(&mut self, elements: Vec<ValueType>) -> ValueType {
         ValueType::Tuple(self.tuple_shape(elements))
+    }
+
+    pub(super) fn function_type(
+        &mut self,
+        params: Vec<ValueType>,
+        return_type: ValueType,
+    ) -> ValueType {
+        let shape = FunctionShape {
+            params,
+            return_type,
+        };
+        let index = if let Some(index) = self.function_shape_ids.get(&shape) {
+            *index
+        } else {
+            let index = self.function_shapes.len();
+            self.function_shapes.push(shape.clone());
+            self.function_shape_ids.insert(shape, index);
+            index
+        };
+        ValueType::Function(index)
     }
 
     pub(super) fn check_block_result(
@@ -293,6 +344,32 @@ impl Checker {
             .find_map(|scope| scope.get(name).copied())
     }
 
+    pub(super) fn lookup_local_with_scope(&self, name: &str) -> Option<(usize, ValueType)> {
+        self.scopes
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, scope)| scope.get(name).copied().map(|ty| (index, ty)))
+    }
+
+    pub(super) fn reject_lambda_capture(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
+        if self
+            .lookup_local_with_scope(name)
+            .is_some_and(|(scope_index, _)| {
+                self.lambda_scope_boundaries
+                    .last()
+                    .is_some_and(|boundary| scope_index < *boundary)
+            })
+        {
+            Err(at(
+                span,
+                format!("lambda captures are not supported (`{name}` is captured)"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub(super) fn is_immutable_binding(&self, name: &str) -> bool {
         self.scopes
             .iter()
@@ -341,6 +418,17 @@ impl Checker {
                     .map(|element| self.type_from_value(*element))
                     .collect(),
             ),
+            ValueType::Function(index) => {
+                let shape = &self.function_shapes[index];
+                Type::Function(
+                    shape
+                        .params
+                        .iter()
+                        .map(|ty| self.type_from_value(*ty))
+                        .collect(),
+                    Box::new(self.type_from_value(shape.return_type)),
+                )
+            }
             ValueType::Enum(index) => Type::Named(self.enums[index].name.clone()),
             ValueType::Struct(index) => Type::Named(self.structs[index].name.clone()),
         }
@@ -370,7 +458,7 @@ impl Checker {
             return Ok(true);
         }
         match ty {
-            ValueType::Unit | ValueType::Vector(_) => Ok(false),
+            ValueType::Unit | ValueType::Vector(_) | ValueType::Function(_) => Ok(false),
             ValueType::Array(index) => {
                 self.global_element_is_static(self.array_shapes[index].element, visited)
             }
@@ -427,6 +515,8 @@ pub(super) fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Float(_, span)
         | Expr::Variable(_, span)
         | Expr::Call { span, .. }
+        | Expr::CallValue { span, .. }
+        | Expr::Lambda { span, .. }
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Array(_, span)

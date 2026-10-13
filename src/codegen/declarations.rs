@@ -46,6 +46,8 @@ impl<'ctx> Codegen<'ctx> {
             array_shape_ids: HashMap::new(),
             vector_shapes: Vec::new(),
             vector_shape_ids: HashMap::new(),
+            function_shapes: Vec::new(),
+            function_shape_ids: HashMap::new(),
             scopes: Vec::new(),
             string_literals: HashMap::new(),
             loop_targets: Vec::new(),
@@ -60,6 +62,7 @@ impl<'ctx> Codegen<'ctx> {
             globals: HashMap::new(),
             global_constant_values: HashMap::new(),
             global_states: HashMap::new(),
+            next_lambda_id: 0,
         }
     }
 
@@ -78,6 +81,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::F64 => Some(self.context.f64_type().into()),
             ValueType::Bool => Some(self.bool_type().into()),
             ValueType::Str => Some(self.context.ptr_type(AddressSpace::default()).into()),
+            ValueType::Function(_) => Some(self.context.ptr_type(AddressSpace::default()).into()),
             ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
             ValueType::Tuple(index) => {
                 let elements = self.tuple_shapes[index].clone();
@@ -141,6 +145,21 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 self.tuple_type(types)
             }
+            Type::Function(params, result) => {
+                let mut param_types = Vec::with_capacity(params.len());
+                for param in params {
+                    let param_type = self.resolve_type(param, span)?;
+                    if param_type == ValueType::Unit {
+                        return Err(format!(
+                            "line {}:{}: function type parameters cannot have type `unit`",
+                            span.line, span.column
+                        ));
+                    }
+                    param_types.push(param_type);
+                }
+                let return_type = self.resolve_type(result, span)?;
+                self.function_type(param_types, return_type)
+            }
             Type::Array(element, length) => {
                 let element = match element.as_ref() {
                     Type::I64 => ArrayElementType::I64,
@@ -163,6 +182,12 @@ impl<'ctx> Codegen<'ctx> {
                     Type::Array(_, _) => self.resolve_array_element(element, span)?,
                     Type::Vector(_) => self.resolve_array_element(element, span)?,
                     Type::Tuple(_) => self.resolve_array_element(element, span)?,
+                    Type::Function(_, _) => {
+                        return Err(format!(
+                            "line {}:{}: function values cannot be stored in arrays or vectors",
+                            span.line, span.column
+                        ));
+                    }
                     Type::Unit => {
                         return Err(format!(
                             "line {}:{}: array elements cannot have type `unit`",
@@ -226,6 +251,34 @@ impl<'ctx> Codegen<'ctx> {
             index
         };
         ValueType::Tuple(index)
+    }
+
+    pub(super) fn function_type(
+        &mut self,
+        params: Vec<ValueType>,
+        return_type: ValueType,
+    ) -> ValueType {
+        let shape = FunctionShape {
+            params,
+            return_type,
+        };
+        let index = if let Some(index) = self.function_shape_ids.get(&shape) {
+            *index
+        } else {
+            let index = self.function_shapes.len();
+            self.function_shapes.push(shape.clone());
+            self.function_shape_ids.insert(shape, index);
+            index
+        };
+        ValueType::Function(index)
+    }
+
+    pub(super) fn llvm_function_type(
+        &self,
+        function_id: usize,
+    ) -> Result<FunctionType<'ctx>, String> {
+        let shape = &self.function_shapes[function_id];
+        self.llvm_fn_type(&shape.params, shape.return_type)
     }
 
     pub(super) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {
@@ -350,6 +403,7 @@ impl<'ctx> Codegen<'ctx> {
                     Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) | Type::Vector(_) => {}
                     Type::Tuple(_) => {}
                     Type::F32 | Type::F64 => {}
+                    Type::Function(_, _) => {}
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
                     Type::Named(name) if self.enum_ids.contains_key(name) => {}
                     Type::Named(name) => {

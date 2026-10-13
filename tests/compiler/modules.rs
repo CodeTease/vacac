@@ -218,6 +218,40 @@ fn public_extern_declarations_resolve_across_modules() {
 }
 
 #[test]
+fn public_module_functions_can_be_used_as_function_values() {
+    let (directory, compile) = module_project(
+        "module-function-values",
+        "mod math;\nfn main() -> i64 { let f: fn(i64) -> i64 = math::increment; f(41) - 42 }\n",
+        &[(
+            "math.vca",
+            "pub fn increment(value: i64) -> i64 { value + 1 }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "private-module-function-value",
+        "mod math;\nfn main() -> i64 { let f: fn(i64) -> i64 = math::increment; f(41) - 42 }\n",
+        &[(
+            "math.vca",
+            "fn increment(value: i64) -> i64 { value + 1 }\n",
+        )],
+    );
+    assert!(!compile.status.success());
+    assert!(
+        String::from_utf8_lossy(&compile.stderr).contains("function `math::increment` is private")
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn public_globals_work_across_modules_and_private_globals_stay_private() {
     let (directory, compile) = module_project(
         "module-globals",

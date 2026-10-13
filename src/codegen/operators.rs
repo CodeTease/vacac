@@ -30,6 +30,7 @@ impl<'ctx> Codegen<'ctx> {
                 left.ty,
                 ValueType::Array(_)
                     | ValueType::Vector(_)
+                    | ValueType::Function(_)
                     | ValueType::Enum(_)
                     | ValueType::Struct(_)
                     | ValueType::Tuple(_)

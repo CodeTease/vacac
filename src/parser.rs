@@ -204,6 +204,8 @@ fn span_of_expr_parser(expr: &Expr) -> Span {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
+        | Expr::CallValue { span, .. }
+        | Expr::Lambda { span, .. }
         | Expr::If { span, .. }
         | Expr::Match { span, .. }
         | Expr::Variant { span, .. } => *span,

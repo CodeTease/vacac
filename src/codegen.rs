@@ -31,6 +31,13 @@ enum ValueType {
     Struct(usize),
     Tuple(usize),
     Vector(usize),
+    Function(usize),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct FunctionShape {
+    params: Vec<ValueType>,
+    return_type: ValueType,
 }
 
 #[derive(Clone, Copy)]
@@ -84,6 +91,8 @@ struct Codegen<'ctx> {
     array_shape_ids: HashMap<(ArrayElementType, u32), usize>,
     vector_shapes: Vec<VectorShape>,
     vector_shape_ids: HashMap<ArrayElementType, usize>,
+    function_shapes: Vec<FunctionShape>,
+    function_shape_ids: HashMap<FunctionShape, usize>,
     scopes: Vec<HashMap<String, Local<'ctx>>>,
     string_literals: HashMap<String, PointerValue<'ctx>>,
     loop_targets: Vec<LoopTarget<'ctx>>,
@@ -98,6 +107,7 @@ struct Codegen<'ctx> {
     globals: HashMap<String, GlobalValue<'ctx>>,
     global_constant_values: HashMap<String, ConstantValue>,
     global_states: HashMap<String, u8>,
+    next_lambda_id: usize,
 }
 
 pub fn emit_object(program: &Program, path: &Path) -> Result<(), String> {
@@ -155,6 +165,19 @@ impl<'ctx> Codegen<'ctx> {
                     .collect::<Vec<_>>();
                 let trailing_comma = if elements.len() == 1 { "," } else { "" };
                 format!("({}{trailing_comma})", elements.join(", "))
+            }
+            ValueType::Function(index) => {
+                let shape = &self.function_shapes[index];
+                format!(
+                    "fn({}) -> {}",
+                    shape
+                        .params
+                        .iter()
+                        .map(|ty| self.type_name(*ty))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    self.type_name(shape.return_type)
+                )
             }
         }
     }

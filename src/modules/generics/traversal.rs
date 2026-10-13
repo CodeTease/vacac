@@ -59,7 +59,17 @@ impl Specializer {
                     if let Some(ty) = ty {
                         *ty = self.normalize_type(ty.clone(), substitutions, *span)?;
                     }
-                    self.process_expr(value, substitutions, variables)?;
+                    if let Some(expected) = ty.as_ref() {
+                        self.process_expr_with_expected(
+                            value,
+                            substitutions,
+                            variables,
+                            expected,
+                            *span,
+                        )?;
+                    } else {
+                        self.process_expr(value, substitutions, variables)?;
+                    }
                     self.normalize_pattern(pattern, substitutions, *span)?;
                     if let Some(ty) = ty
                         .clone()
@@ -162,6 +172,28 @@ impl Specializer {
             }
             Expr::Field { value, .. } | Expr::Unary { value, .. } => {
                 self.process_expr(value, substitutions, variables)?;
+            }
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                span,
+            } => {
+                for param in params.iter_mut() {
+                    param.ty = self.normalize_type(param.ty.clone(), substitutions, param.span)?;
+                }
+                *return_type = self.normalize_type(return_type.clone(), substitutions, *span)?;
+                let mut lambda_variables = params
+                    .iter()
+                    .map(|param| (param.name.clone(), param.ty.clone()))
+                    .collect::<HashMap<_, _>>();
+                self.process_block(body, substitutions, &mut lambda_variables, *span)?;
+            }
+            Expr::CallValue { callee, args, .. } => {
+                self.process_expr(callee, substitutions, variables)?;
+                for arg in args {
+                    self.process_expr(arg, substitutions, variables)?;
+                }
             }
             Expr::Struct {
                 name,
@@ -334,5 +366,38 @@ impl Specializer {
             | Expr::Variable(..) => {}
         }
         Ok(())
+    }
+
+    fn process_expr_with_expected(
+        &mut self,
+        expr: &mut Expr,
+        substitutions: &Substitution,
+        variables: &mut HashMap<String, Type>,
+        expected: &Type,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        match expr {
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                span: lambda_span,
+            } if let Type::Function(expected_params, expected_return) = expected => {
+                if params.len() != expected_params.len() {
+                    return self.process_expr(expr, substitutions, variables);
+                }
+                for (param, expected_param) in params.iter_mut().zip(expected_params) {
+                    param.ty = self.normalize_type(expected_param.clone(), substitutions, span)?;
+                }
+                *return_type =
+                    self.normalize_type((**expected_return).clone(), substitutions, span)?;
+                let mut lambda_variables = params
+                    .iter()
+                    .map(|param| (param.name.clone(), param.ty.clone()))
+                    .collect::<HashMap<_, _>>();
+                self.process_block(body, substitutions, &mut lambda_variables, *lambda_span)
+            }
+            _ => self.process_expr(expr, substitutions, variables),
+        }
     }
 }

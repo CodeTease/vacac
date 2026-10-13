@@ -241,6 +241,12 @@ impl Checker {
                     ValueType::Array(index) => ArrayElementType::Array(index),
                     ValueType::Vector(index) => ArrayElementType::Vector(index),
                     ValueType::Tuple(index) => ArrayElementType::Tuple(index),
+                    ValueType::Function(_) => {
+                        return Err(at(
+                            *span,
+                            "function values cannot be stored in arrays or vectors",
+                        ));
+                    }
                     ValueType::Unit => {
                         return Err(at(*span, "array elements cannot have type `unit`"));
                     }
@@ -272,7 +278,17 @@ impl Checker {
                 Ok(self.tuple_type(types))
             }
             Expr::Variable(name, span) => {
-                if let Some(ty) = self.lookup_local(name) {
+                if let Some((scope_index, ty)) = self.lookup_local_with_scope(name) {
+                    if self
+                        .lambda_scope_boundaries
+                        .last()
+                        .is_some_and(|boundary| scope_index < *boundary)
+                    {
+                        return Err(at(
+                            *span,
+                            format!("lambda captures are not supported (`{name}` is captured)"),
+                        ));
+                    }
                     Ok(ty)
                 } else if let Some(global) = self.find_global_name(name) {
                     let declaration = self.global_declarations[&global].clone();
@@ -280,6 +296,17 @@ impl Checker {
                         return Err(at(*span, format!("global `{name}` is private")));
                     }
                     self.check_global(&global, *span)
+                } else if let Some(function_name) = self.find_function_name(name)
+                    && let Some(signature) = self.signatures.get(&function_name).cloned()
+                {
+                    if self
+                        .function_visibility
+                        .get(&function_name)
+                        .is_some_and(|(module, public)| module != &self.module_context && !public)
+                    {
+                        return Err(at(*span, format!("function `{name}` is private")));
+                    }
+                    Ok(self.function_type(signature.params, signature.return_type))
                 } else {
                     Err(at(*span, format!("undefined variable `{name}`")))
                 }
@@ -515,11 +542,28 @@ impl Checker {
                     }
                     return Ok(ValueType::I64);
                 }
-                let signature = self
-                    .signatures
-                    .get(name)
-                    .ok_or_else(|| at(*span, format!("unknown function `{name}`")))?;
-                if let Some((module, is_public)) = self.function_visibility.get(name)
+                let local_callee = self.lookup_local(name).is_some();
+                if !local_callee
+                    && self.find_global_name(name).is_none()
+                    && self.find_function_name(name).is_none()
+                {
+                    return Err(at(*span, format!("unknown function `{name}`")));
+                }
+                let Some(signature) = (!local_callee)
+                    .then(|| self.find_function_name(name))
+                    .flatten()
+                    .and_then(|name| self.signatures.get(&name).cloned())
+                else {
+                    let callee = self.check_expr(&Expr::Variable(name.clone(), *span), false)?;
+                    let ValueType::Function(function_id) = callee else {
+                        return Err(at(*span, format!("unknown function `{name}`")));
+                    };
+                    return self.check_function_value_call(function_id, args, *span);
+                };
+                let function_name = self
+                    .find_function_name(name)
+                    .unwrap_or_else(|| name.clone());
+                if let Some((module, is_public)) = self.function_visibility.get(&function_name)
                     && module != &self.module_context
                     && !is_public
                 {
@@ -535,7 +579,7 @@ impl Checker {
                         ),
                     ));
                 }
-                let params = signature.params.clone();
+                let params = signature.params;
                 let return_type = signature.return_type;
                 for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
                     let actual = self.check_expr_expected(arg, expected)?;
@@ -547,6 +591,65 @@ impl Checker {
                     )?;
                 }
                 Ok(return_type)
+            }
+            Expr::CallValue { callee, args, span } => {
+                let callee_type = self.check_expr(callee, false)?;
+                let ValueType::Function(function_id) = callee_type else {
+                    return Err(at(*span, "called expression must have a function type"));
+                };
+                self.check_function_value_call(function_id, args, *span)
+            }
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                span,
+            } => {
+                let mut param_types = Vec::with_capacity(params.len());
+                let mut seen = std::collections::HashSet::new();
+                for param in params {
+                    if !seen.insert(param.name.as_str()) {
+                        return Err(at(
+                            param.span,
+                            format!("duplicate lambda parameter `{}`", param.name),
+                        ));
+                    }
+                    let ty = self.resolve_type(&param.ty, param.span)?;
+                    if ty == ValueType::Unit {
+                        return Err(at(param.span, "parameters cannot have type `unit`"));
+                    }
+                    param_types.push(ty);
+                }
+                let return_type = self.resolve_type(return_type, *span)?;
+                let boundary = self.scopes.len();
+                self.lambda_scope_boundaries.push(boundary);
+                self.scopes.push(HashMap::new());
+                self.immutable_scopes.push(std::collections::HashSet::new());
+                self.loop_scopes.push(std::collections::HashSet::new());
+                for (param, ty) in params.iter().zip(param_types.iter()) {
+                    self.scopes
+                        .last_mut()
+                        .unwrap()
+                        .insert(param.name.clone(), *ty);
+                }
+                let previous_return_type = self.current_return_type;
+                let previous_loops = std::mem::take(&mut self.loop_contexts);
+                self.current_return_type = return_type;
+                let checked = self.check_block(body, return_type, true);
+                self.current_return_type = previous_return_type;
+                self.loop_contexts = previous_loops;
+                self.scopes.pop();
+                self.immutable_scopes.pop();
+                self.loop_scopes.pop();
+                self.lambda_scope_boundaries.pop();
+                let returns = checked?;
+                if return_type != ValueType::Unit && !returns {
+                    return Err(at(
+                        *span,
+                        "lambda can reach its end without returning a value",
+                    ));
+                }
+                Ok(self.function_type(param_types, return_type))
             }
             Expr::If {
                 condition,
@@ -655,5 +758,34 @@ impl Checker {
                 })
             }
         }
+    }
+
+    fn check_function_value_call(
+        &mut self,
+        function_id: usize,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<ValueType, Diagnostic> {
+        let shape = self.function_shapes[function_id].clone();
+        if args.len() != shape.params.len() {
+            return Err(at(
+                span,
+                format!(
+                    "function value expects {} argument(s), got {}",
+                    shape.params.len(),
+                    args.len()
+                ),
+            ));
+        }
+        for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
+            let actual = self.check_expr_expected(arg, expected)?;
+            self.expect_type(
+                actual,
+                expected,
+                span_of_expr(arg),
+                &format!("argument {} to function value", index + 1),
+            )?;
+        }
+        Ok(shape.return_type)
     }
 }

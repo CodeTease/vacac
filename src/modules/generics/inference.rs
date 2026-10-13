@@ -44,6 +44,14 @@ impl Specializer {
                 }
                 Ok(())
             }
+            (Type::Function(patterns, pattern_return), Type::Function(actuals, actual_return))
+                if patterns.len() == actuals.len() =>
+            {
+                for (pattern, actual) in patterns.iter().zip(actuals) {
+                    self.unify(pattern, actual, substitutions, span)?;
+                }
+                self.unify(pattern_return, actual_return, substitutions, span)
+            }
             (Type::Tuple(_), Type::Tuple(_)) => Err(Diagnostic::at(
                 span.into(),
                 "generic tuple argument arities do not match",
@@ -134,6 +142,23 @@ impl Specializer {
                 if let Some(ty) = variables.get(name) {
                     return Some(ty.clone());
                 }
+                let function_name = if self.signatures.contains_key(name) {
+                    Some(name.clone())
+                } else {
+                    let qualified = if self.module_context.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}::{name}", self.module_context)
+                    };
+                    self.signatures
+                        .contains_key(&qualified)
+                        .then_some(qualified)
+                };
+                if let Some((params, result)) =
+                    function_name.and_then(|name| self.signatures.get(&name))
+                {
+                    return Some(Type::Function(params.clone(), Box::new(result.clone())));
+                }
                 if !visiting_globals.insert(name.clone()) {
                     return None;
                 }
@@ -194,6 +219,20 @@ impl Specializer {
                 }
             }
             Expr::Call { name, .. } => self.signatures.get(name).map(|(_, result)| result.clone()),
+            Expr::Lambda {
+                params,
+                return_type,
+                ..
+            } => Some(Type::Function(
+                params.iter().map(|param| param.ty.clone()).collect(),
+                Box::new(return_type.clone()),
+            )),
+            Expr::CallValue { callee, .. } => {
+                match self.infer_expr_type_inner(callee, variables, visiting_globals)? {
+                    Type::Function(_, result) => Some(*result),
+                    _ => None,
+                }
+            }
             Expr::Unary { value, .. } => {
                 self.infer_expr_type_inner(value, variables, visiting_globals)
             }
@@ -270,6 +309,11 @@ pub(super) fn type_key(ty: &Type) -> String {
                 elements.iter().map(type_key).collect::<Vec<_>>().join(",")
             )
         }
+        Type::Function(params, result) => format!(
+            "fn({})->{}",
+            params.iter().map(type_key).collect::<Vec<_>>().join(","),
+            type_key(result)
+        ),
         Type::Vector(element) => format!("Vec<{}>", type_key(element)),
     }
 }

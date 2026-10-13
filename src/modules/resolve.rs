@@ -269,6 +269,12 @@ fn resolve_type(
                 resolve_type(element, module, span, symbols)?;
             }
         }
+        crate::ast::Type::Function(params, result) => {
+            for param in params {
+                resolve_type(param, module, span, symbols)?;
+            }
+            resolve_type(result, module, span, symbols)?;
+        }
         _ => {}
     }
     Ok(())
@@ -381,6 +387,24 @@ fn resolve_expr(
                 resolve_expr(value, module, symbols, struct_names, enum_names)?;
             }
         }
+        Expr::Lambda {
+            params,
+            return_type,
+            body,
+            span,
+        } => {
+            for param in params {
+                resolve_type(&mut param.ty, module, param.span, symbols)?;
+            }
+            resolve_type(return_type, module, *span, symbols)?;
+            resolve_block(body, module, *span, symbols, struct_names, enum_names)?;
+        }
+        Expr::CallValue { callee, args, .. } => {
+            resolve_expr(callee, module, symbols, struct_names, enum_names)?;
+            for arg in args {
+                resolve_expr(arg, module, symbols, struct_names, enum_names)?;
+            }
+        }
         Expr::Binary { left, right, .. } => {
             resolve_expr(left, module, symbols, struct_names, enum_names)?;
             resolve_expr(right, module, symbols, struct_names, enum_names)?;
@@ -473,6 +497,13 @@ fn resolve_expr(
             }
         }
         Expr::Variable(name, span) if name.contains("::") => {
+            if symbols
+                .get(name)
+                .is_some_and(|symbol| symbol.kind == "function")
+            {
+                *name = resolve_reference(name, module, *span, symbols)?;
+                return Ok(());
+            }
             if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
                 let resolved_enum = resolve_reference(enum_name, module, *span, symbols)?;
                 if symbols

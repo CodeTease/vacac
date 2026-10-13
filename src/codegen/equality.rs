@@ -113,6 +113,23 @@ impl<'ctx> Codegen<'ctx> {
                     "vec.eq",
                 )
                 .map_err(|e| e.to_string()),
+            ValueType::Function(_) => self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    self.builder
+                        .build_ptr_to_int(left.into_pointer_value(), self.i64_type(), "fn.eq.left")
+                        .map_err(|error| error.to_string())?,
+                    self.builder
+                        .build_ptr_to_int(
+                            right.into_pointer_value(),
+                            self.i64_type(),
+                            "fn.eq.right",
+                        )
+                        .map_err(|error| error.to_string())?,
+                    "fn.eq",
+                )
+                .map_err(|error| error.to_string()),
             ValueType::Struct(struct_id) => {
                 let fields = self.structs[struct_id].fields.clone();
                 let mut equal = self.bool_type().const_int(1, false);

@@ -1,12 +1,91 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
+    pub(super) fn emit_indirect_call(
+        &mut self,
+        callee: TypedValue<'ctx>,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, String> {
+        let ValueType::Function(function_id) = callee.ty else {
+            return Err(format!(
+                "line {}:{}: called expression must have a function type",
+                span.line, span.column
+            ));
+        };
+        let shape = self.function_shapes[function_id].clone();
+        if args.len() != shape.params.len() {
+            return Err(format!(
+                "line {}:{}: function value expects {} argument(s), got {}",
+                span.line,
+                span.column,
+                shape.params.len(),
+                args.len()
+            ));
+        }
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len());
+        for (index, (arg, expected)) in args.iter().zip(shape.params.iter()).enumerate() {
+            let value = self.emit_expression_expected(arg, *expected)?;
+            if value.ty != *expected {
+                return Err(format!(
+                    "line {}:{}: argument {} to function value expects {}, got {}",
+                    span.line,
+                    span.column,
+                    index + 1,
+                    self.type_name(*expected),
+                    self.type_name(value.ty)
+                ));
+            }
+            values.push(value.value.ok_or("call argument has no value")?.into());
+        }
+        let pointer = callee
+            .value
+            .ok_or("function value has no pointer")?
+            .into_pointer_value();
+        let result = self
+            .builder
+            .build_indirect_call(
+                self.llvm_function_type(function_id)?,
+                pointer,
+                &values,
+                "call.indirect",
+            )
+            .map_err(|error| error.to_string())?;
+        let value = result.try_as_basic_value().basic();
+        if (shape.return_type == ValueType::Unit) != value.is_none() {
+            return Err("internal error: indirect call return type mismatch".into());
+        }
+        Ok(TypedValue {
+            value,
+            ty: shape.return_type,
+        })
+    }
+
     pub(super) fn emit_call(
         &mut self,
         name: &str,
         args: &[Expr],
         span: Span,
     ) -> Result<TypedValue<'ctx>, String> {
+        if let Some(local) = self.lookup_local(name) {
+            let value = self
+                .builder
+                .build_load(
+                    self.llvm_type(local.ty)
+                        .ok_or("function value has no LLVM type")?,
+                    local.pointer,
+                    name,
+                )
+                .map_err(|error| error.to_string())?;
+            return self.emit_indirect_call(
+                TypedValue {
+                    value: Some(value),
+                    ty: local.ty,
+                },
+                args,
+                span,
+            );
+        }
         if name == "vec_push" {
             if args.len() != 2 {
                 return Err(format!(
@@ -115,15 +194,14 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ValueType::I64,
             });
         }
-        let (params, ret) = self.signatures.get(name).cloned().ok_or_else(|| {
-            format!(
-                "line {}:{}: unknown function `{name}`",
-                span.line, span.column
-            )
-        })?;
+        let Some(function_name) = self.resolve_function_name(name) else {
+            let callee = self.emit_expression(&Expr::Variable(name.to_owned(), span))?;
+            return self.emit_indirect_call(callee, args, span);
+        };
+        let (params, ret) = self.signatures[&function_name].clone();
         if self
             .function_visibility
-            .get(name)
+            .get(&function_name)
             .is_some_and(|(owner, public)| owner != &self.module_context && !public)
         {
             return Err(format!(
@@ -155,7 +233,7 @@ impl<'ctx> Codegen<'ctx> {
             }
             values.push(value.value.ok_or("call argument has no value")?.into());
         }
-        let function = *self.functions.get(name).ok_or_else(|| {
+        let function = *self.functions.get(&function_name).ok_or_else(|| {
             format!(
                 "line {}:{}: missing function `{name}`",
                 span.line, span.column

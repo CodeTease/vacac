@@ -237,6 +237,9 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Array(index) => ArrayElementType::Array(index),
             ValueType::Vector(index) => ArrayElementType::Vector(index),
             ValueType::Tuple(index) => ArrayElementType::Tuple(index),
+            ValueType::Function(_) => {
+                return Err("function values cannot be stored in arrays or vectors".into());
+            }
             ValueType::Unit => return Err("array elements cannot have type `unit`".into()),
         };
         let array_type = self.array_type(element, elements.len() as u32);

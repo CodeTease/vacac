@@ -76,6 +76,18 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 }
                 Ok(())
             }
+            Type::Function(params, result) => {
+                for param in params {
+                    if *param == Type::Unit {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "function type parameters cannot have type `unit`",
+                        ));
+                    }
+                    check_type(param, parameters, generic_structs, known_types, span)?;
+                }
+                check_type(result, parameters, generic_structs, known_types, span)
+            }
             Type::Parameter(_)
             | Type::Named(_)
             | Type::I64

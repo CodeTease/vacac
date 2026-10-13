@@ -50,6 +50,26 @@ impl<'ctx> Codegen<'ctx> {
                         ty: local.ty,
                     });
                 }
+                if let Some(function_name) = self.resolve_function_name(name)
+                    && let Some(function) = self.functions.get(&function_name).copied()
+                {
+                    if self
+                        .function_visibility
+                        .get(&function_name)
+                        .is_some_and(|(owner, public)| owner != &self.module_context && !public)
+                    {
+                        return Err(format!(
+                            "line {}:{}: function `{name}` is private",
+                            span.line, span.column
+                        ));
+                    }
+                    let (params, result) = self.signatures[&function_name].clone();
+                    let ty = self.function_type(params, result);
+                    return Ok(TypedValue {
+                        value: Some(function.as_global_value().as_pointer_value().into()),
+                        ty,
+                    });
+                }
                 let global_name = self.resolve_global_name(name).ok_or_else(|| {
                     format!(
                         "line {}:{}: undefined variable `{name}`",
@@ -305,6 +325,68 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Call {
                 name, args, span, ..
             } => self.emit_call(name, args, *span),
+            Expr::CallValue { callee, args, span } => {
+                let callee = self.emit_expression(callee)?;
+                self.emit_indirect_call(callee, args, *span)
+            }
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                span,
+            } => {
+                let lambda_id = self.next_lambda_id;
+                self.next_lambda_id += 1;
+                let name = format!("vaca.lambda.{lambda_id}");
+                let synthetic = Function {
+                    name: name.clone(),
+                    generic_params: Vec::new(),
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                    body: (**body).clone(),
+                    span: *span,
+                    is_public: false,
+                    module: self.module_context.clone(),
+                };
+                let params = synthetic
+                    .params
+                    .iter()
+                    .map(|param| self.resolve_type(&param.ty, param.span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ret = self.resolve_type(&synthetic.return_type, synthetic.span)?;
+                let llvm_function = self.module.add_function(
+                    &name,
+                    self.llvm_fn_type(&params, ret)?,
+                    Some(Linkage::Internal),
+                );
+                self.functions.insert(name.clone(), llvm_function);
+                self.signatures.insert(name.clone(), (params.clone(), ret));
+                self.function_visibility
+                    .insert(name.clone(), (synthetic.module.clone(), false));
+                let previous_block = self.builder.get_insert_block();
+                let previous_function = self.current_function;
+                let previous_return_type = self.return_type;
+                let previous_module =
+                    std::mem::replace(&mut self.module_context, synthetic.module.clone());
+                let previous_scopes = std::mem::take(&mut self.scopes);
+                let previous_loop_targets = std::mem::take(&mut self.loop_targets);
+                let lambda_result = self.emit_function(&synthetic);
+                self.current_function = previous_function;
+                self.return_type = previous_return_type;
+                self.module_context = previous_module;
+                self.scopes = previous_scopes;
+                self.loop_targets = previous_loop_targets;
+                if let Some(block) = previous_block {
+                    self.builder.position_at_end(block);
+                }
+                lambda_result?;
+
+                let function_type = self.function_type(params, ret);
+                Ok(TypedValue {
+                    value: Some(llvm_function.as_global_value().as_pointer_value().into()),
+                    ty: function_type,
+                })
+            }
             Expr::If {
                 condition,
                 then_block,
@@ -435,6 +517,19 @@ impl<'ctx> Codegen<'ctx> {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).copied())
+    }
+
+    pub(super) fn resolve_function_name(&self, name: &str) -> Option<String> {
+        if self.functions.contains_key(name) {
+            Some(name.to_owned())
+        } else {
+            let qualified = if self.module_context.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{}::{name}", self.module_context)
+            };
+            self.functions.contains_key(&qualified).then_some(qualified)
+        }
     }
 
     pub(super) fn create_entry_alloca(

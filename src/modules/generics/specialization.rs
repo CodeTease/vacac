@@ -174,6 +174,13 @@ impl Specializer {
                     .map(|element| self.normalize_type(element, substitutions, span))
                     .collect::<Result<Vec<_>, _>>()?,
             ),
+            Type::Function(params, result) => Type::Function(
+                params
+                    .into_iter()
+                    .map(|param| self.normalize_type(param, substitutions, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+                Box::new(self.normalize_type(*result, substitutions, span)?),
+            ),
             Type::Vector(element) => Type::Vector(Box::new(self.normalize_type(
                 *element,
                 substitutions,

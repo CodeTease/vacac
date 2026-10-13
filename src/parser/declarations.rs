@@ -208,7 +208,21 @@ impl Parser {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
-        if self.take(&TokenKind::LParen) {
+        if self.take(&TokenKind::Fn) {
+            self.consume(&TokenKind::LParen, "`(` after `fn` in function type")?;
+            let mut params = Vec::new();
+            if !self.at(&TokenKind::RParen) {
+                loop {
+                    params.push(self.parse_type()?);
+                    if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                        break;
+                    }
+                }
+            }
+            self.consume(&TokenKind::RParen, "`)` after function type parameters")?;
+            self.consume(&TokenKind::Arrow, "`->` in function type")?;
+            Ok(Type::Function(params, Box::new(self.parse_type()?)))
+        } else if self.take(&TokenKind::LParen) {
             if self.take(&TokenKind::RParen) {
                 return Err(unexpected(
                     self.previous(),
@@ -299,7 +313,7 @@ impl Parser {
         } else {
             Err(unexpected(
                 self.peek(),
-                "type `i64`, `f32`, `f64`, `bool`, `str`, `unit`, a named type, tuple type, or `[element; length]`",
+                "type `i64`, `f32`, `f64`, `bool`, `str`, `unit`, a named type, tuple type, function type, or `[element; length]`",
             ))
         }
     }
