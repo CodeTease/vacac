@@ -38,35 +38,44 @@ if (( ${#examples[@]} == 0 )); then
     exit 2
 fi
 
-failures=0
-for example in "${examples[@]}"; do
-    name="${example#"$EXAMPLES_DIR"/}"
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+printf '%s\0' "${examples[@]}" > "$tmp_dir/list.txt"
+
+run_single_test() {
+    local example="$1"
+    local name="${example#"$EXAMPLES_DIR"/}"
 
     printf '%s[CHECK]%s %s\n' "$BLUE" "$RESET" "$name"
     if ! "$VACAC" "$example" --check; then
         printf '%s[FAIL]%s  check: %s\n' "$RED" "$RESET" "$name"
-        failures=$((failures + 1))
-        continue
+        return 1
     fi
 
     printf '%s[RUN]%s   %s\n' "$YELLOW" "$RESET" "$name"
     if [[ "${name##*/}" == "read_number.vca" ]]; then
         if ! printf '42\n' | "$VACAC" "$example" --run; then
             printf '%s[FAIL]%s  run: %s\n' "$RED" "$RESET" "$name"
-            failures=$((failures + 1))
-            continue
+            return 1
         fi
     elif ! "$VACAC" "$example" --run; then
         printf '%s[FAIL]%s  run: %s\n' "$RED" "$RESET" "$name"
-        failures=$((failures + 1))
-        continue
+        return 1
     fi
 
     printf '%s[PASS]%s  %s\n' "$GREEN" "$RESET" "$name"
-done
+    return 0
+}
+export -f run_single_test
+export VACAC EXAMPLES_DIR BLUE YELLOW GREEN RED RESET
 
-if (( failures > 0 )); then
-    printf '\n%s%d example check/run failure(s) out of %d.%s\n' "$RED" "$failures" "${#examples[@]}" "$RESET"
+jobs_count=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+xargs -0 -P "$jobs_count" -I {} bash -c 'run_single_test "$@"' _ {} < "$tmp_dir/list.txt"
+exit_code=$?
+
+if (( exit_code != 0 )); then
+    printf '\n%sSome example check/run failure(s).%s\n' "$RED" "$RESET"
     exit 1
 fi
 
