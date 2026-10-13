@@ -1,0 +1,16 @@
+// A returned inner closure keeps a capture through both enclosing scopes.
+fn make_reader(value: i64) -> fn() -> fn() -> i64 {
+    fn() -> fn() -> i64 {
+        fn() -> i64 { value }
+    }
+}
+
+fn main() -> i64 {
+    let make_inner = make_reader(42);
+    let read_value = make_inner();
+
+    print("Value captured by the returned inner closure: ");
+    print_i64(read_value());
+
+    read_value() - 42
+}
