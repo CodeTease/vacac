@@ -36,6 +36,7 @@ impl<'ctx> Codegen<'ctx> {
                         ArrayElementType::Array(_)
                             | ArrayElementType::Vector(_)
                             | ArrayElementType::Tuple(_)
+                            | ArrayElementType::Function(_)
                     )
             }
             (Expr::Tuple(_, _), ValueType::Tuple(_)) => true,
@@ -173,6 +174,7 @@ impl<'ctx> Codegen<'ctx> {
                 ArrayElementType::Array(_)
                     | ArrayElementType::Vector(_)
                     | ArrayElementType::Tuple(_)
+                    | ArrayElementType::Function(_)
             ) {
                 self.emit_expression_expected(expression, element_type)?
             } else {
@@ -237,9 +239,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Array(index) => ArrayElementType::Array(index),
             ValueType::Vector(index) => ArrayElementType::Vector(index),
             ValueType::Tuple(index) => ArrayElementType::Tuple(index),
-            ValueType::Function(_) => {
-                return Err("function values cannot be stored in arrays or vectors".into());
-            }
+            ValueType::Function(index) => ArrayElementType::Function(index),
             ValueType::Unit => return Err("array elements cannot have type `unit`".into()),
         };
         let array_type = self.array_type(element, elements.len() as u32);
@@ -262,6 +262,7 @@ impl<'ctx> Codegen<'ctx> {
                 ArrayElementType::Array(_)
                     | ArrayElementType::Vector(_)
                     | ArrayElementType::Tuple(_)
+                    | ArrayElementType::Function(_)
             ) {
                 self.emit_expression_expected(expression, ValueType::from(element))?
             } else {

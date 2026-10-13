@@ -8,7 +8,7 @@
 * [x] User-defined generics / parametric polymorphism for functions and structs (monomorphized functions and structs; inferred arguments and full explicit turbofish arguments, without trait bounds or generic enums).
 * [x] Non-capturing lambdas and first-class function values (locals, parameters, returns, indirect calls, and function types).
 * [x] Capturing closures with immutable by-value environments retained until process exit.
-* [ ] Function values in fixed arrays and vectors.
+* [x] Function values and captured closures in fixed arrays and vectors.
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [ ] Manual pointer and reference types (for example, `&T` and `*mut T`).

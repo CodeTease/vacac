@@ -184,7 +184,8 @@ fn main() -> i64 {
 ```
 
 Function values may be passed to and returned from functions, stored in local
-bindings, and used as struct or tuple fields. Lambdas may capture local bindings;
+bindings, used as struct or tuple fields, and stored directly in fixed arrays and
+vectors. Lambdas may capture local bindings;
 each captured value is copied when the closure is created into a heap-backed
 environment retained until process exit. Captures are snapshots, not shared
 mutable cells, and a closure cannot assign to a captured binding. This allows a
@@ -204,9 +205,9 @@ fn main() -> i64 {
 Function values compare equal when both their code and environment pointers
 match; separately created closures therefore need not compare equal even when
 they capture identical values. Module functions used as values obey the same
-`pub` visibility rules as direct calls. A function value cannot itself be a
-direct fixed-array or vector element; aggregate values (such as a struct or
-tuple) may contain function fields. Global function-value initializers are not
+`pub` visibility rules as direct calls. Fixed arrays and vectors store the
+complete closure value, so captured environments remain available when values
+are indexed, copied, or iterated. Global function-value initializers are not
 supported.
 
 ## Scalar matching and value-producing loops

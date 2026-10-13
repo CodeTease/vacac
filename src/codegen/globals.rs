@@ -749,8 +749,8 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Enum(index) => Some(ArrayElementType::Enum(index)),
             ValueType::Struct(index) => Some(ArrayElementType::Struct(index)),
             ValueType::Tuple(index) => Some(ArrayElementType::Tuple(index)),
+            ValueType::Function(index) => Some(ArrayElementType::Function(index)),
             ValueType::Unit => None,
-            ValueType::Function(_) => None,
         }
     }
 }

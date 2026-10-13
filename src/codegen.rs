@@ -207,6 +207,19 @@ impl<'ctx> Codegen<'ctx> {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            ArrayElementType::Function(index) => {
+                let shape = &self.function_shapes[index];
+                format!(
+                    "fn({}) -> {}",
+                    shape
+                        .params
+                        .iter()
+                        .map(|ty| self.type_name(*ty))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    self.type_name(shape.return_type)
+                )
+            }
         }
     }
 

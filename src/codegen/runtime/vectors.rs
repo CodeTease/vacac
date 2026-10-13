@@ -346,7 +346,12 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 Ok(ArrayElementType::Tuple(index))
             }
-            Type::Function(_, _) => Err("function values cannot be stored in vectors".into()),
+            Type::Function(_, _) => {
+                let ValueType::Function(index) = self.resolve_type(element, span)? else {
+                    unreachable!()
+                };
+                Ok(ArrayElementType::Function(index))
+            }
             Type::Vector(_) => {
                 let ValueType::Vector(index) = self.resolve_type(element, span)? else {
                     unreachable!()

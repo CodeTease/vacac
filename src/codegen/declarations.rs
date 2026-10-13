@@ -176,46 +176,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.function_type(param_types, return_type)
             }
             Type::Array(element, length) => {
-                let element = match element.as_ref() {
-                    Type::I64 => ArrayElementType::I64,
-                    Type::F32 => ArrayElementType::F32,
-                    Type::F64 => ArrayElementType::F64,
-                    Type::Bool => ArrayElementType::Bool,
-                    Type::Str => ArrayElementType::Str,
-                    Type::Named(name) if self.enum_ids.contains_key(name) => {
-                        ArrayElementType::Enum(self.enum_ids[name])
-                    }
-                    Type::Named(name) if self.struct_ids.contains_key(name) => {
-                        ArrayElementType::Struct(self.struct_ids[name])
-                    }
-                    Type::Named(name) => {
-                        return Err(format!(
-                            "line {}:{}: unknown type `{name}`",
-                            span.line, span.column
-                        ));
-                    }
-                    Type::Array(_, _) => self.resolve_array_element(element, span)?,
-                    Type::Vector(_) => self.resolve_array_element(element, span)?,
-                    Type::Tuple(_) => self.resolve_array_element(element, span)?,
-                    Type::Function(_, _) => {
-                        return Err(format!(
-                            "line {}:{}: function values cannot be stored in arrays or vectors",
-                            span.line, span.column
-                        ));
-                    }
-                    Type::Unit => {
-                        return Err(format!(
-                            "line {}:{}: array elements cannot have type `unit`",
-                            span.line, span.column
-                        ));
-                    }
-                    Type::Applied(name, _) => {
-                        return Err(format!("generic type `{name}` was not specialized"));
-                    }
-                    Type::Parameter(name) => {
-                        return Err(format!("generic parameter `{name}` was not specialized"));
-                    }
-                };
+                let element = self.resolve_array_element(element, span)?;
                 self.array_type(element, *length)
             }
             Type::Vector(element) => {

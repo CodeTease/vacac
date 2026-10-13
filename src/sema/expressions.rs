@@ -14,6 +14,7 @@ impl Checker {
                         ArrayElementType::Array(_)
                             | ArrayElementType::Vector(_)
                             | ArrayElementType::Tuple(_)
+                            | ArrayElementType::Function(_)
                     )
             }
             (Expr::Tuple(elements, _), ValueType::Tuple(_)) => !elements.is_empty(),
@@ -241,12 +242,7 @@ impl Checker {
                     ValueType::Array(index) => ArrayElementType::Array(index),
                     ValueType::Vector(index) => ArrayElementType::Vector(index),
                     ValueType::Tuple(index) => ArrayElementType::Tuple(index),
-                    ValueType::Function(_) => {
-                        return Err(at(
-                            *span,
-                            "function values cannot be stored in arrays or vectors",
-                        ));
-                    }
+                    ValueType::Function(index) => ArrayElementType::Function(index),
                     ValueType::Unit => {
                         return Err(at(*span, "array elements cannot have type `unit`"));
                     }
@@ -257,6 +253,7 @@ impl Checker {
                         ArrayElementType::Array(_)
                             | ArrayElementType::Vector(_)
                             | ArrayElementType::Tuple(_)
+                            | ArrayElementType::Function(_)
                     ) {
                         self.check_expr_expected(value, first_type)?
                     } else {

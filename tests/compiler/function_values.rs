@@ -190,16 +190,62 @@ fn function_types_check_call_arity_and_parameter_types() {
 }
 
 #[test]
-fn function_values_cannot_be_stored_in_fixed_arrays_or_vectors() {
-    assert_compile_error(
-        "fn increment(value: i64) -> i64 { value + 1 } fn main() -> i64 { let functions = [increment, increment]; 0 }",
+fn function_values_work_in_fixed_arrays_with_captures_mutation_and_iteration() {
+    let result = compile_and_run(
+        r#"
+        fn increment(value: i64) -> i64 { value + 1 }
+
+        fn main() -> i64 {
+            let amount = 2;
+            let captured: fn(i64) -> i64 = fn(value: i64) -> i64 { value + amount };
+            let named: fn(i64) -> i64 = increment;
+            let mut_functions: [fn(i64) -> i64; 4] = [
+                named,
+                captured,
+                captured,
+                fn(value: i64) -> i64 { value + amount },
+            ];
+            print_i64(if mut_functions[1] == mut_functions[2] { 1 } else { 0 });
+            mut_functions[0] = captured;
+            for function in mut_functions {
+                print_i64(function(40));
+            }
+            if mut_functions[0](40) == 42 { 0 } else { 2 }
+        }
+        "#,
         "function-values-array-storage",
-        "function values cannot be stored in arrays or vectors",
     );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "1\n42\n42\n42\n42\n"
+    );
+}
+
+#[test]
+fn generic_functions_accept_arrays_of_function_values() {
+    let result = compile_and_run(
+        r#"
+        fn increment(value: i64) -> i64 { value + 1 }
+        fn apply_first<T>(functions: [fn(T) -> T; 2], value: T) -> T {
+            functions[0](value)
+        }
+
+        fn main() -> i64 {
+            apply_first([increment, increment], 41) - 42
+        }
+        "#,
+        "function-values-generic-array",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn function_array_signatures_must_match_exactly() {
     assert_compile_error(
-        "fn increment(value: i64) -> i64 { value + 1 } fn main() -> i64 { let functions: Vec<fn(i64) -> i64> = vec_new(); 0 }",
-        "function-values-vector-storage",
-        "function values cannot be stored in arrays or vectors",
+        "fn increment(value: i64) -> i64 { value + 1 } fn main() -> i64 { let functions: [fn(i64) -> i64; 2] = [increment, fn(value: bool) -> bool { value }]; 0 }",
+        "function-values-array-signature-mismatch",
+        "array element has type fn(bool) -> bool, expected fn(i64) -> i64",
     );
 }
 

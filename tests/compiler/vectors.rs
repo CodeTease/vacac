@@ -138,6 +138,51 @@ fn vectors_support_enum_elements_and_recursive_struct_layouts() {
 }
 
 #[test]
+fn vectors_store_and_call_function_values_including_capturing_closures() {
+    let result = compile_and_run(
+        r#"
+        fn increment(value: i64) -> i64 { value + 1 }
+
+        fn main() -> i64 {
+            let amount = 2;
+            let captured: fn(i64) -> i64 = fn(value: i64) -> i64 { value + amount };
+            let functions: Vec<fn(i64) -> i64> = vec_new();
+            vec_push(functions, increment);
+            vec_push(functions, captured);
+            vec_push(functions, captured);
+            vec_push(functions, increment);
+            vec_push(functions, captured);
+            print_i64(if functions[1] == functions[2] { 1 } else { 0 });
+            functions[0] = captured;
+            for function in functions {
+                print_i64(function(40));
+            }
+            if len(functions) == 5 && functions[0](40) == 42 && functions[4](40) == 42 {
+                0
+            } else {
+                2
+            }
+        }
+        "#,
+        "vector-function-values-captures",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "1\n42\n42\n42\n41\n42\n"
+    );
+}
+
+#[test]
+fn vectors_reject_function_elements_with_incompatible_signatures() {
+    assert_compile_error(
+        "fn main() -> i64 { let functions: Vec<fn(i64) -> i64> = vec_new(); vec_push(functions, fn(value: bool) -> bool { value }); 0 }",
+        "vector-function-value-signature-mismatch",
+        "vector element has type fn(bool) -> bool, expected fn(i64) -> i64",
+    );
+}
+
+#[test]
 fn vector_indexing_is_bounds_checked() {
     for (index, test_name) in [("0", "vector-index-high"), ("-1", "vector-index-negative")] {
         let source =

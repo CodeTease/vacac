@@ -25,6 +25,7 @@ pub enum ArrayElementType {
     Enum(usize),
     Struct(usize),
     Tuple(usize),
+    Function(usize),
     Array(usize),
     Vector(usize),
 }

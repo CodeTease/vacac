@@ -136,6 +136,19 @@ impl Checker {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            ArrayElementType::Function(index) => {
+                let shape = &self.function_shapes[index];
+                format!(
+                    "fn({}) -> {}",
+                    shape
+                        .params
+                        .iter()
+                        .map(|ty| self.type_name(*ty))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    self.type_name(shape.return_type)
+                )
+            }
         }
     }
 
@@ -221,10 +234,10 @@ impl Checker {
                 ArrayElementType::Tuple(self.tuple_shape(types))
             }
             Type::Function(_, _) => {
-                return Err(at(
-                    span,
-                    "function values cannot be stored in arrays or vectors",
-                ));
+                let ValueType::Function(index) = self.resolve_type(element, span)? else {
+                    unreachable!()
+                };
+                ArrayElementType::Function(index)
             }
             Type::Unit => return Err(at(span, "array elements cannot have type `unit`")),
             Type::Applied(name, _) => {
@@ -459,6 +472,7 @@ impl Checker {
             ArrayElementType::Array(index) => self.type_from_value(ValueType::Array(index)),
             ArrayElementType::Vector(index) => self.type_from_value(ValueType::Vector(index)),
             ArrayElementType::Tuple(index) => self.type_from_value(ValueType::Tuple(index)),
+            ArrayElementType::Function(index) => self.type_from_value(ValueType::Function(index)),
         }
     }
 
@@ -571,6 +585,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Array(index) => Self::Array(index),
             ArrayElementType::Vector(index) => Self::Vector(index),
             ArrayElementType::Tuple(index) => Self::Tuple(index),
+            ArrayElementType::Function(index) => Self::Function(index),
         }
     }
 }
