@@ -1,0 +1,38 @@
+// Propagate recoverable errors with postfix `?`, then handle them with `match`.
+enum LookupError {
+    Missing,
+}
+
+fn lookup(id: i64) -> Result<i64, LookupError> {
+    if id == 42 {
+        Result::Ok(42)
+    } else {
+        Result::Err(LookupError::Missing)
+    }
+}
+
+fn answer_with_bonus(id: i64) -> Result<i64, LookupError> {
+    let answer = lookup(id)?;
+    Result::Ok(answer + 1)
+}
+
+fn main() -> i64 {
+    let success = match answer_with_bonus(42) {
+        Result::Ok(value) => {
+            print("answer with bonus: ");
+            print_i64(value);
+            value - 43
+        },
+        Result::Err(_) => { 1 },
+    };
+
+    let error = match answer_with_bonus(0) {
+        Result::Ok(_) => { 1 },
+        Result::Err(_) => {
+            println("missing value propagated to caller");
+            0
+        },
+    };
+
+    success + error
+}

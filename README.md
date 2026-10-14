@@ -84,6 +84,8 @@ Some examples to explore:
   expression conditional.
 - [`enum_match.vca`](examples/enum_match.vca) — construct enum variants and
   handle each one with an exhaustive `match`.
+- [`result_propagation.vca`](examples/result_propagation.vca) — return recoverable
+  errors with `Result<T, E>` and propagate them with `?`.
 - [`loop_control.vca`](examples/loop_control.vca) — use `continue` and `break`
   in a range loop.
 - [`read_number.vca`](examples/read_number.vca) — read and classify an integer
@@ -354,6 +356,37 @@ fn lookup(id: i64) -> User {
 ```
 
 Struct values can be bound, passed to functions, and returned. A literal must initialize every field exactly once; its fields may appear in any order. Fields can be read with `user.name` and updated on mutable local bindings with `user.name = "Grace";`. Nested fields and array elements in fields may also be read or updated, for example `account.owner.name` or `account.scores[0]`. Struct fields may use `i64`, `f32`, `f64`, `bool`, `str`, tuples, recursively nested fixed-size arrays and vectors of non-`unit` values, an enum, or another struct. `unit` is not a valid struct-field type, and recursive by-value struct layouts are rejected. Enum-valued fields can be constructed, passed and returned as part of the struct, and inspected with `match`. Struct equality and inequality compare every field recursively, using IEEE equality for floats, string contents for `str` fields and handle identity for vector fields.
+
+## Recoverable errors
+
+The compiler provides the generic `Result<T, E>` enum with `Ok(T)` and `Err(E)`
+variants. Use it as a function's return type to represent success or a recoverable
+error. Postfix `?` unwraps an `Ok` value; on `Err`, it immediately returns that
+error from the current function. The enclosing function must also return a
+`Result` with the same error type:
+
+```vaca
+enum LookupError { Missing }
+
+fn lookup(id: i64) -> Result<i64, LookupError> {
+    if id == 42 {
+        Result::Ok(42)
+    } else {
+        Result::Err(LookupError::Missing)
+    }
+}
+
+fn read_answer() -> Result<i64, LookupError> {
+    let answer = lookup(42)?;
+    Result::Ok(answer + 1)
+}
+```
+
+`Result` constructors infer their type arguments from an expected type, such as
+the function's return type or a binding annotation. Match on the returned value
+at a boundary where you want to handle errors rather than propagate them. See
+[`result_propagation.vca`](examples/result_propagation.vca) for a complete,
+runnable example.
 
 ## Tuples and destructuring
 
