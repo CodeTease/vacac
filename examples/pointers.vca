@@ -1,0 +1,34 @@
+// Raw pointers are explicit and unchecked; mutable references are local and scoped.
+fn read(pointer: *const i64) -> i64 {
+    *pointer
+}
+
+fn set(value: &mut i64, next: i64) -> unit {
+    *value = next;
+}
+
+fn main() -> i64 {
+    let raw_value = 10;
+    const raw_pointer: *mut i64 = &raw mut raw_value;
+    *raw_pointer = *raw_pointer + 5;
+    const read_pointer: *const i64 = &raw const raw_value;
+    print("after raw pointer write: ");
+    print_i64(read(read_pointer));
+
+    let referenced_value = 20;
+    if true {
+        const reference: &mut i64 = &mut referenced_value;
+        set(reference, *reference + 7);
+        print("inside mutable borrow: ");
+        print_i64(*reference);
+        0
+    } else {
+        0
+    }
+
+    print("after borrow ends: ");
+    print_i64(referenced_value);
+
+    // Return zero when both demonstrations produced their expected values.
+    (read(read_pointer) - 15) + (referenced_value - 27)
+}
