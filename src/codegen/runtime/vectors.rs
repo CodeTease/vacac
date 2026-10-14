@@ -1,7 +1,7 @@
 use super::super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(in crate::codegen) fn emit_vector_runtime(&mut self) -> Result<(), String> {
+    pub(in crate::codegen) fn emit_vector_runtime(&mut self) -> Result<(), Diagnostic> {
         let pointer = self.context.ptr_type(AddressSpace::default());
         let i64_type = self.i64_type();
         let i8_type = self.context.i8_type();
@@ -272,7 +272,7 @@ impl<'ctx> Codegen<'ctx> {
         pointer: inkwell::types::PointerType<'ctx>,
         i8_type: inkwell::types::IntType<'ctx>,
         i64_type: inkwell::types::IntType<'ctx>,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         let current_data = self
             .builder
             .build_load(pointer, data_ptr, "vec.current.data")
@@ -339,7 +339,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         element: &Type,
         span: Span,
-    ) -> Result<ArrayElementType, String> {
+    ) -> Result<ArrayElementType, Diagnostic> {
         match element {
             Type::I64 => Ok(ArrayElementType::I64),
             Type::F32 => Ok(ArrayElementType::F32),
@@ -359,9 +359,9 @@ impl<'ctx> Codegen<'ctx> {
                 if self.tuple_shapes[index].iter().any(|ty| {
                     matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
                 }) {
-                    return Err(format!(
-                        "line {}:{}: references cannot be stored in tuples",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references cannot be stored in tuples"),
                     ));
                 }
                 Ok(ArrayElementType::Tuple(index))
@@ -378,17 +378,17 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 Ok(ArrayElementType::Vector(index))
             }
-            Type::Unit => Err(format!(
-                "line {}:{}: array elements cannot have type `unit`",
-                span.line, span.column
+            Type::Unit => Err(Diagnostic::at(
+                span.into(),
+                format!("array elements cannot have type `unit`"),
             )),
-            Type::Reference(_) => Err(format!(
-                "line {}:{}: references cannot be stored in arrays or vectors",
-                span.line, span.column
+            Type::Reference(_) => Err(Diagnostic::at(
+                span.into(),
+                format!("references cannot be stored in arrays or vectors"),
             )),
-            Type::MutableReference(_) => Err(format!(
-                "line {}:{}: references cannot be stored in arrays or vectors",
-                span.line, span.column
+            Type::MutableReference(_) => Err(Diagnostic::at(
+                span.into(),
+                format!("references cannot be stored in arrays or vectors"),
             )),
             Type::RawPointer(_, _) => {
                 let ValueType::RawPointer(index) = self.resolve_type(element, span)? else {
@@ -402,12 +402,18 @@ impl<'ctx> Codegen<'ctx> {
             Type::Named(name) if self.struct_ids.contains_key(name) => {
                 Ok(ArrayElementType::Struct(self.struct_ids[name]))
             }
-            Type::Named(name) => Err(format!(
-                "line {}:{}: unknown type `{name}`",
-                span.line, span.column
+            Type::Named(name) => Err(Diagnostic::at(
+                span.into(),
+                format!("unknown type `{name}`"),
             )),
-            Type::Applied(name, _) => Err(format!("generic type `{name}` was not specialized")),
-            Type::Parameter(name) => Err(format!("generic parameter `{name}` was not specialized")),
+            Type::Applied(name, _) => Err(Diagnostic::at(
+                span.into(),
+                format!("generic type `{name}` was not specialized"),
+            )),
+            Type::Parameter(name) => Err(Diagnostic::at(
+                span.into(),
+                format!("generic parameter `{name}` was not specialized"),
+            )),
         }
     }
 }

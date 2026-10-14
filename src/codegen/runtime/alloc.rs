@@ -1,7 +1,7 @@
 use super::super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(in crate::codegen) fn emit_allocator_builtin(&mut self) -> Result<(), String> {
+    pub(in crate::codegen) fn emit_allocator_builtin(&mut self) -> Result<(), Diagnostic> {
         let pointer = self.context.ptr_type(AddressSpace::default());
         let size_type = self.i64_type();
         let realloc = self.module.add_function(

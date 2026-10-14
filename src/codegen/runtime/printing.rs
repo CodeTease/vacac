@@ -1,7 +1,7 @@
 use super::super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(in crate::codegen) fn emit_print_builtins(&mut self) -> Result<(), String> {
+    pub(in crate::codegen) fn emit_print_builtins(&mut self) -> Result<(), Diagnostic> {
         let i8_ptr = self.context.ptr_type(AddressSpace::default());
         let printf_type = self.context.i32_type().fn_type(&[i8_ptr.into()], true);
         let printf = self.module.add_function("printf", printf_type, None);
@@ -19,7 +19,7 @@ impl<'ctx> Codegen<'ctx> {
         name: &str,
         param: ValueType,
         format: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         let function_type = self.llvm_fn_type(&[param], ValueType::Unit)?;
         let function = self.module.add_function(name, function_type, None);
         let entry = self.context.append_basic_block(function, "entry");
@@ -30,7 +30,7 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?;
         let value = function
             .get_nth_param(0)
-            .ok_or_else(|| format!("missing {name} parameter"))?;
+            .ok_or_else(|| Diagnostic::new(format!("missing {name} parameter")))?;
         let value = if param == ValueType::F32 {
             self.builder
                 .build_float_ext(

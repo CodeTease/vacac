@@ -1,18 +1,24 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn evaluate_global(&mut self, name: &str) -> Result<ConstantValue, String> {
+    pub(super) fn evaluate_global(&mut self, name: &str) -> Result<ConstantValue, Diagnostic> {
         if let Some(value) = self.global_constant_values.get(name) {
             return Ok(value.clone());
         }
         match self.global_states.get(name).copied().unwrap_or(0) {
-            1 => return Err(format!("global initializer cycle involving `{name}`")),
+            1 => {
+                return Err(Diagnostic::new(format!(
+                    "global initializer cycle involving `{name}`"
+                )));
+            }
             2 => {
                 return self
                     .global_constant_values
                     .get(name)
                     .cloned()
-                    .ok_or_else(|| format!("global `{name}` has no initializer value"));
+                    .ok_or_else(|| {
+                        Diagnostic::new(format!("global `{name}` has no initializer value"))
+                    });
             }
             _ => {}
         }
@@ -21,7 +27,7 @@ impl<'ctx> Codegen<'ctx> {
             .global_declarations
             .get(name)
             .cloned()
-            .ok_or_else(|| format!("unknown global `{name}`"))?;
+            .ok_or_else(|| Diagnostic::new(format!("unknown global `{name}`")))?;
         let previous_module = self.module_context.clone();
         self.module_context = declaration.module.clone();
         let ty = self.global_types[name];
@@ -36,10 +42,11 @@ impl<'ctx> Codegen<'ctx> {
             }
             Err(error) => {
                 self.global_states.insert(name.to_owned(), 0);
-                Err(format!(
-                    "line {}:{}: {error}",
-                    declaration.span.line, declaration.span.column
-                ))
+                if error.span.is_some() {
+                    Err(error)
+                } else {
+                    Err(Diagnostic::at(declaration.span.into(), error.message))
+                }
             }
         }
     }
@@ -48,9 +55,8 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         expr: &Expr,
         expected: Option<ValueType>,
-    ) -> Result<ConstantValue, String> {
-        let fail =
-            |span: Span, message: &str| format!("line {}:{}: {message}", span.line, span.column);
+    ) -> Result<ConstantValue, Diagnostic> {
+        let fail = |span: Span, message: &str| Diagnostic::at(span.into(), format!("{message}"));
         let value = match expr {
             Expr::Integer(value, span) => {
                 let value = if let Some(value) = value.checked_into_i64() {
@@ -206,7 +212,7 @@ impl<'ctx> Codegen<'ctx> {
                     let value =
                         self.evaluate_constant_expr(expression, Some(ty))
                             .map_err(|error| {
-                                if error.is_empty() {
+                                if error.message.is_empty() {
                                     fail(*field_span, "invalid constant field")
                                 } else {
                                     error
@@ -403,8 +409,8 @@ impl<'ctx> Codegen<'ctx> {
         left: ConstantValue,
         right: ConstantValue,
         span: Span,
-    ) -> Result<ConstantValue, String> {
-        let error = |message: &str| format!("line {}:{}: {message}", span.line, span.column);
+    ) -> Result<ConstantValue, Diagnostic> {
+        let error = |message: &str| Diagnostic::at(span.into(), message);
         let aggregate_equal = constant_values_equal(&left, &right);
         let (ty, data) = match (left.data.clone(), right.data.clone()) {
             (ConstantData::I64(a), ConstantData::I64(b)) => match op {
@@ -502,9 +508,9 @@ impl<'ctx> Codegen<'ctx> {
         b: f64,
         ty: ValueType,
         error: F,
-    ) -> Result<(ValueType, ConstantData), String>
+    ) -> Result<(ValueType, ConstantData), Diagnostic>
     where
-        F: Fn(&str) -> String,
+        F: Fn(&str) -> Diagnostic,
     {
         let value = match op {
             BinaryOp::Add => Some(a + b),
@@ -538,9 +544,9 @@ impl<'ctx> Codegen<'ctx> {
         a: f32,
         b: f32,
         error: F,
-    ) -> Result<(ValueType, ConstantData), String>
+    ) -> Result<(ValueType, ConstantData), Diagnostic>
     where
-        F: Fn(&str) -> String,
+        F: Fn(&str) -> Diagnostic,
     {
         let value = match op {
             BinaryOp::Add => Some(a + b),
@@ -568,7 +574,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn lower_constant(
         &mut self,
         value: &ConstantValue,
-    ) -> Result<BasicValueEnum<'ctx>, String> {
+    ) -> Result<BasicValueEnum<'ctx>, Diagnostic> {
         Ok(match &value.data {
             ConstantData::I64(value) => self.i64_type().const_int(*value as u64, true).into(),
             ConstantData::F32(value) => self
@@ -655,7 +661,7 @@ impl<'ctx> Codegen<'ctx> {
         })
     }
 
-    fn string_global_literal(&mut self, value: &str) -> Result<PointerValue<'ctx>, String> {
+    fn string_global_literal(&mut self, value: &str) -> Result<PointerValue<'ctx>, Diagnostic> {
         let symbol = format!("vaca.global.str.{}", self.string_literals.len());
         let ty = self.context.i8_type().array_type(value.len() as u32 + 1);
         let global = self

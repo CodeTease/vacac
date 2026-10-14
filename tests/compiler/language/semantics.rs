@@ -94,6 +94,21 @@ fn entry_point_signature_is_required_and_must_be_exact() {
     ] {
         assert_compile_error(source, test_name, expected);
     }
+
+    let (directory, compile) =
+        compile_source("fn helper() -> i64 { 0 }\n", "missing-main-location");
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(stderr.contains("test.vca:1:1:"), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = compile_source(
+        "fn main(value: i64) -> i64 { value }\n",
+        "main-signature-location",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(stderr.contains("test.vca:1:1:"), "{stderr}");
+    assert!(stderr.contains("^"), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
 }
 
 #[test]

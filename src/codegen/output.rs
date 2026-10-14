@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn target_machine(&mut self) -> Result<TargetMachine, String> {
+    pub(super) fn target_machine(&mut self) -> Result<TargetMachine, Diagnostic> {
         Target::initialize_x86(&InitializationConfig::default());
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
@@ -21,16 +21,16 @@ impl<'ctx> Codegen<'ctx> {
         Ok(machine)
     }
 
-    pub(super) fn write_object(&mut self, path: &Path) -> Result<(), String> {
+    pub(super) fn write_object(&mut self, path: &Path) -> Result<(), Diagnostic> {
         let machine = self.target_machine()?;
-        machine
+        Ok(machine
             .write_to_file(&self.module, FileType::Object, path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?)
     }
 
-    pub(super) fn write_llvm(&mut self, path: &Path) -> Result<(), String> {
+    pub(super) fn write_llvm(&mut self, path: &Path) -> Result<(), Diagnostic> {
         self.target_machine()?;
-        self.module.print_to_file(path).map_err(|e| e.to_string())
+        Ok(self.module.print_to_file(path).map_err(|e| e.to_string())?)
     }
 }
 

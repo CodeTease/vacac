@@ -4,7 +4,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn emit_loop_expression(
         &mut self,
         body: &Block,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let function = self.current_function.ok_or("loop outside function")?;
         let body_bb = self.context.append_basic_block(function, "loop.body");
         let end_bb = self.context.append_basic_block(function, "loop.end");
@@ -56,7 +56,11 @@ impl<'ctx> Codegen<'ctx> {
         })
     }
 
-    pub(super) fn emit_while(&mut self, condition: &Expr, body: &Block) -> Result<bool, String> {
+    pub(super) fn emit_while(
+        &mut self,
+        condition: &Expr,
+        body: &Block,
+    ) -> Result<bool, Diagnostic> {
         let function = self.current_function.ok_or("while outside function")?;
         let cond_bb = self.context.append_basic_block(function, "while.cond");
         let body_bb = self.context.append_basic_block(function, "while.body");
@@ -66,7 +70,8 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|e| e.to_string())?;
         self.builder.position_at_end(cond_bb);
         let cond = self.emit_expression(condition)?;
-        let cond_value = self.expect_bool(cond, "while condition")?;
+        let cond_value =
+            self.expect_bool(cond, "while condition", codegen_span_of_expr(condition))?;
         self.builder
             .build_conditional_branch(cond_value, body_bb, end_bb)
             .map_err(|e| e.to_string())?;
@@ -102,12 +107,17 @@ impl<'ctx> Codegen<'ctx> {
         start_expr: &Expr,
         end_expr: &Expr,
         body: &Block,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         // Evaluate the bounds once, before the loop variable enters scope.
         let start = self.emit_expression(start_expr)?;
         let end = self.emit_expression(end_expr)?;
         if start.ty != ValueType::I64 || end.ty != ValueType::I64 {
-            return Err("for range bounds must be i64".into());
+            let span = if start.ty != ValueType::I64 {
+                codegen_span_of_expr(start_expr)
+            } else {
+                codegen_span_of_expr(end_expr)
+            };
+            return Err(Diagnostic::at(span.into(), "for range bounds must be i64"));
         }
         let start = start
             .value
@@ -208,7 +218,7 @@ impl<'ctx> Codegen<'ctx> {
         array_expr: &Expr,
         body: &Block,
         span: Span,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         let array = self.emit_expression(array_expr)?;
         let (element, vector_handle) = match array.ty {
             ValueType::Array(array_id) => (self.array_shapes[array_id].element, None),
@@ -222,9 +232,9 @@ impl<'ctx> Codegen<'ctx> {
                 ),
             ),
             _ => {
-                return Err(format!(
-                    "line {}:{}: array iteration requires an array or vector",
-                    span.line, span.column
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("array iteration requires an array or vector"),
                 ));
             }
         };
@@ -364,7 +374,7 @@ impl<'ctx> Codegen<'ctx> {
         element: ArrayElementType,
         header: PointerValue<'ctx>,
         body: &Block,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         let function = self
             .current_function
             .ok_or("vector loop outside function")?;

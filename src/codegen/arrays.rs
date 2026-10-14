@@ -1,7 +1,10 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn vector_element_size(&self, element: ValueType) -> Result<IntValue<'ctx>, String> {
+    pub(super) fn vector_element_size(
+        &self,
+        element: ValueType,
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         let llvm_type = self
             .llvm_type(element)
             .ok_or("vector element has no LLVM type")?;
@@ -16,18 +19,19 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn vector_element_byte_size(
         &self,
         element: ValueType,
-    ) -> Result<IntValue<'ctx>, String> {
-        self.llvm_type(element)
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
+        Ok(self
+            .llvm_type(element)
             .ok_or("vector element has no LLVM type")?
             .size_of()
-            .ok_or_else(|| "vector element has no size".to_owned())
+            .ok_or_else(|| "vector element has no size".to_owned())?)
     }
 
     pub(super) fn emit_expression_expected(
         &mut self,
         expression: &Expr,
         expected: ValueType,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let needs_context = match (expression, expected) {
             (Expr::Array(elements, _), ValueType::Array(index)) => {
                 elements.is_empty()
@@ -63,13 +67,16 @@ impl<'ctx> Codegen<'ctx> {
         expression: &Expr,
         array_type: ValueType,
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         if let (Expr::Call { name, args, .. }, ValueType::Vector(vector_id)) =
             (expression, array_type)
             && name == "vec_new"
         {
             if !args.is_empty() {
-                return Err(format!("`vec_new` expects 0 arguments, got {}", args.len()));
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("`vec_new` expects 0 arguments, got {}", args.len()),
+                ));
             }
             let _element_size = self
                 .vector_element_byte_size(ValueType::from(self.vector_shapes[vector_id].element))?;
@@ -94,12 +101,13 @@ impl<'ctx> Codegen<'ctx> {
         {
             let expected_elements = self.tuple_shapes[tuple_id].clone();
             if elements.len() != expected_elements.len() {
-                return Err(format!(
-                    "line {}:{}: tuple expression has {} element(s), expected {}",
-                    tuple_span.line,
-                    tuple_span.column,
-                    elements.len(),
-                    expected_elements.len()
+                return Err(Diagnostic::at(
+                    tuple_span.into(),
+                    format!(
+                        "tuple expression has {} element(s), expected {}",
+                        elements.len(),
+                        expected_elements.len()
+                    ),
                 ));
             }
             let llvm_type = self.llvm_type(array_type).ok_or("tuple has no LLVM type")?;
@@ -109,10 +117,13 @@ impl<'ctx> Codegen<'ctx> {
             {
                 let value = self.emit_expression_expected(expression, element_type)?;
                 if value.ty != element_type {
-                    return Err(format!(
-                        "tuple element has type {}, expected {}",
-                        self.type_name(value.ty),
-                        self.type_name(element_type)
+                    return Err(Diagnostic::at(
+                        tuple_span.into(),
+                        format!(
+                            "tuple element has type {}, expected {}",
+                            self.type_name(value.ty),
+                            self.type_name(element_type)
+                        ),
                     ));
                 }
                 aggregate = self
@@ -140,9 +151,9 @@ impl<'ctx> Codegen<'ctx> {
         let shape = self.array_shapes[array_id];
         if elements.is_empty() {
             if shape.length != 0 {
-                return Err(format!(
-                    "line {}:{}: empty array literal must have array length 0",
-                    span.line, span.column
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("empty array literal must have array length 0"),
                 ));
             }
             return Ok(TypedValue {
@@ -155,12 +166,13 @@ impl<'ctx> Codegen<'ctx> {
             });
         }
         if elements.len() != shape.length as usize {
-            return Err(format!(
-                "line {}:{}: array literal has length {}, expected {}",
-                span.line,
-                span.column,
-                elements.len(),
-                shape.length
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "array literal has length {}, expected {}",
+                    elements.len(),
+                    shape.length
+                ),
             ));
         }
         let llvm_type = self
@@ -181,10 +193,13 @@ impl<'ctx> Codegen<'ctx> {
                 self.emit_expression(expression)?
             };
             if value.ty != element_type {
-                return Err(format!(
-                    "array element has type {}, expected {}",
-                    self.type_name(value.ty),
-                    self.type_name(element_type)
+                return Err(Diagnostic::at(
+                    codegen_span_of_expr(expression).into(),
+                    format!(
+                        "array element has type {}, expected {}",
+                        self.type_name(value.ty),
+                        self.type_name(element_type)
+                    ),
                 ));
             }
             aggregate = self
@@ -208,23 +223,23 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         elements: &[Expr],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         if elements.is_empty() {
-            return Err(format!(
-                "line {}:{}: empty array literals require an array type annotation",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("empty array literals require an array type annotation"),
             ));
         }
         let Some(first) = elements.first() else {
-            return Err(format!(
-                "line {}:{}: array literals must contain at least one element",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("array literals must contain at least one element"),
             ));
         };
         if elements.len() > u32::MAX as usize {
-            return Err(format!(
-                "line {}:{}: array literal is too large",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("array literal is too large"),
             ));
         }
         let first = self.emit_expression(first)?;
@@ -273,10 +288,13 @@ impl<'ctx> Codegen<'ctx> {
                 self.emit_expression(expression)?
             };
             if value.ty != ValueType::from(element) {
-                return Err(format!(
-                    "array element has type {}, expected {}",
-                    self.type_name(value.ty),
-                    self.type_name(ValueType::from(element))
+                return Err(Diagnostic::at(
+                    codegen_span_of_expr(expression).into(),
+                    format!(
+                        "array element has type {}, expected {}",
+                        self.type_name(value.ty),
+                        self.type_name(ValueType::from(element))
+                    ),
                 ));
             }
             aggregate = self
@@ -300,11 +318,11 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         elements: &[Expr],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         if elements.is_empty() {
-            return Err(format!(
-                "line {}:{}: tuple literals must contain at least one element",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("tuple literals must contain at least one element"),
             ));
         }
         let mut values = Vec::with_capacity(elements.len());
@@ -312,9 +330,9 @@ impl<'ctx> Codegen<'ctx> {
         for element in elements {
             let value = self.emit_expression(element)?;
             if value.ty == ValueType::Unit {
-                return Err(format!(
-                    "line {}:{}: tuple elements cannot have type `unit`",
-                    span.line, span.column
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("tuple elements cannot have type `unit`"),
                 ));
             }
             types.push(value.ty);
@@ -346,18 +364,19 @@ impl<'ctx> Codegen<'ctx> {
         pointer: PointerValue<'ctx>,
         array_type: ValueType,
         index: IntValue<'ctx>,
-    ) -> Result<PointerValue<'ctx>, String> {
+    ) -> Result<PointerValue<'ctx>, Diagnostic> {
         let zero = self.i64_type().const_zero();
         let llvm_array_type = self.llvm_type(array_type).ok_or("array has no LLVM type")?;
         unsafe {
-            self.builder
+            Ok(self
+                .builder
                 .build_in_bounds_gep(
                     llvm_array_type,
                     pointer,
                     &[zero, index],
                     "array.element.ptr",
                 )
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?)
         }
     }
 
@@ -365,7 +384,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         index: IntValue<'ctx>,
         length: u32,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         let is_negative = self
             .builder
             .build_int_compare(
@@ -419,7 +438,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         index: IntValue<'ctx>,
         length: IntValue<'ctx>,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         let negative = self
             .builder
             .build_int_compare(

@@ -101,6 +101,21 @@ fn json_diagnostics_include_lexer_spans() {
 }
 
 #[test]
+fn json_diagnostics_use_null_for_unavailable_source_locations() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 { 0 }\n",
+        "json-no-location",
+        &["--json", "--unknown"],
+    );
+    assert!(!result.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&result.stderr).trim(),
+        r#"{"severity":"error","file":null,"line":null,"column":null,"end_column":null,"message":"unknown argument: --unknown (try --help)"}"#
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn run_mode_rejects_output_paths() {
     let (dir, result) = run_compiler_with_args(
         "fn main() -> i64 { 0 }\n",

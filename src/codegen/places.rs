@@ -7,7 +7,7 @@ impl<'ctx> Codegen<'ctx> {
         root_name: &str,
         root_pointer: PointerValue<'ctx>,
         root_type: ValueType,
-    ) -> Result<(PointerValue<'ctx>, ValueType), String> {
+    ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
         match expr {
             Expr::Variable(name, _) if name == root_name => Ok((root_pointer, root_type)),
             Expr::Unary {
@@ -21,11 +21,9 @@ impl<'ctx> Codegen<'ctx> {
                     ValueType::MutableReference(index) => self.mutable_reference_types[index],
                     ValueType::RawPointer(index) => self.raw_pointer_types[index].0,
                     other => {
-                        return Err(format!(
-                            "line {}:{}: cannot dereference {}",
-                            span.line,
-                            span.column,
-                            self.type_name(other)
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("cannot dereference {}", self.type_name(other)),
                         ));
                     }
                 };
@@ -39,9 +37,9 @@ impl<'ctx> Codegen<'ctx> {
                 let (base_pointer, base_type) =
                     self.emit_place_pointer(value, root_name, root_pointer, root_type)?;
                 let ValueType::Struct(struct_id) = base_type else {
-                    return Err(format!(
-                        "line {}:{}: field access requires a struct value",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("field access requires a struct value"),
                     ));
                 };
                 let field_index = self.structs[struct_id]
@@ -49,9 +47,12 @@ impl<'ctx> Codegen<'ctx> {
                     .iter()
                     .position(|field| field.name == *name)
                     .ok_or_else(|| {
-                        format!(
-                            "line {}:{}: struct `{}` has no field `{name}`",
-                            span.line, span.column, self.structs[struct_id].name
+                        Diagnostic::at(
+                            span.into(),
+                            format!(
+                                "struct `{}` has no field `{name}`",
+                                self.structs[struct_id].name
+                            ),
                         )
                     })?;
                 let field = &self.structs[struct_id].fields[field_index];
@@ -74,7 +75,7 @@ impl<'ctx> Codegen<'ctx> {
                     self.emit_place_pointer(array, root_name, root_pointer, root_type)?;
                 if let ValueType::Vector(vector_id) = array_type {
                     let index_value = self.emit_expression(index)?;
-                    let index_value = self.expect_i64(index_value, "vector index")?;
+                    let index_value = self.expect_i64(index_value, "vector index", *span)?;
                     let handle = self
                         .builder
                         .build_load(
@@ -143,13 +144,13 @@ impl<'ctx> Codegen<'ctx> {
                     return Ok((pointer, element_type));
                 }
                 let ValueType::Array(array_id) = array_type else {
-                    return Err(format!(
-                        "line {}:{}: indexing requires an array (or vector)",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("indexing requires an array (or vector)"),
                     ));
                 };
                 let index_value = self.emit_expression(index)?;
-                let index_value = self.expect_i64(index_value, "array index")?;
+                let index_value = self.expect_i64(index_value, "array index", *span)?;
                 let shape = self.array_shapes[array_id];
                 self.emit_bounds_check(index_value, shape.length)?;
                 let element_pointer =
@@ -163,21 +164,28 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn emit_address_of_place(
         &mut self,
         expr: &Expr,
-    ) -> Result<(PointerValue<'ctx>, ValueType), String> {
+    ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
         if !matches!(expr, Expr::Variable(_, _)) {
-            return Err("raw address-taking currently requires a local or global variable".into());
+            return Err(Diagnostic::at(
+                codegen_span_of_expr(expr).into(),
+                "raw address-taking currently requires a local or global variable",
+            ));
         }
+        let span = codegen_span_of_expr(expr);
         let name = codegen_assignment_root(expr)
             .ok_or("raw address-taking requires a variable, field, or array element")?;
         let (root_pointer, root_type) = if let Some(local) = self.lookup_local(name) {
             (local.pointer, local.ty)
         } else {
-            let global_name = self
-                .resolve_global_name(name)
-                .ok_or_else(|| format!("undefined variable `{name}`"))?;
+            let global_name = self.resolve_global_name(name).ok_or_else(|| {
+                Diagnostic::at(span.into(), format!("undefined variable `{name}`"))
+            })?;
             let declaration = self.global_declarations[&global_name].clone();
             if declaration.module != self.module_context && !declaration.is_public {
-                return Err(format!("global `{name}` is private"));
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("global `{name}` is private"),
+                ));
             }
             (
                 self.globals[&global_name].as_pointer_value(),
@@ -187,7 +195,7 @@ impl<'ctx> Codegen<'ctx> {
         self.emit_place_pointer(expr, name, root_pointer, root_type)
     }
 
-    fn place_is_mutable(&mut self, expr: &Expr) -> Result<bool, String> {
+    fn place_is_mutable(&mut self, expr: &Expr) -> Result<bool, Diagnostic> {
         match expr {
             Expr::Unary {
                 op: UnaryOp::Dereference,
@@ -199,11 +207,9 @@ impl<'ctx> Codegen<'ctx> {
                     ValueType::MutableReference(_) => Ok(true),
                     ValueType::Reference(_) => Ok(false),
                     ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].1),
-                    other => Err(format!(
-                        "line {}:{}: cannot dereference {}",
-                        span.line,
-                        span.column,
-                        self.type_name(other)
+                    other => Err(Diagnostic::at(
+                        span.into(),
+                        format!("cannot dereference {}", self.type_name(other)),
                     )),
                 }
             }
@@ -213,7 +219,10 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    pub(super) fn emit_assignment_statement(&mut self, statement: &Stmt) -> Result<bool, String> {
+    pub(super) fn emit_assignment_statement(
+        &mut self,
+        statement: &Stmt,
+    ) -> Result<bool, Diagnostic> {
         match statement {
             Stmt::Assign { name, value, span } => {
                 let (pointer, ty) = if let Some(local) = self.lookup_local(name) {
@@ -221,9 +230,9 @@ impl<'ctx> Codegen<'ctx> {
                         local.ty,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
-                        return Err(format!(
-                            "line {}:{}: reference bindings cannot be reassigned",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("reference bindings cannot be reassigned"),
                         ));
                     }
                     if local.immutable {
@@ -232,27 +241,24 @@ impl<'ctx> Codegen<'ctx> {
                         } else {
                             format!("cannot assign to immutable binding `{name}`")
                         };
-                        return Err(format!("line {}:{}: {reason}", span.line, span.column));
+                        return Err(Diagnostic::at(span.into(), format!("{reason}")));
                     }
                     (local.pointer, local.ty)
                 } else {
                     let global_name = self.resolve_global_name(name).ok_or_else(|| {
-                        format!(
-                            "line {}:{}: undefined variable `{name}`",
-                            span.line, span.column
-                        )
+                        Diagnostic::at(span.into(), format!("undefined variable `{name}`"))
                     })?;
                     let declaration = self.global_declarations[&global_name].clone();
                     if declaration.module != self.module_context && !declaration.is_public {
-                        return Err(format!(
-                            "line {}:{}: global `{name}` is private",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("global `{name}` is private"),
                         ));
                     }
                     if !declaration.mutable {
-                        return Err(format!(
-                            "line {}:{}: cannot assign to immutable global `{name}`",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("cannot assign to immutable global `{name}`"),
                         ));
                     }
                     (
@@ -262,12 +268,13 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let value = self.emit_expression_expected(value, ty)?;
                 if ty != value.ty {
-                    return Err(format!(
-                        "line {}:{}: cannot assign {} to `{name}` of type {}",
-                        span.line,
-                        span.column,
-                        self.type_name(value.ty),
-                        self.type_name(ty)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "cannot assign {} to `{name}` of type {}",
+                            self.type_name(value.ty),
+                            self.type_name(ty)
+                        ),
                     ));
                 }
                 self.builder
@@ -281,9 +288,9 @@ impl<'ctx> Codegen<'ctx> {
                 span,
             } => {
                 let name = codegen_assignment_root(target).ok_or_else(|| {
-                    format!(
-                        "line {}:{}: assignment target must start with a variable",
-                        span.line, span.column
+                    Diagnostic::at(
+                        span.into(),
+                        format!("assignment target must start with a variable"),
                     )
                 })?;
                 if matches!(target, Expr::Variable(_, _))
@@ -294,9 +301,9 @@ impl<'ctx> Codegen<'ctx> {
                         )
                     })
                 {
-                    return Err(format!(
-                        "line {}:{}: reference bindings cannot be reassigned",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("reference bindings cannot be reassigned"),
                     ));
                 }
                 let (root_pointer, root_type, mutable, loop_variable) =
@@ -309,16 +316,13 @@ impl<'ctx> Codegen<'ctx> {
                         )
                     } else {
                         let global_name = self.resolve_global_name(name).ok_or_else(|| {
-                            format!(
-                                "line {}:{}: undefined variable `{name}`",
-                                span.line, span.column
-                            )
+                            Diagnostic::at(span.into(), format!("undefined variable `{name}`"))
                         })?;
                         let declaration = self.global_declarations[&global_name].clone();
                         if declaration.module != self.module_context && !declaration.is_public {
-                            return Err(format!(
-                                "line {}:{}: global `{name}` is private",
-                                span.line, span.column
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!("global `{name}` is private"),
                             ));
                         }
                         (
@@ -335,14 +339,14 @@ impl<'ctx> Codegen<'ctx> {
                     if let Expr::Unary { value: pointer, .. } = target
                         && matches!(self.emit_expression(pointer)?.ty, ValueType::Reference(_))
                     {
-                        return Err(format!(
-                            "line {}:{}: assignment target must start with a variable",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("assignment target must start with a variable"),
                         ));
                     }
-                    return Err(format!(
-                        "line {}:{}: cannot assign through an immutable pointer",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("cannot assign through an immutable pointer"),
                     ));
                 }
                 if !through_pointer && !mutable && !vector_place {
@@ -351,18 +355,19 @@ impl<'ctx> Codegen<'ctx> {
                     } else {
                         format!("cannot assign through immutable binding `{name}`")
                     };
-                    return Err(format!("line {}:{}: {reason}", span.line, span.column));
+                    return Err(Diagnostic::at(span.into(), format!("{reason}")));
                 }
                 let (target_pointer, target_type) =
                     self.emit_place_pointer(target, name, root_pointer, root_type)?;
                 let value = self.emit_expression_expected(value, target_type)?;
                 if value.ty != target_type {
-                    return Err(format!(
-                        "line {}:{}: assignment target has type {}, expected {}",
-                        span.line,
-                        span.column,
-                        self.type_name(value.ty),
-                        self.type_name(target_type)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "assignment target has type {}, expected {}",
+                            self.type_name(value.ty),
+                            self.type_name(target_type)
+                        ),
                     ));
                 }
                 self.builder
@@ -382,7 +387,7 @@ impl<'ctx> Codegen<'ctx> {
         expr: &Expr,
         root_name: &str,
         root_type: ValueType,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         match expr {
             Expr::Variable(name, _) if name == root_name => Ok(false),
             Expr::Field { value, .. } => self.place_mutates_vector(value, root_name, root_type),
@@ -403,16 +408,16 @@ impl<'ctx> Codegen<'ctx> {
         expr: &Expr,
         root_name: &str,
         root_type: ValueType,
-    ) -> Result<ValueType, String> {
+    ) -> Result<ValueType, Diagnostic> {
         match expr {
             Expr::Variable(name, _) if name == root_name => Ok(root_type),
             Expr::Field { value, name, span } => {
                 let ValueType::Struct(struct_id) =
                     self.place_expression_type(value, root_name, root_type)?
                 else {
-                    return Err(format!(
-                        "line {}:{}: field access requires a struct",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("field access requires a struct"),
                     ));
                 };
                 let field = self.structs[struct_id]
@@ -420,10 +425,7 @@ impl<'ctx> Codegen<'ctx> {
                     .iter()
                     .find(|field| field.name == *name)
                     .ok_or_else(|| {
-                        format!(
-                            "line {}:{}: struct has no field `{name}`",
-                            span.line, span.column
-                        )
+                        Diagnostic::at(span.into(), format!("struct has no field `{name}`"))
                     })?;
                 self.resolve_type(&field.ty.clone(), field.span)
             }
@@ -432,9 +434,9 @@ impl<'ctx> Codegen<'ctx> {
             {
                 ValueType::Array(index) => Ok(ValueType::from(self.array_shapes[index].element)),
                 ValueType::Vector(index) => Ok(ValueType::from(self.vector_shapes[index].element)),
-                _ => Err(format!(
-                    "line {}:{}: indexing requires an array or vector",
-                    span.line, span.column
+                _ => Err(Diagnostic::at(
+                    span.into(),
+                    format!("indexing requires an array or vector"),
                 )),
             },
             _ => Err("invalid place expression".into()),

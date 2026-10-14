@@ -6,16 +6,18 @@ impl<'ctx> Codegen<'ctx> {
         value_expr: &Expr,
         arms: &[crate::parser::MatchArm],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let value = self.emit_expression(value_expr)?;
         if matches!(
             value.ty,
             ValueType::Tuple(_) | ValueType::Array(_) | ValueType::Struct(_)
         ) {
             if arms.len() != 1 {
-                return Err(format!(
-                    "line {}:{}: tuple, array, and struct matches require exactly one destructuring arm",
-                    span.line, span.column
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "tuple, array, and struct matches require exactly one destructuring arm"
+                    ),
                 ));
             }
             let arm = &arms[0];
@@ -23,9 +25,9 @@ impl<'ctx> Codegen<'ctx> {
                 arm.pattern,
                 MatchPattern::Wildcard | MatchPattern::Binding(_)
             ) {
-                return Err(format!(
-                    "line {}:{}: destructuring match arm must use a tuple, array, or struct pattern",
-                    arm.span.line, arm.span.column
+                return Err(Diagnostic::at(
+                    arm.span.into(),
+                    format!("destructuring match arm must use a tuple, array, or struct pattern"),
                 ));
             }
             let aggregate = value
@@ -36,9 +38,17 @@ impl<'ctx> Codegen<'ctx> {
             let (terminated, result) = self.emit_block(&arm.body, true)?;
             self.scopes.pop();
             if terminated {
-                return Err("destructuring match arm unexpectedly terminated".into());
+                return Err(Diagnostic::at(
+                    arm.span.into(),
+                    "destructuring match arm unexpectedly terminated",
+                ));
             }
-            return result.ok_or_else(|| "destructuring match arm must produce a value".to_owned());
+            return Ok(result.ok_or_else(|| {
+                Diagnostic::at(
+                    arm.span.into(),
+                    "destructuring match arm must produce a value",
+                )
+            })?);
         }
         if matches!(
             value.ty,
@@ -47,9 +57,9 @@ impl<'ctx> Codegen<'ctx> {
             return self.emit_scalar_match(value, arms, span);
         }
         let ValueType::Enum(enum_id) = value.ty else {
-            return Err(format!(
-                "line {}:{}: match requires an enum value",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("match requires an enum value"),
             ));
         };
         let enum_value = value
@@ -86,10 +96,7 @@ impl<'ctx> Codegen<'ctx> {
                 .iter()
                 .position(|variant| variant.name == *variant_name)
                 .ok_or_else(|| {
-                    format!(
-                        "line {}:{}: unknown variant `{variant_name}`",
-                        arm.span.line, arm.span.column
-                    )
+                    Diagnostic::at(arm.span.into(), format!("unknown variant `{variant_name}`"))
                 })?;
             let test = self
                 .builder
@@ -173,18 +180,28 @@ impl<'ctx> Codegen<'ctx> {
             let (terminated, result) = self.emit_block(&arm.body, true)?;
             self.scopes.pop();
             if terminated {
-                return Err("match arm unexpectedly terminated".into());
+                return Err(Diagnostic::at(
+                    arm.span.into(),
+                    "match arm unexpectedly terminated",
+                ));
             }
-            let result = result.ok_or("match arm must produce a value")?;
+            let result = result
+                .ok_or_else(|| Diagnostic::at(arm.span.into(), "match arm must produce a value"))?;
             if result.ty == ValueType::Unit {
-                return Err("match arms must produce a value".into());
+                return Err(Diagnostic::at(
+                    arm.span.into(),
+                    "match arms must produce a value",
+                ));
             }
             if let Some(expected) = result_type {
                 if expected != result.ty {
-                    return Err(format!(
-                        "match arms have different types: {} and {}",
-                        self.type_name(expected),
-                        self.type_name(result.ty)
+                    return Err(Diagnostic::at(
+                        arm.span.into(),
+                        format!(
+                            "match arms have different types: {} and {}",
+                            self.type_name(expected),
+                            self.type_name(result.ty)
+                        ),
                     ));
                 }
             } else {
@@ -225,7 +242,7 @@ impl<'ctx> Codegen<'ctx> {
         value: TypedValue<'ctx>,
         arms: &[crate::parser::MatchArm],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let scalar_value = value.value.ok_or("match value has no LLVM value")?;
         let is_float = matches!(value.ty, ValueType::F32 | ValueType::F64);
         let is_bool = value.ty == ValueType::Bool;
@@ -247,31 +264,31 @@ impl<'ctx> Codegen<'ctx> {
             let test_pattern = match &arm.pattern {
                 MatchPattern::Wildcard => {
                     if wildcard_seen {
-                        return Err(format!(
-                            "line {}:{}: duplicate wildcard match arm",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("duplicate wildcard match arm"),
                         ));
                     }
                     wildcard_seen = true;
                     if is_bool && seen_bool.len() == 2 {
-                        return Err(format!(
-                            "line {}:{}: unreachable wildcard match arm after all values are covered",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable wildcard match arm after all values are covered"),
                         ));
                     }
                     None
                 }
                 MatchPattern::Binding(_) => {
                     if wildcard_seen {
-                        return Err(format!(
-                            "line {}:{}: unreachable match arm after wildcard",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable match arm after wildcard"),
                         ));
                     }
                     if is_bool && seen_bool.len() == 2 {
-                        return Err(format!(
-                            "line {}:{}: unreachable wildcard match arm after all values are covered",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable wildcard match arm after all values are covered"),
                         ));
                     }
                     wildcard_seen = true;
@@ -285,45 +302,45 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 MatchPattern::Bool(pattern) if is_bool => {
                     if wildcard_seen {
-                        return Err(format!(
-                            "line {}:{}: unreachable match arm after wildcard",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable match arm after wildcard"),
                         ));
                     }
                     if !seen_bool.insert(*pattern) {
-                        return Err(format!(
-                            "line {}:{}: duplicate match arm for `{pattern}`",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("duplicate match arm for `{pattern}`"),
                         ));
                     }
                     Some(MatchPattern::Bool(*pattern))
                 }
                 MatchPattern::I64(pattern) if !is_bool && !is_float => {
                     if wildcard_seen {
-                        return Err(format!(
-                            "line {}:{}: unreachable match arm after wildcard",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable match arm after wildcard"),
                         ));
                     }
                     if !seen_i64.insert(*pattern) {
-                        return Err(format!(
-                            "line {}:{}: duplicate match arm for `{pattern}`",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("duplicate match arm for `{pattern}`"),
                         ));
                     }
                     Some(MatchPattern::I64(*pattern))
                 }
                 MatchPattern::F32(pattern) if value.ty == ValueType::F32 => {
                     if wildcard_seen {
-                        return Err(format!(
-                            "line {}:{}: unreachable match arm after wildcard",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable match arm after wildcard"),
                         ));
                     }
                     if seen_f32.iter().any(|seen| *seen == *pattern) {
-                        return Err(format!(
-                            "line {}:{}: duplicate match arm for `{pattern}`",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("duplicate match arm for `{pattern}`"),
                         ));
                     }
                     seen_f32.push(*pattern);
@@ -331,15 +348,15 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 MatchPattern::F64(pattern) if value.ty == ValueType::F64 => {
                     if wildcard_seen {
-                        return Err(format!(
-                            "line {}:{}: unreachable match arm after wildcard",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("unreachable match arm after wildcard"),
                         ));
                     }
                     if seen_f64.iter().any(|seen| *seen == *pattern) {
-                        return Err(format!(
-                            "line {}:{}: duplicate match arm for `{pattern}`",
-                            arm.span.line, arm.span.column
+                        return Err(Diagnostic::at(
+                            arm.span.into(),
+                            format!("duplicate match arm for `{pattern}`"),
                         ));
                     }
                     seen_f64.push(*pattern);
@@ -349,19 +366,21 @@ impl<'ctx> Codegen<'ctx> {
                 | MatchPattern::I64(_)
                 | MatchPattern::F32(_)
                 | MatchPattern::F64(_) => {
-                    return Err(format!(
-                        "line {}:{}: match pattern type does not match {} value",
-                        arm.span.line,
-                        arm.span.column,
-                        self.type_name(value.ty)
+                    return Err(Diagnostic::at(
+                        arm.span.into(),
+                        format!(
+                            "match pattern type does not match {} value",
+                            self.type_name(value.ty)
+                        ),
                     ));
                 }
                 MatchPattern::Variant { .. } => {
-                    return Err(format!(
-                        "line {}:{}: enum variant patterns cannot match {} values",
-                        arm.span.line,
-                        arm.span.column,
-                        self.type_name(value.ty)
+                    return Err(Diagnostic::at(
+                        arm.span.into(),
+                        format!(
+                            "enum variant patterns cannot match {} values",
+                            self.type_name(value.ty)
+                        ),
                     ));
                 }
             };
@@ -429,11 +448,9 @@ impl<'ctx> Codegen<'ctx> {
                 .build_unreachable()
                 .map_err(|error| error.to_string())?;
         } else if !wildcard_seen {
-            return Err(format!(
-                "line {}:{}: non-exhaustive match on `{}`",
-                span.line,
-                span.column,
-                self.type_name(value.ty)
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("non-exhaustive match on `{}`", self.type_name(value.ty)),
             ));
         } else {
             self.builder.position_at_end(fallback_bb);
@@ -466,18 +483,28 @@ impl<'ctx> Codegen<'ctx> {
             self.scopes.pop();
             let (terminated, result) = result?;
             if terminated {
-                return Err("match arm unexpectedly terminated".into());
+                return Err(Diagnostic::at(
+                    arm.span.into(),
+                    "match arm unexpectedly terminated",
+                ));
             }
-            let result = result.ok_or("match arm must produce a value")?;
+            let result = result
+                .ok_or_else(|| Diagnostic::at(arm.span.into(), "match arm must produce a value"))?;
             if result.ty == ValueType::Unit {
-                return Err("match arms must produce a value".into());
+                return Err(Diagnostic::at(
+                    arm.span.into(),
+                    "match arms must produce a value",
+                ));
             }
             if let Some(expected) = result_type {
                 if expected != result.ty {
-                    return Err(format!(
-                        "match arms have different types: {} and {}",
-                        self.type_name(expected),
-                        self.type_name(result.ty)
+                    return Err(Diagnostic::at(
+                        arm.span.into(),
+                        format!(
+                            "match arms have different types: {} and {}",
+                            self.type_name(expected),
+                            self.type_name(result.ty)
+                        ),
                     ));
                 }
             } else {

@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn emit_function(&mut self, function: &Function) -> Result<(), String> {
+    pub(super) fn emit_function(&mut self, function: &Function) -> Result<(), Diagnostic> {
         self.module_context = function.module.clone();
         let function_value = *self
             .functions
@@ -15,9 +15,9 @@ impl<'ctx> Codegen<'ctx> {
             self.return_type,
             ValueType::Reference(_) | ValueType::MutableReference(_)
         ) {
-            return Err(format!(
-                "line {}:{}: functions cannot return references",
-                function.span.line, function.span.column
+            return Err(Diagnostic::at(
+                function.span.into(),
+                format!("functions cannot return references"),
             ));
         }
         self.scopes.clear();
@@ -102,13 +102,14 @@ impl<'ctx> Codegen<'ctx> {
         if !terminated {
             if let Some(value) = tail {
                 if value.ty != self.return_type {
-                    return Err(format!(
-                        "line {}:{}: function `{}` returns {}, but its declared return type is {}",
-                        function.span.line,
-                        function.span.column,
-                        function.name,
-                        self.type_name(value.ty),
-                        self.type_name(self.return_type)
+                    return Err(Diagnostic::at(
+                        function.span.into(),
+                        format!(
+                            "function `{}` returns {}, but its declared return type is {}",
+                            function.name,
+                            self.type_name(value.ty),
+                            self.type_name(self.return_type)
+                        ),
                     ));
                 }
                 if let Some(returned) = value.value {
@@ -123,9 +124,12 @@ impl<'ctx> Codegen<'ctx> {
             } else if self.return_type == ValueType::Unit {
                 self.builder.build_return(None).map_err(|e| e.to_string())?;
             } else {
-                return Err(format!(
-                    "line {}:{}: function `{}` can reach its end without returning a value",
-                    function.span.line, function.span.column, function.name
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!(
+                        "function `{}` can reach its end without returning a value",
+                        function.name
+                    ),
                 ));
             }
         }
@@ -141,7 +145,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         block: &Block,
         function_body: bool,
-    ) -> Result<(bool, Option<TypedValue<'ctx>>), String> {
+    ) -> Result<(bool, Option<TypedValue<'ctx>>), Diagnostic> {
         self.scopes.push(HashMap::new());
         let mut terminated = false;
         for statement in &block.statements {
@@ -174,7 +178,7 @@ impl<'ctx> Codegen<'ctx> {
         Ok((terminated, tail_value))
     }
 
-    pub(super) fn emit_statement(&mut self, statement: &Stmt) -> Result<bool, String> {
+    pub(super) fn emit_statement(&mut self, statement: &Stmt) -> Result<bool, Diagnostic> {
         match statement {
             Stmt::Let {
                 pattern,
@@ -190,9 +194,9 @@ impl<'ctx> Codegen<'ctx> {
                     self.emit_expression(value)?
                 };
                 if value.ty == ValueType::Unit {
-                    return Err(format!(
-                        "line {}:{}: cannot bind a value of type `unit`",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("cannot bind a value of type `unit`"),
                     ));
                 }
                 if matches!(
@@ -200,9 +204,9 @@ impl<'ctx> Codegen<'ctx> {
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) && !*immutable
                 {
-                    return Err(format!(
-                        "line {}:{}: reference bindings must be immutable",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("reference bindings must be immutable"),
                     ));
                 }
                 let ty = match ty {
@@ -214,12 +218,13 @@ impl<'ctx> Codegen<'ctx> {
                         MatchPattern::Binding(name) => format!("initializer for `{name}`"),
                         _ => "binding initializer".to_owned(),
                     };
-                    return Err(format!(
-                        "line {}:{}: {context} has type {}, expected {}",
-                        span.line,
-                        span.column,
-                        self.type_name(value.ty),
-                        self.type_name(ty)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "{context} has type {}, expected {}",
+                            self.type_name(value.ty),
+                            self.type_name(ty)
+                        ),
                     ));
                 }
                 let aggregate = value.value.ok_or("missing initializer value")?;
@@ -234,14 +239,17 @@ impl<'ctx> Codegen<'ctx> {
                 if value.ty != ValueType::Unit { /* expression value intentionally discarded */ }
                 Ok(false)
             }
-            Stmt::Return { value, .. } => {
+            Stmt::Return { value, span } => {
                 let value = if let Some(expr) = value {
                     let value = self.emit_expression_expected(expr, self.return_type)?;
                     if value.ty != self.return_type {
-                        return Err(format!(
-                            "return type mismatch: expected {}, got {}",
-                            self.type_name(self.return_type),
-                            self.type_name(value.ty)
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!(
+                                "return type mismatch: expected {}, got {}",
+                                self.type_name(self.return_type),
+                                self.type_name(value.ty)
+                            ),
                         ));
                     }
                     value.value
@@ -266,15 +274,16 @@ impl<'ctx> Codegen<'ctx> {
                     .last()
                     .is_some_and(|target| target.value_loop);
                 if is_value_loop != value.is_some() {
-                    return Err(format!(
-                        "line {}:{}: {}",
-                        span.line,
-                        span.column,
-                        if is_value_loop {
-                            "a value-producing loop requires `break` with a value"
-                        } else {
-                            "`break` with a value is only valid inside a value-producing `loop`"
-                        }
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "{}",
+                            if is_value_loop {
+                                "a value-producing loop requires `break` with a value"
+                            } else {
+                                "`break` with a value is only valid inside a value-producing `loop`"
+                            }
+                        ),
                     ));
                 }
                 let emitted_value = value
@@ -287,9 +296,9 @@ impl<'ctx> Codegen<'ctx> {
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     )
                 }) {
-                    return Err(format!(
-                        "line {}:{}: references cannot escape through loop breaks",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references cannot escape through loop breaks"),
                     ));
                 }
                 let break_block = self
@@ -297,9 +306,9 @@ impl<'ctx> Codegen<'ctx> {
                     .get_insert_block()
                     .ok_or("break has no insertion block")?;
                 if self.loop_targets.is_empty() {
-                    return Err(format!(
-                        "line {}:{}: `break` is only valid inside a loop",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("`break` is only valid inside a loop"),
                     ));
                 }
                 if let Some(value) = emitted_value {
@@ -312,10 +321,13 @@ impl<'ctx> Codegen<'ctx> {
                         .and_then(|target| target.result_type);
                     if let Some(expected) = expected {
                         if expected != value.ty {
-                            return Err(format!(
-                                "loop break values have different types: {} and {}",
-                                self.type_name(expected),
-                                self.type_name(value.ty)
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!(
+                                    "loop break values have different types: {} and {}",
+                                    self.type_name(expected),
+                                    self.type_name(value.ty)
+                                ),
                             ));
                         }
                     } else {
@@ -338,9 +350,9 @@ impl<'ctx> Codegen<'ctx> {
                     .last()
                     .map(|target| target.continue_target)
                     .ok_or_else(|| {
-                        format!(
-                            "line {}:{}: `continue` is only valid inside a loop",
-                            span.line, span.column
+                        Diagnostic::at(
+                            span.into(),
+                            format!("`continue` is only valid inside a loop"),
                         )
                     })?;
                 self.builder
@@ -378,9 +390,9 @@ impl<'ctx> Codegen<'ctx> {
         condition: &Expr,
         then_block: &Block,
         else_block: Option<&Block>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         let cond = self.emit_expression(condition)?;
-        let cond_value = self.expect_bool(cond, "if condition")?;
+        let cond_value = self.expect_bool(cond, "if condition", codegen_span_of_expr(condition))?;
         let function = self.current_function.ok_or("if outside function")?;
         let then_bb = self.context.append_basic_block(function, "if.then");
         let merge_bb = self.context.append_basic_block(function, "if.end");

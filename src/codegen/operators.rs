@@ -6,17 +6,21 @@ impl<'ctx> Codegen<'ctx> {
         op: BinaryOp,
         left_expr: &Expr,
         right_expr: &Expr,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
             return self.emit_logical(op, left_expr, right_expr);
         }
         let left = self.emit_expression(left_expr)?;
         let right = self.emit_expression(right_expr)?;
+        let span = codegen_span_of_expr(left_expr);
         if left.ty != right.ty {
-            return Err(format!(
-                "operator operands have different types: {} and {}",
-                self.type_name(left.ty),
-                self.type_name(right.ty)
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "operator operands have different types: {} and {}",
+                    self.type_name(left.ty),
+                    self.type_name(right.ty)
+                ),
             ));
         }
         if left.ty == ValueType::Unit {
@@ -24,7 +28,7 @@ impl<'ctx> Codegen<'ctx> {
         }
         if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
             if left.ty == ValueType::Str {
-                return self.emit_string_equality(op, left, right);
+                return self.emit_string_equality(op, left, right, span);
             }
             if matches!(
                 left.ty,
@@ -37,7 +41,7 @@ impl<'ctx> Codegen<'ctx> {
             ) {
                 let lhs = left.value.ok_or("left operand has no value")?;
                 let rhs = right.value.ok_or("right operand has no value")?;
-                let mut equal = self.emit_value_equality(left.ty, lhs, rhs)?;
+                let mut equal = self.emit_value_equality(left.ty, lhs, rhs, span)?;
                 if matches!(op, BinaryOp::NotEqual) {
                     equal = self
                         .builder
@@ -87,7 +91,7 @@ impl<'ctx> Codegen<'ctx> {
                 .value
                 .ok_or("right operand has no value")?
                 .into_float_value();
-            return self.emit_float_operation(op, left.ty, lhs, rhs);
+            return self.emit_float_operation(op, left.ty, lhs, rhs, span);
         }
         let lhs = left
             .value
@@ -100,9 +104,12 @@ impl<'ctx> Codegen<'ctx> {
         let result = match op {
             BinaryOp::BitAnd | BinaryOp::BitXor | BinaryOp::BitOr => {
                 if left.ty != ValueType::I64 {
-                    return Err(format!(
-                        "bitwise operators require i64, got {}",
-                        self.type_name(left.ty)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "bitwise operators require i64, got {}",
+                            self.type_name(left.ty)
+                        ),
                     ));
                 }
                 let value = match op {
@@ -119,9 +126,12 @@ impl<'ctx> Codegen<'ctx> {
             }
             BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
                 if left.ty != ValueType::I64 {
-                    return Err(format!(
-                        "shift operators require i64, got {}",
-                        self.type_name(left.ty)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "shift operators require i64, got {}",
+                            self.type_name(left.ty)
+                        ),
                     ));
                 }
                 self.guard_shift_amount(rhs)?;
@@ -145,9 +155,12 @@ impl<'ctx> Codegen<'ctx> {
             | BinaryOp::Divide
             | BinaryOp::Remainder => {
                 if left.ty != ValueType::I64 {
-                    return Err(format!(
-                        "arithmetic operators require i64, got {}",
-                        self.type_name(left.ty)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "arithmetic operators require i64, got {}",
+                            self.type_name(left.ty)
+                        ),
                     ));
                 }
                 let value = match op {
@@ -193,9 +206,12 @@ impl<'ctx> Codegen<'ctx> {
             }
             BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => {
                 if left.ty != ValueType::I64 {
-                    return Err(format!(
-                        "ordering comparisons require i64, got {}",
-                        self.type_name(left.ty)
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!(
+                            "ordering comparisons require i64, got {}",
+                            self.type_name(left.ty)
+                        ),
                     ));
                 }
                 let pred = match op {
@@ -224,7 +240,8 @@ impl<'ctx> Codegen<'ctx> {
         ty: ValueType,
         lhs: FloatValue<'ctx>,
         rhs: FloatValue<'ctx>,
-    ) -> Result<TypedValue<'ctx>, String> {
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let value = match op {
             BinaryOp::Add => Some(self.builder.build_float_add(lhs, rhs, "float.add")),
             BinaryOp::Subtract => Some(self.builder.build_float_sub(lhs, rhs, "float.sub")),
@@ -248,19 +265,22 @@ impl<'ctx> Codegen<'ctx> {
             BinaryOp::Greater => FloatPredicate::OGT,
             BinaryOp::GreaterEqual => FloatPredicate::OGE,
             _ => {
-                return Err(format!(
-                    "operator is not supported for {}: {}",
-                    self.type_name(ty),
-                    match op {
-                        BinaryOp::BitAnd => "&",
-                        BinaryOp::BitXor => "^",
-                        BinaryOp::BitOr => "|",
-                        BinaryOp::ShiftLeft => "<<",
-                        BinaryOp::ShiftRight => ">>",
-                        BinaryOp::And => "&&",
-                        BinaryOp::Or => "||",
-                        _ => "unknown operator",
-                    }
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "operator is not supported for {}: {}",
+                        self.type_name(ty),
+                        match op {
+                            BinaryOp::BitAnd => "&",
+                            BinaryOp::BitXor => "^",
+                            BinaryOp::BitOr => "|",
+                            BinaryOp::ShiftLeft => "<<",
+                            BinaryOp::ShiftRight => ">>",
+                            BinaryOp::And => "&&",
+                            BinaryOp::Or => "||",
+                            _ => "unknown operator",
+                        }
+                    ),
                 ));
             }
         };
@@ -279,7 +299,7 @@ impl<'ctx> Codegen<'ctx> {
         op: BinaryOp,
         lhs: IntValue<'ctx>,
         rhs: IntValue<'ctx>,
-    ) -> Result<IntValue<'ctx>, String> {
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         let wide_type = self.context.i128_type();
         let wide_lhs = self
             .builder
@@ -317,7 +337,7 @@ impl<'ctx> Codegen<'ctx> {
         Ok(result)
     }
 
-    fn guard_i64_overflow(&mut self, overflow: IntValue<'ctx>) -> Result<(), String> {
+    fn guard_i64_overflow(&mut self, overflow: IntValue<'ctx>) -> Result<(), Diagnostic> {
         let function = self.current_function.ok_or("arithmetic outside function")?;
         let failure = self
             .context
@@ -352,7 +372,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         lhs: IntValue<'ctx>,
         rhs: IntValue<'ctx>,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         let i64_type = self.i64_type();
         let zero_divisor = self
             .builder
@@ -414,7 +434,7 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
-    fn guard_shift_amount(&mut self, amount: IntValue<'ctx>) -> Result<(), String> {
+    fn guard_shift_amount(&mut self, amount: IntValue<'ctx>) -> Result<(), Diagnostic> {
         let negative = self
             .builder
             .build_int_compare(
@@ -468,14 +488,18 @@ impl<'ctx> Codegen<'ctx> {
         op: BinaryOp,
         left: TypedValue<'ctx>,
         right: TypedValue<'ctx>,
-    ) -> Result<TypedValue<'ctx>, String> {
+        span: Span,
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let pred = match op {
             BinaryOp::Equal => IntPredicate::EQ,
             BinaryOp::NotEqual => IntPredicate::NE,
             _ => {
-                return Err(format!(
-                    "operator is not supported for {}",
-                    self.type_name(ValueType::Str)
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "operator is not supported for {}",
+                        self.type_name(ValueType::Str)
+                    ),
                 ));
             }
         };
@@ -510,9 +534,13 @@ impl<'ctx> Codegen<'ctx> {
         op: BinaryOp,
         left_expr: &Expr,
         right_expr: &Expr,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let left = self.emit_expression(left_expr)?;
-        let lhs = self.expect_bool(left, "logical operator operand")?;
+        let lhs = self.expect_bool(
+            left,
+            "logical operator operand",
+            codegen_span_of_expr(left_expr),
+        )?;
         let function = self
             .current_function
             .ok_or("logical expression outside function")?;
@@ -535,7 +563,11 @@ impl<'ctx> Codegen<'ctx> {
 
         self.builder.position_at_end(rhs_block);
         let right = self.emit_expression(right_expr)?;
-        let rhs = self.expect_bool(right, "logical operator operand")?;
+        let rhs = self.expect_bool(
+            right,
+            "logical operator operand",
+            codegen_span_of_expr(right_expr),
+        )?;
         let rhs_end = self
             .builder
             .get_insert_block()

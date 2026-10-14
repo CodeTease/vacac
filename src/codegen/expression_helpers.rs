@@ -6,9 +6,10 @@ impl<'ctx> Codegen<'ctx> {
         condition: &Expr,
         then_block: &Block,
         else_block: &Block,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
+        let span = codegen_span_of_expr(condition);
         let condition = self.emit_expression(condition)?;
-        let condition = self.expect_bool(condition, "if condition")?;
+        let condition = self.expect_bool(condition, "if condition", span)?;
         let function = self
             .current_function
             .ok_or("if expression outside function")?;
@@ -43,10 +44,13 @@ impl<'ctx> Codegen<'ctx> {
         }
         let else_value = else_value.ok_or("if expression branch has no value")?;
         if else_value.ty != then_value.ty {
-            return Err(format!(
-                "if expression branches have different types: {} and {}",
-                self.type_name(then_value.ty),
-                self.type_name(else_value.ty)
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "if expression branches have different types: {} and {}",
+                    self.type_name(then_value.ty),
+                    self.type_name(else_value.ty)
+                ),
             ));
         }
         let else_llvm_value = else_value
@@ -79,16 +83,17 @@ impl<'ctx> Codegen<'ctx> {
         &self,
         value: TypedValue<'ctx>,
         context: &str,
-    ) -> Result<IntValue<'ctx>, String> {
+        span: Span,
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         if value.ty != ValueType::I64 {
-            return Err(format!(
-                "{context} must be i64, got {}",
-                self.type_name(value.ty)
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("{context} must be i64, got {}", self.type_name(value.ty)),
             ));
         }
         Ok(value
             .value
-            .ok_or_else(|| format!("{context} has no value"))?
+            .ok_or_else(|| Diagnostic::new(format!("{context} has no value")))?
             .into_int_value())
     }
 
@@ -96,16 +101,17 @@ impl<'ctx> Codegen<'ctx> {
         &self,
         value: TypedValue<'ctx>,
         context: &str,
-    ) -> Result<IntValue<'ctx>, String> {
+        span: Span,
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         if value.ty != ValueType::Bool {
-            return Err(format!(
-                "{context} must be bool, got {}",
-                self.type_name(value.ty)
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("{context} must be bool, got {}", self.type_name(value.ty)),
             ));
         }
         Ok(value
             .value
-            .ok_or_else(|| format!("{context} has no value"))?
+            .ok_or_else(|| Diagnostic::new(format!("{context} has no value")))?
             .into_int_value())
     }
 
@@ -133,7 +139,7 @@ impl<'ctx> Codegen<'ctx> {
         &self,
         ty: ValueType,
         name: &str,
-    ) -> Result<PointerValue<'ctx>, String> {
+    ) -> Result<PointerValue<'ctx>, Diagnostic> {
         let function = self.current_function.ok_or("alloca outside function")?;
         let entry = function
             .get_first_basic_block()
@@ -144,8 +150,8 @@ impl<'ctx> Codegen<'ctx> {
         } else {
             alloca_builder.position_at_end(entry);
         }
-        alloca_builder
+        Ok(alloca_builder
             .build_alloca(self.llvm_type(ty).ok_or("cannot allocate unit")?, name)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?)
     }
 }

@@ -185,8 +185,10 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
         }
         if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
             while i < bytes.len() && bytes[i] != b'\n' {
+                if bytes[i] & 0xC0 != 0x80 {
+                    column += 1;
+                }
                 i += 1;
-                column += 1;
             }
             continue;
         }
@@ -208,8 +210,10 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                     column = 1;
                     i += 1;
                 } else {
+                    if bytes[i] & 0xC0 != 0x80 {
+                        column += 1;
+                    }
                     i += 1;
-                    column += 1;
                 }
             }
             if !closed {

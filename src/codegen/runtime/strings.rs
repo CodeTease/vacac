@@ -1,7 +1,7 @@
 use super::super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(in crate::codegen) fn emit_string_concat_builtin(&mut self) -> Result<(), String> {
+    pub(in crate::codegen) fn emit_string_concat_builtin(&mut self) -> Result<(), Diagnostic> {
         let pointer_type = self.context.ptr_type(AddressSpace::default());
         let size_type = self.i64_type();
         let string_length = self.module.add_function(
@@ -186,7 +186,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(in crate::codegen) fn string_literal(
         &mut self,
         value: &str,
-    ) -> Result<PointerValue<'ctx>, String> {
+    ) -> Result<PointerValue<'ctx>, Diagnostic> {
         if let Some(pointer) = self.string_literals.get(value) {
             return Ok(*pointer);
         }
@@ -200,7 +200,7 @@ impl<'ctx> Codegen<'ctx> {
         Ok(pointer)
     }
 
-    pub(in crate::codegen) fn emit_c_main_wrapper(&mut self) -> Result<(), String> {
+    pub(in crate::codegen) fn emit_c_main_wrapper(&mut self) -> Result<(), Diagnostic> {
         let vaca_main = *self.functions.get("main").ok_or("missing main function")?;
         let wrapper_type = self.context.i32_type().fn_type(&[], false);
         let wrapper = self.module.add_function("main", wrapper_type, None);

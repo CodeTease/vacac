@@ -1,7 +1,7 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn emit_expression(&mut self, expr: &Expr) -> Result<TypedValue<'ctx>, String> {
+    pub(super) fn emit_expression(&mut self, expr: &Expr) -> Result<TypedValue<'ctx>, Diagnostic> {
         match expr {
             Expr::Integer(n, _) => Ok(TypedValue {
                 value: Some(self.i64_type().const_int(*n, false).into()),
@@ -29,14 +29,14 @@ impl<'ctx> Codegen<'ctx> {
                 name, args, span, ..
             } if name == "vec_new" => {
                 if !args.is_empty() {
-                    return Err(format!(
-                        "line {}:{}: `vec_new` expects 0 arguments",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("`vec_new` expects 0 arguments"),
                     ));
                 }
-                Err(format!(
-                    "line {}:{}: `vec_new()` requires a `Vec<T>` type annotation",
-                    span.line, span.column
+                Err(Diagnostic::at(
+                    span.into(),
+                    format!("`vec_new()` requires a `Vec<T>` type annotation"),
                 ))
             }
             Expr::Variable(name, span) => {
@@ -58,9 +58,9 @@ impl<'ctx> Codegen<'ctx> {
                         .get(&function_name)
                         .is_some_and(|(owner, public)| owner != &self.module_context && !public)
                     {
-                        return Err(format!(
-                            "line {}:{}: function `{name}` is private",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("function `{name}` is private"),
                         ));
                     }
                     let (params, result) = self.signatures[&function_name].clone();
@@ -77,16 +77,13 @@ impl<'ctx> Codegen<'ctx> {
                     );
                 }
                 let global_name = self.resolve_global_name(name).ok_or_else(|| {
-                    format!(
-                        "line {}:{}: undefined variable `{name}`",
-                        span.line, span.column
-                    )
+                    Diagnostic::at(span.into(), format!("undefined variable `{name}`"))
                 })?;
                 let declaration = self.global_declarations[&global_name].clone();
                 if declaration.module != self.module_context && !declaration.is_public {
-                    return Err(format!(
-                        "line {}:{}: global `{name}` is private",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("global `{name}` is private"),
                     ));
                 }
                 let ty = self.global_types[&global_name];
@@ -106,7 +103,7 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Index { array, index, span } => {
                 let array_value = self.emit_expression(array)?;
                 let index = self.emit_expression(index)?;
-                let index = self.expect_i64(index, "array index")?;
+                let index = self.expect_i64(index, "array index", *span)?;
                 if let ValueType::Vector(vector_id) = array_value.ty {
                     let header = array_value
                         .value
@@ -179,9 +176,9 @@ impl<'ctx> Codegen<'ctx> {
                     });
                 }
                 let ValueType::Array(array_id) = array_value.ty else {
-                    return Err(format!(
-                        "line {}:{}: indexing requires an array (or vector)",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("indexing requires an array (or vector)"),
                     ));
                 };
                 let shape = self.array_shapes[array_id];
@@ -209,9 +206,9 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Field { value, name, span } => {
                 let value = self.emit_expression(value)?;
                 let ValueType::Struct(struct_id) = value.ty else {
-                    return Err(format!(
-                        "line {}:{}: field access requires a struct value",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("field access requires a struct value"),
                     ));
                 };
                 let (owner, public) = self
@@ -220,9 +217,9 @@ impl<'ctx> Codegen<'ctx> {
                     .cloned()
                     .unwrap_or_default();
                 if owner != self.module_context && !public {
-                    return Err(format!(
-                        "line {}:{}: struct `{}` is private",
-                        span.line, span.column, self.structs[struct_id].name
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("struct `{}` is private", self.structs[struct_id].name),
                     ));
                 }
                 let field_index = self.structs[struct_id]
@@ -230,9 +227,12 @@ impl<'ctx> Codegen<'ctx> {
                     .iter()
                     .position(|field| field.name == *name)
                     .ok_or_else(|| {
-                        format!(
-                            "line {}:{}: struct `{}` has no field `{name}`",
-                            span.line, span.column, self.structs[struct_id].name
+                        Diagnostic::at(
+                            span.into(),
+                            format!(
+                                "struct `{}` has no field `{name}`",
+                                self.structs[struct_id].name
+                            ),
                         )
                     })?;
                 let field_declaration = &self.structs[struct_id].fields[field_index];
@@ -261,39 +261,36 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
                     let Expr::Variable(name, _) = value.as_ref() else {
-                        return Err(format!(
-                            "line {}:{}: borrowing currently requires a named local binding",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("borrowing currently requires a named local binding"),
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
-                        format!(
-                            "line {}:{}: only local bindings can be borrowed",
-                            span.line, span.column
-                        )
+                        Diagnostic::at(span.into(), format!("only local bindings can be borrowed"))
                     })?;
                     if !local.immutable {
-                        return Err(format!(
-                            "line {}:{}: only immutable local bindings can be borrowed",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("only immutable local bindings can be borrowed"),
                         ));
                     }
                     if matches!(
                         local.ty,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
-                        return Err(format!(
-                            "line {}:{}: references to references are not supported",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("references to references are not supported"),
                         ));
                     }
                     if !self.reference_target_is_supported(
                         local.ty,
                         &mut std::collections::HashSet::new(),
                     )? {
-                        return Err(format!(
-                            "line {}:{}: references to values containing vectors are not supported",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("references to values containing vectors are not supported"),
                         ));
                     }
                     let reference_type = self.reference_type(local.ty);
@@ -304,39 +301,36 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 if matches!(op, UnaryOp::BorrowMut) {
                     let Expr::Variable(name, _) = value.as_ref() else {
-                        return Err(format!(
-                            "line {}:{}: mutable borrowing currently requires a named local binding",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("mutable borrowing currently requires a named local binding"),
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
-                        format!(
-                            "line {}:{}: only local bindings can be borrowed",
-                            span.line, span.column
-                        )
+                        Diagnostic::at(span.into(), format!("only local bindings can be borrowed"))
                     })?;
                     if local.immutable || local.loop_variable {
-                        return Err(format!(
-                            "line {}:{}: mutable borrowing requires a mutable local binding",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("mutable borrowing requires a mutable local binding"),
                         ));
                     }
                     if !self.reference_target_is_supported(
                         local.ty,
                         &mut std::collections::HashSet::new(),
                     )? {
-                        return Err(format!(
-                            "line {}:{}: references to values containing vectors are not supported",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("references to values containing vectors are not supported"),
                         ));
                     }
                     if matches!(
                         local.ty,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
-                        return Err(format!(
-                            "line {}:{}: references to references are not supported",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("references to references are not supported"),
                         ));
                     }
                     let ty = self.mutable_reference_type(local.ty);
@@ -348,29 +342,35 @@ impl<'ctx> Codegen<'ctx> {
                 if matches!(op, UnaryOp::RawBorrowConst | UnaryOp::RawBorrowMut) {
                     if matches!(op, UnaryOp::RawBorrowMut) {
                         let Expr::Variable(name, _) = value.as_ref() else {
-                            return Err(format!(
-                                "line {}:{}: raw address-taking currently requires a local or global variable",
-                                span.line, span.column
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!(
+                                    "raw address-taking currently requires a local or global variable"
+                                ),
                             ));
                         };
                         if let Some(local) = self.lookup_local(name) {
                             if local.immutable || local.loop_variable {
-                                return Err(format!(
-                                    "line {}:{}: cannot take a mutable raw pointer to an immutable binding",
-                                    span.line, span.column
+                                return Err(Diagnostic::at(
+                                    span.into(),
+                                    format!(
+                                        "cannot take a mutable raw pointer to an immutable binding"
+                                    ),
                                 ));
                             }
                         } else if let Some(global_name) = self.resolve_global_name(name) {
                             if !self.global_declarations[&global_name].mutable {
-                                return Err(format!(
-                                    "line {}:{}: cannot take a mutable raw pointer to an immutable global",
-                                    span.line, span.column
+                                return Err(Diagnostic::at(
+                                    span.into(),
+                                    format!(
+                                        "cannot take a mutable raw pointer to an immutable global"
+                                    ),
                                 ));
                             }
                         } else {
-                            return Err(format!(
-                                "line {}:{}: undefined variable `{name}`",
-                                span.line, span.column
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!("undefined variable `{name}`"),
                             ));
                         }
                     }
@@ -407,11 +407,12 @@ impl<'ctx> Codegen<'ctx> {
                                 .into_pointer_value(),
                         ),
                         _ => {
-                            return Err(format!(
-                                "line {}:{}: unary `*` requires a reference or raw pointer, got {}",
-                                span.line,
-                                span.column,
-                                self.type_name(reference.ty)
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!(
+                                    "unary `*` requires a reference or raw pointer, got {}",
+                                    self.type_name(reference.ty)
+                                ),
                             ));
                         }
                     };
@@ -462,9 +463,9 @@ impl<'ctx> Codegen<'ctx> {
                             });
                         }
                         if value.ty != ValueType::I64 {
-                            return Err(format!(
-                                "unary `-` requires i64, got {}",
-                                self.type_name(value.ty)
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!("unary `-` requires i64, got {}", self.type_name(value.ty)),
                             ));
                         }
                         let result = self.emit_checked_i64_operation(
@@ -479,9 +480,12 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     UnaryOp::Not => {
                         if value.ty != ValueType::Bool {
-                            return Err(format!(
-                                "unary `!` requires bool, got {}",
-                                self.type_name(value.ty)
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!(
+                                    "unary `!` requires bool, got {}",
+                                    self.type_name(value.ty)
+                                ),
                             ));
                         }
                         let result = self
@@ -539,9 +543,9 @@ impl<'ctx> Codegen<'ctx> {
                     ret,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) {
-                    return Err(format!(
-                        "line {}:{}: lambdas cannot return references",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("lambdas cannot return references"),
                     ));
                 }
                 let capture_names = self
@@ -558,9 +562,9 @@ impl<'ctx> Codegen<'ctx> {
                         local.ty,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
-                        return Err(format!(
-                            "line {}:{}: closures cannot capture references",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("closures cannot capture references"),
                         ));
                     }
                     captures.push((capture_name, local.ty, local.pointer));
@@ -671,9 +675,9 @@ impl<'ctx> Codegen<'ctx> {
             } => {
                 let value = self.emit_if_expression(condition, then_block, else_block)?;
                 if matches!(value.ty, ValueType::Reference(_)) {
-                    return Err(format!(
-                        "line {}:{}: references cannot escape through `if` expressions",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references cannot escape through `if` expressions"),
                     ));
                 }
                 Ok(value)
@@ -689,9 +693,9 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Match { value, arms, span } => {
                 let value = self.emit_match(value, arms, *span)?;
                 if matches!(value.ty, ValueType::Reference(_)) {
-                    return Err(format!(
-                        "line {}:{}: references cannot escape through match expressions",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references cannot escape through match expressions"),
                     ));
                 }
                 Ok(value)
@@ -699,9 +703,9 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Loop { body, span } => {
                 let value = self.emit_loop_expression(body)?;
                 if matches!(value.ty, ValueType::Reference(_)) {
-                    return Err(format!(
-                        "line {}:{}: references cannot escape through loop expressions",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references cannot escape through loop expressions"),
                     ));
                 }
                 Ok(value)

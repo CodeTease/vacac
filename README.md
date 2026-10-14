@@ -67,6 +67,12 @@ object or executable. Use `--quiet` (or `-q`) to suppress success messages, and
 `--json` to emit errors as JSON for tools. `--help` lists all options and
 `--version` prints the compiler version.
 
+Diagnostics use one-based source line and column numbers. Columns count Unicode
+scalar values (a tab is one source column); human-readable excerpts expand tabs
+to four-column stops and align carets using the same scalar-value convention.
+JSON diagnostics always contain `severity`, `file`, `line`, `column`,
+`end_column`, and `message`; unavailable file or location values are `null`.
+
 ## Examples
 
 The [`examples/`](examples/) directory contains complete programs that can be

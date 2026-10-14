@@ -6,21 +6,22 @@ impl<'ctx> Codegen<'ctx> {
         callee: TypedValue<'ctx>,
         args: &[Expr],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let ValueType::Function(function_id) = callee.ty else {
-            return Err(format!(
-                "line {}:{}: called expression must have a function type",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("called expression must have a function type"),
             ));
         };
         let shape = self.function_shapes[function_id].clone();
         if args.len() != shape.params.len() {
-            return Err(format!(
-                "line {}:{}: function value expects {} argument(s), got {}",
-                span.line,
-                span.column,
-                shape.params.len(),
-                args.len()
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "function value expects {} argument(s), got {}",
+                    shape.params.len(),
+                    args.len()
+                ),
             ));
         }
         let closure = callee
@@ -42,13 +43,14 @@ impl<'ctx> Codegen<'ctx> {
         for (index, (arg, expected)) in args.iter().zip(shape.params.iter()).enumerate() {
             let value = self.emit_expression_expected(arg, *expected)?;
             if value.ty != *expected {
-                return Err(format!(
-                    "line {}:{}: argument {} to function value expects {}, got {}",
-                    span.line,
-                    span.column,
-                    index + 1,
-                    self.type_name(*expected),
-                    self.type_name(value.ty)
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "argument {} to function value expects {}, got {}",
+                        index + 1,
+                        self.type_name(*expected),
+                        self.type_name(value.ty)
+                    ),
                 ));
             }
             values.push(value.value.ok_or("call argument has no value")?.into());
@@ -77,7 +79,7 @@ impl<'ctx> Codegen<'ctx> {
         name: &str,
         args: &[Expr],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         if let Some(local) = self.lookup_local(name) {
             let value = self
                 .builder
@@ -99,27 +101,31 @@ impl<'ctx> Codegen<'ctx> {
         }
         if name == "vec_push" {
             if args.len() != 2 {
-                return Err(format!(
-                    "line {}:{}: function `vec_push` expects 2 argument(s), got {}",
-                    span.line,
-                    span.column,
-                    args.len()
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "function `vec_push` expects 2 argument(s), got {}",
+                        args.len()
+                    ),
                 ));
             }
             let vector = self.emit_expression(&args[0])?;
             let ValueType::Vector(vector_id) = vector.ty else {
-                return Err(format!(
-                    "line {}:{}: argument 1 to `vec_push` must be a vector",
-                    span.line, span.column
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("argument 1 to `vec_push` must be a vector"),
                 ));
             };
             let element_type = ValueType::from(self.vector_shapes[vector_id].element);
             let value = self.emit_expression_expected(&args[1], element_type)?;
             if value.ty != element_type {
-                return Err(format!(
-                    "argument 2 to `vec_push` has type {}, expected {}",
-                    self.type_name(value.ty),
-                    self.type_name(element_type)
+                return Err(Diagnostic::at(
+                    codegen_span_of_expr(&args[1]).into(),
+                    format!(
+                        "argument 2 to `vec_push` has type {}, expected {}",
+                        self.type_name(value.ty),
+                        self.type_name(element_type)
+                    ),
                 ));
             }
             let header = vector
@@ -159,11 +165,9 @@ impl<'ctx> Codegen<'ctx> {
         }
         if name == "len" {
             if args.len() != 1 {
-                return Err(format!(
-                    "line {}:{}: function `len` expects 1 argument(s), got {}",
-                    span.line,
-                    span.column,
-                    args.len()
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("function `len` expects 1 argument(s), got {}", args.len()),
                 ));
             }
             let value = self.emit_expression(&args[0])?;
@@ -194,9 +198,9 @@ impl<'ctx> Codegen<'ctx> {
                         .into_int_value()
                 }
                 _ => {
-                    return Err(format!(
-                        "line {}:{}: argument 1 to `len` must be an array (or vector)",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("argument 1 to `len` must be an array (or vector)"),
                     ));
                 }
             };
@@ -215,41 +219,41 @@ impl<'ctx> Codegen<'ctx> {
             .get(&function_name)
             .is_some_and(|(owner, public)| owner != &self.module_context && !public)
         {
-            return Err(format!(
-                "line {}:{}: function `{name}` is private",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("function `{name}` is private"),
             ));
         }
         if args.len() != params.len() {
-            return Err(format!(
-                "line {}:{}: function `{name}` expects {} argument(s), got {}",
-                span.line,
-                span.column,
-                params.len(),
-                args.len()
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "function `{name}` expects {} argument(s), got {}",
+                    params.len(),
+                    args.len()
+                ),
             ));
         }
         let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len());
         for (index, (arg, expected)) in args.iter().zip(params.iter()).enumerate() {
             let value = self.emit_expression_expected(arg, *expected)?;
             if value.ty != *expected {
-                return Err(format!(
-                    "line {}:{}: argument {} to `{name}` expects {}, got {}",
-                    span.line,
-                    span.column,
-                    index + 1,
-                    self.type_name(*expected),
-                    self.type_name(value.ty)
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "argument {} to `{name}` expects {}, got {}",
+                        index + 1,
+                        self.type_name(*expected),
+                        self.type_name(value.ty)
+                    ),
                 ));
             }
             values.push(value.value.ok_or("call argument has no value")?.into());
         }
-        let function = *self.functions.get(&function_name).ok_or_else(|| {
-            format!(
-                "line {}:{}: missing function `{name}`",
-                span.line, span.column
-            )
-        })?;
+        let function = *self
+            .functions
+            .get(&function_name)
+            .ok_or_else(|| Diagnostic::at(span.into(), format!("missing function `{name}`")))?;
         let call = self
             .builder
             .build_call(function, &values, "call")

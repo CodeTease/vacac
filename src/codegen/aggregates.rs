@@ -8,7 +8,7 @@ impl<'ctx> Codegen<'ctx> {
         value: BasicValueEnum<'ctx>,
         immutable: bool,
         span: Span,
-    ) -> Result<(), String> {
+    ) -> Result<(), Diagnostic> {
         match pattern {
             MatchPattern::Wildcard => Ok(()),
             MatchPattern::Binding(name) => {
@@ -17,9 +17,9 @@ impl<'ctx> Codegen<'ctx> {
                     .last()
                     .is_some_and(|scope| scope.contains_key(name))
                 {
-                    return Err(format!(
-                        "line {}:{}: `{name}` is already declared in this scope",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("`{name}` is already declared in this scope"),
                     ));
                 }
                 let alloca = self.create_entry_alloca(ty, name)?;
@@ -42,7 +42,7 @@ impl<'ctx> Codegen<'ctx> {
             }
             MatchPattern::Tuple(patterns) => {
                 let ValueType::Tuple(tuple_id) = ty else {
-                    return Err("tuple pattern type mismatch".into());
+                    return Err(Diagnostic::at(span.into(), "tuple pattern type mismatch"));
                 };
                 let types = self.tuple_shapes[tuple_id].clone();
                 if patterns.len() != types.len() {
@@ -95,9 +95,9 @@ impl<'ctx> Codegen<'ctx> {
                     .get(name)
                     .is_some_and(|(owner, public)| owner != &self.module_context && !public)
                 {
-                    return Err(format!(
-                        "line {}:{}: struct `{name}` is private",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("struct `{name}` is private"),
                     ));
                 }
                 let declarations = self.structs[struct_id].fields.clone();
@@ -105,7 +105,12 @@ impl<'ctx> Codegen<'ctx> {
                     let index = declarations
                         .iter()
                         .position(|field| field.name == *field_name)
-                        .ok_or_else(|| format!("struct `{name}` has no field `{field_name}`"))?;
+                        .ok_or_else(|| {
+                            Diagnostic::at(
+                                (*field_span).into(),
+                                format!("struct `{name}` has no field `{field_name}`"),
+                            )
+                        })?;
                     let field_ty =
                         self.resolve_type(&declarations[index].ty, declarations[index].span)?;
                     let element = self
@@ -145,21 +150,19 @@ impl<'ctx> Codegen<'ctx> {
         variant_name: &str,
         payload_expr: Option<&[Expr]>,
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
-        let enum_id = *self.enum_ids.get(enum_name).ok_or_else(|| {
-            format!(
-                "line {}:{}: unknown enum `{enum_name}`",
-                span.line, span.column
-            )
-        })?;
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
+        let enum_id = *self
+            .enum_ids
+            .get(enum_name)
+            .ok_or_else(|| Diagnostic::at(span.into(), format!("unknown enum `{enum_name}`")))?;
         if self
             .enum_visibility
             .get(enum_name)
             .is_some_and(|(owner, public)| owner != &self.module_context && !public)
         {
-            return Err(format!(
-                "line {}:{}: enum `{enum_name}` is private",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("enum `{enum_name}` is private"),
             ));
         }
         let variant_index = self.enums[enum_id]
@@ -167,9 +170,9 @@ impl<'ctx> Codegen<'ctx> {
             .iter()
             .position(|variant| variant.name == variant_name)
             .ok_or_else(|| {
-                format!(
-                    "line {}:{}: enum `{enum_name}` has no variant `{variant_name}`",
-                    span.line, span.column
+                Diagnostic::at(
+                    span.into(),
+                    format!("enum `{enum_name}` has no variant `{variant_name}`"),
                 )
             })?;
         let variant = self.enums[enum_id].variants[variant_index].clone();
@@ -181,10 +184,13 @@ impl<'ctx> Codegen<'ctx> {
                     let expected = self.resolve_type(payload_type, variant.span)?;
                     let payload = self.emit_expression_expected(expression, expected)?;
                     if payload.ty != expected {
-                        return Err(format!(
-                            "enum payload has type {}, expected {}",
-                            self.type_name(payload.ty),
-                            self.type_name(expected)
+                        return Err(Diagnostic::at(
+                            codegen_span_of_expr(expression).into(),
+                            format!(
+                                "enum payload has type {}, expected {}",
+                                self.type_name(payload.ty),
+                                self.type_name(expected)
+                            ),
                         ));
                     }
                     values.push((
@@ -195,15 +201,19 @@ impl<'ctx> Codegen<'ctx> {
                 values
             }
             (expected, Some(expressions)) => {
-                return Err(format!(
-                    "variant `{enum_name}::{variant_name}` expects {} payload value(s), got {}",
-                    expected.len(),
-                    expressions.len()
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "variant `{enum_name}::{variant_name}` expects {} payload value(s), got {}",
+                        expected.len(),
+                        expressions.len()
+                    ),
                 ));
             }
             (_, None) => {
-                return Err(format!(
-                    "variant `{enum_name}::{variant_name}` requires a payload"
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("variant `{enum_name}::{variant_name}` requires a payload"),
                 ));
             }
         };
@@ -256,21 +266,19 @@ impl<'ctx> Codegen<'ctx> {
         name: &str,
         fields: &[(String, Expr, Span)],
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
-        let struct_id = *self.struct_ids.get(name).ok_or_else(|| {
-            format!(
-                "line {}:{}: unknown struct `{name}`",
-                span.line, span.column
-            )
-        })?;
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
+        let struct_id = *self
+            .struct_ids
+            .get(name)
+            .ok_or_else(|| Diagnostic::at(span.into(), format!("unknown struct `{name}`")))?;
         if self
             .struct_visibility
             .get(name)
             .is_some_and(|(owner, public)| owner != &self.module_context && !public)
         {
-            return Err(format!(
-                "line {}:{}: struct `{name}` is private",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("struct `{name}` is private"),
             ));
         }
         let declaration = self.structs[struct_id].clone();
@@ -279,9 +287,9 @@ impl<'ctx> Codegen<'ctx> {
         let mut initialized = std::collections::HashSet::new();
         for (field_name, expression, field_span) in fields {
             if !initialized.insert(field_name.as_str()) {
-                return Err(format!(
-                    "line {}:{}: struct field `{field_name}` is initialized more than once",
-                    field_span.line, field_span.column
+                return Err(Diagnostic::at(
+                    field_span.into(),
+                    format!("struct field `{field_name}` is initialized more than once"),
                 ));
             }
             let Some(index) = declaration
@@ -289,9 +297,9 @@ impl<'ctx> Codegen<'ctx> {
                 .iter()
                 .position(|field| field.name == *field_name)
             else {
-                return Err(format!(
-                    "line {}:{}: struct `{name}` has no field `{field_name}`",
-                    field_span.line, field_span.column
+                return Err(Diagnostic::at(
+                    field_span.into(),
+                    format!("struct `{name}` has no field `{field_name}`"),
                 ));
             };
             let expected = self.resolve_type(
@@ -300,12 +308,13 @@ impl<'ctx> Codegen<'ctx> {
             )?;
             let value = self.emit_expression_expected(expression, expected)?;
             if value.ty != expected {
-                return Err(format!(
-                    "line {}:{}: initializer for field `{field_name}` has type {}, expected {}",
-                    field_span.line,
-                    field_span.column,
-                    self.type_name(value.ty),
-                    self.type_name(expected)
+                return Err(Diagnostic::at(
+                    field_span.into(),
+                    format!(
+                        "initializer for field `{field_name}` has type {}, expected {}",
+                        self.type_name(value.ty),
+                        self.type_name(expected)
+                    ),
                 ));
             }
             aggregate = self
@@ -327,9 +336,9 @@ impl<'ctx> Codegen<'ctx> {
                 .map(|field| field.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(format!(
-                "line {}:{}: struct `{name}` is missing field(s): {missing}",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("struct `{name}` is missing field(s): {missing}"),
             ));
         }
         Ok(TypedValue {

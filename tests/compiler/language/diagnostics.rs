@@ -23,3 +23,23 @@ fn parser_diagnostics_highlight_the_offending_source_token() {
     );
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn lexer_columns_and_underlines_count_unicode_scalar_values() {
+    let (dir, compile) = compile_source(
+        "fn main() -> i64 {\n    println(\"λ\\q\");\n    0\n}\n",
+        "unicode-diagnostic-column",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("test.vca:2:15: unknown escape sequence"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("    println(\"λ\\q\");"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("   | {}^^", " ".repeat(14))),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}

@@ -1,14 +1,25 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn for_program(context: &'ctx Context, program: &Program) -> Result<Self, String> {
+    pub(super) fn for_program(
+        context: &'ctx Context,
+        program: &Program,
+    ) -> Result<Self, Diagnostic> {
         let mut codegen = Self::new(context, "vaca");
         codegen.lambda_captures = program.lambda_captures.clone();
         codegen.declare_enums(program)?;
         codegen.declare_structs(program)?;
         codegen.define_enums()?;
         codegen.declare_functions(program)?;
-        codegen.declare_globals(program)?;
+        codegen.declare_globals(program).map_err(|error| {
+            if error.span.is_some() {
+                error
+            } else if let Some(declaration) = program.globals.first() {
+                Diagnostic::at(declaration.span.into(), error.message)
+            } else {
+                error
+            }
+        })?;
         codegen.emit_print_builtins()?;
         codegen.emit_read_i64_builtin()?;
         codegen.emit_allocator_builtin()?;
@@ -18,7 +29,13 @@ impl<'ctx> Codegen<'ctx> {
         codegen.define_globals(program)?;
         for function in &program.functions {
             codegen.module_context = function.module.clone();
-            codegen.emit_function(function)?;
+            codegen.emit_function(function).map_err(|error| {
+                if error.span.is_some() {
+                    error
+                } else {
+                    Diagnostic::at(function.span.into(), error.message)
+                }
+            })?;
         }
         codegen.emit_c_main_wrapper()?;
         codegen
@@ -126,7 +143,7 @@ impl<'ctx> Codegen<'ctx> {
         &self,
         params: &[ValueType],
         ret: ValueType,
-    ) -> Result<FunctionType<'ctx>, String> {
+    ) -> Result<FunctionType<'ctx>, Diagnostic> {
         let params: Vec<BasicMetadataTypeEnum<'ctx>> = params
             .iter()
             .map(|ty| {
@@ -141,7 +158,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, String> {
+    pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, Diagnostic> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
             Type::F32 => ValueType::F32,
@@ -152,26 +169,26 @@ impl<'ctx> Codegen<'ctx> {
             Type::Reference(element) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
-                    return Err(format!(
-                        "line {}:{}: references cannot target `unit`",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references cannot target `unit`"),
                     ));
                 }
                 if matches!(
                     element,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) {
-                    return Err(format!(
-                        "line {}:{}: references to references are not supported",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references to references are not supported"),
                     ));
                 }
                 if !self
                     .reference_target_is_supported(element, &mut std::collections::HashSet::new())?
                 {
-                    return Err(format!(
-                        "line {}:{}: references to values containing vectors are not supported",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references to values containing vectors are not supported"),
                     ));
                 }
                 self.reference_type(element)
@@ -184,17 +201,17 @@ impl<'ctx> Codegen<'ctx> {
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     )
                 {
-                    return Err(format!(
-                        "line {}:{}: invalid mutable reference target",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("invalid mutable reference target"),
                     ));
                 }
                 if !self
                     .reference_target_is_supported(element, &mut std::collections::HashSet::new())?
                 {
-                    return Err(format!(
-                        "line {}:{}: references to values containing vectors are not supported",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("references to values containing vectors are not supported"),
                     ));
                 }
                 self.mutable_reference_type(element)
@@ -202,42 +219,42 @@ impl<'ctx> Codegen<'ctx> {
             Type::RawPointer(element, mutable) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
-                    return Err(format!(
-                        "line {}:{}: raw pointers cannot target `unit`",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("raw pointers cannot target `unit`"),
                     ));
                 }
                 if matches!(
                     element,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) {
-                    return Err(format!(
-                        "line {}:{}: raw pointers cannot target safe references",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("raw pointers cannot target safe references"),
                     ));
                 }
                 self.raw_pointer_type(element, *mutable)
             }
             Type::Tuple(elements) => {
                 if elements.is_empty() {
-                    return Err(format!(
-                        "line {}:{}: tuple types must contain at least one element",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("tuple types must contain at least one element"),
                     ));
                 }
                 let mut types = Vec::with_capacity(elements.len());
                 for element in elements {
                     let ty = self.resolve_type(element, span)?;
                     if ty == ValueType::Unit {
-                        return Err(format!(
-                            "line {}:{}: tuple elements cannot have type `unit`",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("tuple elements cannot have type `unit`"),
                         ));
                     }
                     if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
-                        return Err(format!(
-                            "line {}:{}: references cannot be stored in tuples",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("references cannot be stored in tuples"),
                         ));
                     }
                     types.push(ty);
@@ -249,9 +266,9 @@ impl<'ctx> Codegen<'ctx> {
                 for param in params {
                     let param_type = self.resolve_type(param, span)?;
                     if param_type == ValueType::Unit {
-                        return Err(format!(
-                            "line {}:{}: function type parameters cannot have type `unit`",
-                            span.line, span.column
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            format!("function type parameters cannot have type `unit`"),
                         ));
                     }
                     param_types.push(param_type);
@@ -261,9 +278,9 @@ impl<'ctx> Codegen<'ctx> {
                     return_type,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) {
-                    return Err(format!(
-                        "line {}:{}: function types cannot return references",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("function types cannot return references"),
                     ));
                 }
                 self.function_type(param_types, return_type)
@@ -282,17 +299,23 @@ impl<'ctx> Codegen<'ctx> {
                 } else if let Some(index) = self.struct_ids.get(name) {
                     ValueType::Struct(*index)
                 } else {
-                    return Err(format!(
-                        "line {}:{}: unknown type `{name}`",
-                        span.line, span.column
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("unknown type `{name}`"),
                     ));
                 }
             }
             Type::Applied(name, _) => {
-                return Err(format!("generic type `{name}` was not specialized"));
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("generic type `{name}` was not specialized"),
+                ));
             }
             Type::Parameter(name) => {
-                return Err(format!("generic parameter `{name}` was not specialized"));
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("generic parameter `{name}` was not specialized"),
+                ));
             }
         })
     }
@@ -363,7 +386,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         ty: ValueType,
         visited: &mut std::collections::HashSet<ValueType>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         if !visited.insert(ty) {
             return Ok(true);
         }
@@ -417,7 +440,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         element: ArrayElementType,
         visited: &mut std::collections::HashSet<ValueType>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         self.reference_target_is_supported(ValueType::from(element), visited)
     }
 
@@ -444,7 +467,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn llvm_function_type(
         &self,
         function_id: usize,
-    ) -> Result<FunctionType<'ctx>, String> {
+    ) -> Result<FunctionType<'ctx>, Diagnostic> {
         let shape = &self.function_shapes[function_id];
         self.closure_function_type(&shape.params, shape.return_type)
     }
@@ -453,7 +476,7 @@ impl<'ctx> Codegen<'ctx> {
         &self,
         params: &[ValueType],
         ret: ValueType,
-    ) -> Result<FunctionType<'ctx>, String> {
+    ) -> Result<FunctionType<'ctx>, Diagnostic> {
         let mut closure_params = vec![self.context.ptr_type(AddressSpace::default()).into()];
         for ty in params {
             closure_params.push(
@@ -468,7 +491,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn emit_function_adapters(&mut self) -> Result<(), String> {
+    fn emit_function_adapters(&mut self) -> Result<(), Diagnostic> {
         let functions = self
             .functions
             .iter()
@@ -521,7 +544,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn closure_environment_type(
         &self,
         captures: &[(String, ValueType)],
-    ) -> Result<StructType<'ctx>, String> {
+    ) -> Result<StructType<'ctx>, Diagnostic> {
         let fields = captures
             .iter()
             .map(|(_, ty)| self.llvm_type(*ty).ok_or("capture has no LLVM type"))
@@ -534,7 +557,7 @@ impl<'ctx> Codegen<'ctx> {
         code: PointerValue<'ctx>,
         environment: PointerValue<'ctx>,
         function_type: ValueType,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let ValueType::Function(_) = function_type else {
             return Err("internal error: closure requires a function type".into());
         };
@@ -578,7 +601,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    pub(super) fn declare_enums(&mut self, program: &Program) -> Result<(), String> {
+    pub(super) fn declare_enums(&mut self, program: &Program) -> Result<(), Diagnostic> {
         self.enums = program.enums.clone();
         for (index, declaration) in program.enums.iter().enumerate() {
             self.enum_visibility.insert(
@@ -590,9 +613,9 @@ impl<'ctx> Codegen<'ctx> {
                 .insert(declaration.name.clone(), index)
                 .is_some()
             {
-                return Err(format!(
-                    "enum `{}` is defined more than once",
-                    declaration.name
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!("enum `{}` is defined more than once", declaration.name),
                 ));
             }
             self.enum_types.push(
@@ -608,7 +631,7 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
-    pub(super) fn define_enums(&mut self) -> Result<(), String> {
+    pub(super) fn define_enums(&mut self) -> Result<(), Diagnostic> {
         for enum_id in 0..self.enums.len() {
             let declaration = self.enums[enum_id].clone();
             let mut fields: Vec<BasicTypeEnum<'ctx>> = vec![self.context.i32_type().into()];
@@ -621,15 +644,15 @@ impl<'ctx> Codegen<'ctx> {
                         value_type,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
-                        return Err(format!(
-                            "line {}:{}: references cannot be stored in enums",
-                            variant.span.line, variant.span.column
+                        return Err(Diagnostic::at(
+                            variant.span.into(),
+                            format!("references cannot be stored in enums"),
                         ));
                     }
                     if value_type == ValueType::Unit {
-                        return Err(format!(
-                            "line {}:{}: enum payloads cannot have type `unit`",
-                            variant.span.line, variant.span.column
+                        return Err(Diagnostic::at(
+                            variant.span.into(),
+                            format!("enum payloads cannot have type `unit`"),
                         ));
                     }
                     payload_fields.push(
@@ -642,14 +665,17 @@ impl<'ctx> Codegen<'ctx> {
                 payload_types.push(payload_type);
             }
             if !self.enum_types[enum_id].set_body(&fields, false) {
-                return Err(format!("enum `{}` was already defined", declaration.name));
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!("enum `{}` was already defined", declaration.name),
+                ));
             }
             self.enum_payload_types[enum_id] = payload_types;
         }
         Ok(())
     }
 
-    pub(super) fn declare_structs(&mut self, program: &Program) -> Result<(), String> {
+    pub(super) fn declare_structs(&mut self, program: &Program) -> Result<(), Diagnostic> {
         self.structs = program.structs.clone();
         for (index, declaration) in program.structs.iter().enumerate() {
             if self.enum_ids.contains_key(&declaration.name)
@@ -658,9 +684,9 @@ impl<'ctx> Codegen<'ctx> {
                     .insert(declaration.name.clone(), index)
                     .is_some()
             {
-                return Err(format!(
-                    "type `{}` is defined more than once",
-                    declaration.name
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!("type `{}` is defined more than once", declaration.name),
                 ));
             }
             self.struct_types.push(
@@ -688,34 +714,39 @@ impl<'ctx> Codegen<'ctx> {
                     Type::Named(name) if self.struct_ids.contains_key(name) => {}
                     Type::Named(name) if self.enum_ids.contains_key(name) => {}
                     Type::Named(name) => {
-                        return Err(format!(
-                            "line {}:{}: unknown type `{name}`",
-                            field.span.line, field.span.column
+                        return Err(Diagnostic::at(
+                            field.span.into(),
+                            format!("unknown type `{name}`"),
                         ));
                     }
                     Type::Unit => {
-                        return Err(format!(
-                            "line {}:{}: struct fields cannot have type `unit`",
-                            field.span.line, field.span.column
+                        return Err(Diagnostic::at(
+                            field.span.into(),
+                            format!("struct fields cannot have type `unit`"),
                         ));
                     }
                     Type::Reference(_) | Type::MutableReference(_) => {
-                        return Err(format!(
-                            "line {}:{}: references cannot be stored in structs",
-                            field.span.line, field.span.column
+                        return Err(Diagnostic::at(
+                            field.span.into(),
+                            format!("references cannot be stored in structs"),
                         ));
                     }
                     Type::Applied(name, _) => {
-                        return Err(format!("generic type `{name}` was not specialized"));
+                        return Err(Diagnostic::at(
+                            field.span.into(),
+                            format!("generic type `{name}` was not specialized"),
+                        ));
                     }
                     Type::Parameter(name) => {
-                        return Err(format!("generic parameter `{name}` was not specialized"));
+                        return Err(Diagnostic::at(
+                            field.span.into(),
+                            format!("generic parameter `{name}` was not specialized"),
+                        ));
                     }
                 }
             }
         }
-        crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)
-            .map_err(|error| error.to_string())?;
+        crate::aggregate_validation::validate_aggregate_cycles(&self.enums, &self.structs)?;
         for declaration in program.structs.iter() {
             self.module_context = declaration.module.clone();
             self.module_context = declaration.module.clone();
@@ -723,9 +754,9 @@ impl<'ctx> Codegen<'ctx> {
             let mut names = std::collections::HashSet::new();
             for field in &declaration.fields {
                 if !names.insert(field.name.as_str()) {
-                    return Err(format!(
-                        "line {}:{}: struct field `{}` is defined more than once",
-                        field.span.line, field.span.column, field.name
+                    return Err(Diagnostic::at(
+                        field.span.into(),
+                        format!("struct field `{}` is defined more than once", field.name),
                     ));
                 }
                 let ty = self.resolve_type(&field.ty, field.span)?;
@@ -734,13 +765,16 @@ impl<'ctx> Codegen<'ctx> {
             }
             if !self.struct_types[self.struct_ids[&declaration.name]].set_body(&field_types, false)
             {
-                return Err(format!("struct `{}` was already defined", declaration.name));
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!("struct `{}` was already defined", declaration.name),
+                ));
             }
         }
         Ok(())
     }
 
-    pub(super) fn declare_functions(&mut self, program: &Program) -> Result<(), String> {
+    pub(super) fn declare_functions(&mut self, program: &Program) -> Result<(), Diagnostic> {
         let mut saw_main = false;
         let mut c_symbols = std::collections::HashMap::<String, Span>::new();
         for function in &program.functions {
@@ -770,29 +804,29 @@ impl<'ctx> Codegen<'ctx> {
                     | "vaca_vec_new"
                     | "vaca_vec_push"
             ) {
-                return Err(format!(
-                    "`{}` is a reserved compiler/runtime name",
-                    function.name
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!("`{}` is a reserved compiler/runtime name", function.name),
                 ));
             }
             if self.signatures.contains_key(&function.name) {
-                return Err(format!(
-                    "line {}:{}: function `{}` is defined more than once",
-                    function.span.line, function.span.column, function.name
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!("function `{}` is defined more than once", function.name),
                 ));
             }
             let mut names = std::collections::HashSet::new();
             for param in &function.params {
                 if param.ty == Type::Unit {
-                    return Err(format!(
-                        "line {}:{}: parameters cannot have type `unit`",
-                        param.span.line, param.span.column
+                    return Err(Diagnostic::at(
+                        param.span.into(),
+                        format!("parameters cannot have type `unit`"),
                     ));
                 }
                 if !names.insert(param.name.as_str()) {
-                    return Err(format!(
-                        "line {}:{}: duplicate parameter `{}`",
-                        param.span.line, param.span.column, param.name
+                    return Err(Diagnostic::at(
+                        param.span.into(),
+                        format!("duplicate parameter `{}`", param.name),
                     ));
                 }
             }
@@ -806,9 +840,9 @@ impl<'ctx> Codegen<'ctx> {
                 ret,
                 ValueType::Reference(_) | ValueType::MutableReference(_)
             ) {
-                return Err(format!(
-                    "line {}:{}: functions cannot return references",
-                    function.span.line, function.span.column
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!("functions cannot return references"),
                 ));
             }
             let llvm_name = if function.name == "main" {
@@ -826,7 +860,10 @@ impl<'ctx> Codegen<'ctx> {
             self.signatures.insert(function.name.clone(), (params, ret));
             if function.name == "main" {
                 if !function.params.is_empty() || ret != ValueType::I64 {
-                    return Err("entry point must have signature `fn main() -> i64`".into());
+                    return Err(Diagnostic::at(
+                        function.span.into(),
+                        "entry point must have signature `fn main() -> i64`",
+                    ));
                 }
                 saw_main = true;
             }
@@ -846,25 +883,34 @@ impl<'ctx> Codegen<'ctx> {
                     Type::I64 | Type::F32 | Type::F64 | Type::Unit
                 )
             {
-                return Err(format!(
-                    "line {}:{}: unsupported C ABI type in extern function `{}`",
-                    function.span.line, function.span.column, function.name
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!(
+                        "unsupported C ABI type in extern function `{}`",
+                        function.name
+                    ),
                 ));
             }
             if let Some(previous) = c_symbols.get(&function.link_name) {
-                return Err(format!(
-                    "line {}:{}: C symbol `{}` conflicts with another LLVM function declared at line {}:{}",
-                    function.span.line,
-                    function.span.column,
-                    function.link_name,
-                    previous.line,
-                    previous.column
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!(
+                        "C symbol `{}` conflicts with another LLVM function declared at {}:{}:{}",
+                        function.link_name,
+                        previous
+                            .file
+                            .and_then(|source_id| program.source_files.get(source_id))
+                            .map(String::as_str)
+                            .unwrap_or("unknown source"),
+                        previous.line,
+                        previous.column
+                    ),
                 ));
             }
             if self.signatures.contains_key(&function.name) {
-                return Err(format!(
-                    "line {}:{}: function `{}` is defined more than once",
-                    function.span.line, function.span.column, function.name
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!("function `{}` is defined more than once", function.name),
                 ));
             }
             let params = function
@@ -881,9 +927,12 @@ impl<'ctx> Codegen<'ctx> {
                     ValueType::I64 | ValueType::F32 | ValueType::F64 | ValueType::Unit
                 )
             {
-                return Err(format!(
-                    "line {}:{}: unsupported C ABI type in extern function `{}`",
-                    function.span.line, function.span.column, function.name
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!(
+                        "unsupported C ABI type in extern function `{}`",
+                        function.name
+                    ),
                 ));
             }
             let external = self.module.add_function(
@@ -900,7 +949,27 @@ impl<'ctx> Codegen<'ctx> {
             );
         }
         if !saw_main {
-            return Err("program must define the required entry point `fn main() -> i64`".into());
+            let message = "program must define the required entry point `fn main() -> i64`";
+            return Err(program
+                .functions
+                .iter()
+                .find(|function| function.module.is_empty())
+                .map(|function| Diagnostic::at(function.span.into(), message))
+                .unwrap_or_else(|| {
+                    if program.source_files.is_empty() {
+                        Diagnostic::new(message)
+                    } else {
+                        Diagnostic::at(
+                            crate::diagnostic::SourceSpan {
+                                line: 1,
+                                column: 1,
+                                end_column: 1,
+                                file: Some(0),
+                            },
+                            message,
+                        )
+                    }
+                }));
         }
         self.signatures
             .insert("print_i64".into(), (vec![ValueType::I64], ValueType::Unit));

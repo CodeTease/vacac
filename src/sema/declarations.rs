@@ -217,7 +217,10 @@ impl Checker {
             );
             if function.name == "main" {
                 if !function.params.is_empty() || return_type != ValueType::I64 {
-                    return Err("entry point must have signature `fn main() -> i64`".into());
+                    return Err(at(
+                        function.span,
+                        "entry point must have signature `fn main() -> i64`",
+                    ));
                 }
                 saw_main = true;
             }
@@ -343,7 +346,26 @@ impl Checker {
             );
         }
         if !saw_main {
-            return Err("program must define the required entry point `fn main() -> i64`".into());
+            let message = "program must define the required entry point `fn main() -> i64`";
+            return Err(program
+                .functions
+                .iter()
+                .find(|function| function.module.is_empty())
+                .map(|function| at(function.span, message))
+                .or_else(|| {
+                    (!program.source_files.is_empty()).then(|| {
+                        Diagnostic::at(
+                            crate::diagnostic::SourceSpan {
+                                line: 1,
+                                column: 1,
+                                end_column: 1,
+                                file: Some(0),
+                            },
+                            message,
+                        )
+                    })
+                })
+                .unwrap_or_else(|| message.into()));
         }
         self.function_visibility = visibility;
         self.signatures.insert(

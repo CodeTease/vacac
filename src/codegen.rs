@@ -1,3 +1,4 @@
+use crate::diagnostic::Diagnostic;
 use crate::parser::{
     ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, MatchPattern, Program,
     Span, Stmt, StructDecl, Type, UnaryOp,
@@ -122,18 +123,18 @@ struct Codegen<'ctx> {
     function_adapters: HashMap<String, FunctionValue<'ctx>>,
 }
 
-pub fn emit_object(program: &Program, path: &Path) -> Result<(), String> {
+pub fn emit_object(program: &Program, path: &Path) -> Result<(), Diagnostic> {
     let context = Context::create();
     let mut codegen = Codegen::for_program(&context, program)?;
     codegen.write_object(path)
 }
 
-pub fn check(program: &Program) -> Result<(), String> {
+pub fn check(program: &Program) -> Result<(), Diagnostic> {
     let context = Context::create();
     Codegen::for_program(&context, program).map(|_| ())
 }
 
-pub fn emit_llvm(program: &Program, path: &Path) -> Result<(), String> {
+pub fn emit_llvm(program: &Program, path: &Path) -> Result<(), Diagnostic> {
     let context = Context::create();
     let mut codegen = Codegen::for_program(&context, program)?;
     codegen.write_llvm(path)
@@ -155,6 +156,32 @@ mod places;
 mod results;
 mod runtime;
 mod statements;
+
+fn codegen_span_of_expr(expr: &Expr) -> Span {
+    match expr {
+        Expr::Integer(_, span)
+        | Expr::Float32(_, span)
+        | Expr::Float(_, span)
+        | Expr::Bool(_, span)
+        | Expr::String(_, span)
+        | Expr::Tuple(_, span)
+        | Expr::Array(_, span)
+        | Expr::Variable(_, span)
+        | Expr::Index { span, .. }
+        | Expr::Field { span, .. }
+        | Expr::Struct { span, .. }
+        | Expr::Unary { span, .. }
+        | Expr::Binary { span, .. }
+        | Expr::Call { span, .. }
+        | Expr::CallValue { span, .. }
+        | Expr::Lambda { span, .. }
+        | Expr::If { span, .. }
+        | Expr::Match { span, .. }
+        | Expr::Try { span, .. }
+        | Expr::Loop { span, .. }
+        | Expr::Variant { span, .. } => *span,
+    }
+}
 
 impl<'ctx> Codegen<'ctx> {
     fn type_name(&self, ty: ValueType) -> String {

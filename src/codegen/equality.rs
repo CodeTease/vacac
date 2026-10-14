@@ -6,9 +6,10 @@ impl<'ctx> Codegen<'ctx> {
         ty: ValueType,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
-    ) -> Result<IntValue<'ctx>, String> {
+        span: Span,
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         match ty {
-            ValueType::F32 | ValueType::F64 => self
+            ValueType::F32 | ValueType::F64 => Ok(self
                 .builder
                 .build_float_compare(
                     FloatPredicate::OEQ,
@@ -16,8 +17,8 @@ impl<'ctx> Codegen<'ctx> {
                     right.into_float_value(),
                     "f64.value.eq",
                 )
-                .map_err(|e| e.to_string()),
-            ValueType::I64 | ValueType::Bool => self
+                .map_err(|e| e.to_string())?),
+            ValueType::I64 | ValueType::Bool => Ok(self
                 .builder
                 .build_int_compare(
                     IntPredicate::EQ,
@@ -25,7 +26,7 @@ impl<'ctx> Codegen<'ctx> {
                     right.into_int_value(),
                     "value.eq",
                 )
-                .map_err(|e| e.to_string()),
+                .map_err(|e| e.to_string())?),
             ValueType::Str => {
                 let result = self.emit_string_equality(
                     BinaryOp::Equal,
@@ -37,6 +38,7 @@ impl<'ctx> Codegen<'ctx> {
                         value: Some(right),
                         ty: ValueType::Str,
                     },
+                    span,
                 )?;
                 Ok(result
                     .value
@@ -59,6 +61,7 @@ impl<'ctx> Codegen<'ctx> {
                         ValueType::from(self.array_shapes[array_id].element),
                         left_element,
                         right_element,
+                        span,
                     )?;
                     equal = self
                         .builder
@@ -88,7 +91,7 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .map_err(|error| error.to_string())?;
                     let element_equal =
-                        self.emit_value_equality(element_type, left_element, right_element)?;
+                        self.emit_value_equality(element_type, left_element, right_element, span)?;
                     equal = self
                         .builder
                         .build_and(equal, element_equal, "tuple.eq")
@@ -96,7 +99,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(equal)
             }
-            ValueType::Vector(_) => self
+            ValueType::Vector(_) => Ok(self
                 .builder
                 .build_int_compare(
                     IntPredicate::EQ,
@@ -112,7 +115,7 @@ impl<'ctx> Codegen<'ctx> {
                         .map_err(|e| e.to_string())?,
                     "vec.eq",
                 )
-                .map_err(|e| e.to_string()),
+                .map_err(|e| e.to_string())?),
             ValueType::Function(_) => {
                 let left = left.into_struct_value();
                 let right = right.into_struct_value();
@@ -178,7 +181,7 @@ impl<'ctx> Codegen<'ctx> {
                         )
                         .map_err(|e| e.to_string())?;
                     let field_equal =
-                        self.emit_value_equality(field_type, left_field, right_field)?;
+                        self.emit_value_equality(field_type, left_field, right_field, span)?;
                     equal = self
                         .builder
                         .build_and(equal, field_equal, "struct.eq")
@@ -186,7 +189,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(equal)
             }
-            ValueType::Enum(enum_id) => self.emit_enum_equality(enum_id, left, right),
+            ValueType::Enum(enum_id) => self.emit_enum_equality(enum_id, left, right, span),
             ValueType::Reference(_) => Err("references cannot be compared".into()),
             ValueType::MutableReference(_) => Err("references cannot be compared".into()),
             ValueType::RawPointer(_) => Err("raw pointers cannot be compared".into()),
@@ -199,7 +202,8 @@ impl<'ctx> Codegen<'ctx> {
         enum_id: usize,
         left: BasicValueEnum<'ctx>,
         right: BasicValueEnum<'ctx>,
-    ) -> Result<IntValue<'ctx>, String> {
+        span: Span,
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         let left_tag = self
             .builder
             .build_extract_value(left.into_struct_value(), 0, "enum.eq.left.tag")
@@ -299,7 +303,7 @@ impl<'ctx> Codegen<'ctx> {
                     .map_err(|e| e.to_string())?;
                 let payload_type = self.resolve_type(payload_type, variant.span)?;
                 let field_equal =
-                    self.emit_value_equality(payload_type, left_payload, right_payload)?;
+                    self.emit_value_equality(payload_type, left_payload, right_payload, span)?;
                 payload_equal = self
                     .builder
                     .build_and(payload_equal, field_equal, "enum.eq.payload")

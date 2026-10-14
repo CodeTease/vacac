@@ -1,7 +1,7 @@
 use super::super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(in crate::codegen) fn emit_read_i64_builtin(&mut self) -> Result<(), String> {
+    pub(in crate::codegen) fn emit_read_i64_builtin(&mut self) -> Result<(), Diagnostic> {
         let i32_type = self.context.i32_type();
         let i64_type = self.i64_type();
         let bool_type = self.bool_type();
@@ -380,7 +380,7 @@ impl<'ctx> Codegen<'ctx> {
     pub(super) fn is_ascii_whitespace(
         &self,
         character: IntValue<'ctx>,
-    ) -> Result<IntValue<'ctx>, String> {
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         let i32_type = self.context.i32_type();
         let low = self
             .builder
@@ -413,15 +413,16 @@ impl<'ctx> Codegen<'ctx> {
                 "input.whitespace.space",
             )
             .map_err(|e| e.to_string())?;
-        self.builder
+        Ok(self
+            .builder
             .build_or(control_whitespace, space, "input.whitespace")
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?)
     }
 
     pub(super) fn is_ascii_digit(
         &self,
         character: IntValue<'ctx>,
-    ) -> Result<IntValue<'ctx>, String> {
+    ) -> Result<IntValue<'ctx>, Diagnostic> {
         let i32_type = self.context.i32_type();
         let low = self
             .builder
@@ -441,8 +442,9 @@ impl<'ctx> Codegen<'ctx> {
                 "input.digit.high",
             )
             .map_err(|e| e.to_string())?;
-        self.builder
+        Ok(self
+            .builder
             .build_and(low, high, "input.is.digit")
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?)
     }
 }

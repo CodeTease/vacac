@@ -5,18 +5,18 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         expression: &Expr,
         span: Span,
-    ) -> Result<TypedValue<'ctx>, String> {
+    ) -> Result<TypedValue<'ctx>, Diagnostic> {
         let result = self.emit_expression(expression)?;
         let ValueType::Enum(result_id) = result.ty else {
-            return Err(format!(
-                "line {}:{}: postfix `?` requires a `Result<T, E>` value",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("postfix `?` requires a `Result<T, E>` value"),
             ));
         };
         if !self.enums[result_id].name.starts_with("Result::<") {
-            return Err(format!(
-                "line {}:{}: postfix `?` requires the built-in `Result<T, E>` type",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("postfix `?` requires the built-in `Result<T, E>` type"),
             ));
         }
         let result_value = result
@@ -55,15 +55,15 @@ impl<'ctx> Codegen<'ctx> {
             .ok_or("invalid built-in Result Err payload")?;
         let result_err_type = self.resolve_type(&err_type, span)?;
         let ValueType::Enum(return_id) = self.return_type else {
-            return Err(format!(
-                "line {}:{}: postfix `?` can only be used in a function returning `Result<T, E>`",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("postfix `?` can only be used in a function returning `Result<T, E>`"),
             ));
         };
         if !self.enums[return_id].name.starts_with("Result::<") {
-            return Err(format!(
-                "line {}:{}: postfix `?` can only be used in a function returning `Result<T, E>`",
-                span.line, span.column
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("postfix `?` can only be used in a function returning `Result<T, E>`"),
             ));
         }
         let return_err_index = self.enums[return_id]
@@ -78,12 +78,13 @@ impl<'ctx> Codegen<'ctx> {
             .ok_or("invalid enclosing Result Err payload")?;
         let return_err_type = self.resolve_type(&return_err_type, span)?;
         if result_err_type != return_err_type {
-            return Err(format!(
-                "line {}:{}: propagated error has type {}, but enclosing Result error type is {}",
-                span.line,
-                span.column,
-                self.type_name(result_err_type),
-                self.type_name(return_err_type)
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "propagated error has type {}, but enclosing Result error type is {}",
+                    self.type_name(result_err_type),
+                    self.type_name(return_err_type)
+                ),
             ));
         }
 

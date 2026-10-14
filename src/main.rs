@@ -226,12 +226,7 @@ fn run() -> Result<i32, Diagnostic> {
     match mode {
         OutputMode::Check => {
             codegen::check(&program).map_err(|e| {
-                backend_diagnostic(
-                    &source_path,
-                    &program.source_texts[0],
-                    "code generation failed",
-                    &e,
-                )
+                backend_diagnostic(&program, &source_path, "code generation failed", e)
             })?;
             if !quiet {
                 println!("checked {}", source_path.display());
@@ -239,12 +234,7 @@ fn run() -> Result<i32, Diagnostic> {
         }
         OutputMode::EmitLlvm(path) => {
             codegen::emit_llvm(&program, &path).map_err(|e| {
-                backend_diagnostic(
-                    &source_path,
-                    &program.source_texts[0],
-                    "LLVM IR emission failed",
-                    &e,
-                )
+                backend_diagnostic(&program, &source_path, "LLVM IR emission failed", e)
             })?;
             if !quiet {
                 println!("wrote {}", path.display());
@@ -253,12 +243,7 @@ fn run() -> Result<i32, Diagnostic> {
         OutputMode::Executable { output, object } => {
             let object = object.unwrap_or_else(|| object_path(&output));
             codegen::emit_object(&program, &object).map_err(|e| {
-                backend_diagnostic(
-                    &source_path,
-                    &program.source_texts[0],
-                    "code generation failed",
-                    &e,
-                )
+                backend_diagnostic(&program, &source_path, "code generation failed", e)
             })?;
             let status = link_object(&object, &output, &link_objects, &link_search, &link_libs)?;
             if !status.success() {
@@ -275,12 +260,7 @@ fn run() -> Result<i32, Diagnostic> {
             let executable = temp.path().join("program");
             let object = temp.path().join("program.o");
             codegen::emit_object(&program, &object).map_err(|e| {
-                backend_diagnostic(
-                    &source_path,
-                    &program.source_texts[0],
-                    "code generation failed",
-                    &e,
-                )
+                backend_diagnostic(&program, &source_path, "code generation failed", e)
             })?;
             let status = link_object(
                 &object,
@@ -359,13 +339,76 @@ impl Drop for TempBuildDir {
     }
 }
 
-fn backend_diagnostic(path: &Path, source: &str, context: &str, error: &str) -> Diagnostic {
-    let message = if error.starts_with("line ") {
-        error.to_owned()
-    } else {
-        format!("{context}: {error}")
-    };
-    Diagnostic::from_legacy(message, &path.display().to_string(), source)
+fn backend_diagnostic(
+    program: &parser::Program,
+    root_path: &Path,
+    context: &str,
+    mut error: Diagnostic,
+) -> Diagnostic {
+    if let Some(source_id) = error
+        .span
+        .and_then(|span| span.file)
+        .filter(|source_id| *source_id < program.source_files.len())
+    {
+        error = error.with_source_id(
+            source_id,
+            program.source_files[source_id].clone(),
+            &program.source_texts[source_id],
+        );
+    } else if error.span.is_some() && !program.source_files.is_empty() {
+        error = error.with_source_id(0, program.source_files[0].clone(), &program.source_texts[0]);
+    } else if error.span.is_none() {
+        error.file = Some(root_path.display().to_string());
+        error.message = format!("{context}: {}", error.message);
+    }
+    error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_diagnostics_keep_the_originating_module_file_and_excerpt() {
+        let program = parser::Program {
+            enums: Vec::new(),
+            structs: Vec::new(),
+            globals: Vec::new(),
+            functions: Vec::new(),
+            extern_functions: Vec::new(),
+            modules: Vec::new(),
+            source_files: vec!["root.vca".into(), "nested/child.vca".into()],
+            source_texts: vec![
+                "fn main() -> i64 { 0 }\n".into(),
+                "pub fn value() { missing }\n".into(),
+            ],
+            functions_are_qualified: true,
+            lambda_captures: std::collections::HashMap::new(),
+        };
+        let diagnostic = Diagnostic::at(
+            diagnostic::SourceSpan {
+                line: 1,
+                column: 18,
+                end_column: 25,
+                file: Some(1),
+            },
+            "undefined variable `missing`",
+        );
+
+        let diagnostic = backend_diagnostic(
+            &program,
+            Path::new("root.vca"),
+            "code generation failed",
+            diagnostic,
+        );
+
+        assert_eq!(diagnostic.file.as_deref(), Some("nested/child.vca"));
+        assert_eq!(
+            diagnostic.source_line.as_deref(),
+            Some("pub fn value() { missing }")
+        );
+        assert!(diagnostic.render_human().contains("nested/child.vca:1:18"));
+    }
 }
 
 fn main() -> ExitCode {

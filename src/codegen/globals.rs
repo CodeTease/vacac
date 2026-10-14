@@ -3,13 +3,15 @@ use super::*;
 mod constants;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn declare_globals(&mut self, program: &Program) -> Result<(), String> {
+    pub(super) fn declare_globals(&mut self, program: &Program) -> Result<(), Diagnostic> {
         for declaration in &program.globals {
             self.module_context = declaration.module.clone();
-            let ty = declaration
-                .ty
-                .as_ref()
-                .ok_or_else(|| format!("global `{}` has no resolved type", declaration.name))?;
+            let ty = declaration.ty.as_ref().ok_or_else(|| {
+                Diagnostic::at(
+                    declaration.span.into(),
+                    format!("global `{}` has no resolved type", declaration.name),
+                )
+            })?;
             let ty = self.resolve_type(ty, declaration.span)?;
             if ty == ValueType::Unit
                 || matches!(
@@ -17,15 +19,15 @@ impl<'ctx> Codegen<'ctx> {
                     ValueType::Vector(_) | ValueType::Reference(_) | ValueType::MutableReference(_)
                 )
             {
-                return Err(format!(
-                    "line {}:{}: global initializer type cannot be `unit`, a vector, or a reference",
-                    declaration.span.line, declaration.span.column
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!("global initializer type cannot be `unit`, a vector, or a reference"),
                 ));
             }
             if self.global_type_contains_raw_pointer(ty, &mut std::collections::HashSet::new())? {
-                return Err(format!(
-                    "line {}:{}: global initializers cannot contain raw pointers",
-                    declaration.span.line, declaration.span.column
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!("global initializers cannot contain raw pointers"),
                 ));
             }
             let llvm_type = self.llvm_type(ty).ok_or("global has no LLVM type")?;
@@ -52,7 +54,7 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         ty: ValueType,
         visited: &mut std::collections::HashSet<ValueType>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         if matches!(ty, ValueType::RawPointer(_)) {
             return Ok(true);
         }
@@ -111,23 +113,24 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         element: ArrayElementType,
         visited: &mut std::collections::HashSet<ValueType>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, Diagnostic> {
         self.global_type_contains_raw_pointer(ValueType::from(element), visited)
     }
 
-    pub(super) fn define_globals(&mut self, program: &Program) -> Result<(), String> {
+    pub(super) fn define_globals(&mut self, program: &Program) -> Result<(), Diagnostic> {
         for declaration in &program.globals {
             let value = self.evaluate_global(&declaration.name)?;
             let initializer = self.lower_constant(&value)?;
             let ty = self.global_types[&declaration.name];
             if value.ty != ty {
-                return Err(format!(
-                    "line {}:{}: initializer for global `{}` has type {}, expected {}",
-                    declaration.span.line,
-                    declaration.span.column,
-                    declaration.name,
-                    self.type_name(value.ty),
-                    self.type_name(ty)
+                return Err(Diagnostic::at(
+                    declaration.span.into(),
+                    format!(
+                        "initializer for global `{}` has type {}, expected {}",
+                        declaration.name,
+                        self.type_name(value.ty),
+                        self.type_name(ty)
+                    ),
                 ));
             }
             self.globals[&declaration.name].set_initializer(&initializer);
