@@ -208,7 +208,9 @@ impl Parser {
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
-        if self.take(&TokenKind::Fn) {
+        if self.take(&TokenKind::Amp) {
+            Ok(Type::Reference(Box::new(self.parse_type()?)))
+        } else if self.take(&TokenKind::Fn) {
             self.consume(&TokenKind::LParen, "`(` after `fn` in function type")?;
             let mut params = Vec::new();
             if !self.at(&TokenKind::RParen) {
@@ -313,7 +315,7 @@ impl Parser {
         } else {
             Err(unexpected(
                 self.peek(),
-                "type `i64`, `f32`, `f64`, `bool`, `str`, `unit`, a named type, tuple type, function type, or `[element; length]`",
+                "type `i64`, `f32`, `f64`, `bool`, `str`, `unit`, a named type, reference type, tuple type, function type, or `[element; length]`",
             ))
         }
     }

@@ -10,6 +10,7 @@ pub enum Type {
     Function(Vec<Type>, Box<Type>),
     Array(Box<Type>, u32),
     Vector(Box<Type>),
+    Reference(Box<Type>),
     Named(String),
     Applied(String, Vec<Type>),
     Parameter(String),
@@ -305,6 +306,8 @@ pub enum MatchPattern {
 pub enum UnaryOp {
     Negate,
     Not,
+    Borrow,
+    Dereference,
 }
 
 #[derive(Debug, Clone, Copy)]

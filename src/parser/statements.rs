@@ -116,7 +116,7 @@ impl Parser {
                 let span = Span::from(&assignment);
                 self.advance();
                 let value = self.parse_expression(0)?;
-                self.consume(&TokenKind::Semicolon, "`;`")?;
+                self.consume(&TokenKind::Semicolon, "`;` after assignment")?;
                 statements.push(Stmt::Assign { name, value, span });
             } else {
                 let expr = self.parse_expression(0)?;

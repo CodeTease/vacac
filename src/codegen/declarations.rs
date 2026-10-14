@@ -50,6 +50,8 @@ impl<'ctx> Codegen<'ctx> {
             vector_shape_ids: HashMap::new(),
             function_shapes: Vec::new(),
             function_shape_ids: HashMap::new(),
+            reference_types: Vec::new(),
+            reference_type_ids: HashMap::new(),
             scopes: Vec::new(),
             string_literals: HashMap::new(),
             loop_targets: Vec::new(),
@@ -97,6 +99,7 @@ impl<'ctx> Codegen<'ctx> {
                     )
                     .into(),
             ),
+            ValueType::Reference(_) => Some(self.context.ptr_type(AddressSpace::default()).into()),
             ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
             ValueType::Tuple(index) => {
                 let elements = self.tuple_shapes[index].clone();
@@ -140,6 +143,30 @@ impl<'ctx> Codegen<'ctx> {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
+            Type::Reference(element) => {
+                let element = self.resolve_type(element, span)?;
+                if element == ValueType::Unit {
+                    return Err(format!(
+                        "line {}:{}: references cannot target `unit`",
+                        span.line, span.column
+                    ));
+                }
+                if matches!(element, ValueType::Reference(_)) {
+                    return Err(format!(
+                        "line {}:{}: references to references are not supported",
+                        span.line, span.column
+                    ));
+                }
+                if !self
+                    .reference_target_is_supported(element, &mut std::collections::HashSet::new())?
+                {
+                    return Err(format!(
+                        "line {}:{}: references to values containing vectors are not supported",
+                        span.line, span.column
+                    ));
+                }
+                self.reference_type(element)
+            }
             Type::Tuple(elements) => {
                 if elements.is_empty() {
                     return Err(format!(
@@ -153,6 +180,12 @@ impl<'ctx> Codegen<'ctx> {
                     if ty == ValueType::Unit {
                         return Err(format!(
                             "line {}:{}: tuple elements cannot have type `unit`",
+                            span.line, span.column
+                        ));
+                    }
+                    if matches!(ty, ValueType::Reference(_)) {
+                        return Err(format!(
+                            "line {}:{}: references cannot be stored in tuples",
                             span.line, span.column
                         ));
                     }
@@ -173,6 +206,12 @@ impl<'ctx> Codegen<'ctx> {
                     param_types.push(param_type);
                 }
                 let return_type = self.resolve_type(result, span)?;
+                if matches!(return_type, ValueType::Reference(_)) {
+                    return Err(format!(
+                        "line {}:{}: function types cannot return references",
+                        span.line, span.column
+                    ));
+                }
                 self.function_type(param_types, return_type)
             }
             Type::Array(element, length) => {
@@ -227,6 +266,78 @@ impl<'ctx> Codegen<'ctx> {
             index
         };
         ValueType::Tuple(index)
+    }
+
+    pub(super) fn reference_type(&mut self, element: ValueType) -> ValueType {
+        let index = if let Some(index) = self.reference_type_ids.get(&element) {
+            *index
+        } else {
+            let index = self.reference_types.len();
+            self.reference_types.push(element);
+            self.reference_type_ids.insert(element, index);
+            index
+        };
+        ValueType::Reference(index)
+    }
+
+    pub(super) fn reference_target_is_supported(
+        &mut self,
+        ty: ValueType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, String> {
+        if !visited.insert(ty) {
+            return Ok(true);
+        }
+        match ty {
+            ValueType::Vector(_) => Ok(false),
+            ValueType::Array(index) => {
+                self.reference_element_is_supported(self.array_shapes[index].element, visited)
+            }
+            ValueType::Tuple(index) => {
+                for element in self.tuple_shapes[index].clone() {
+                    if !self.reference_target_is_supported(element, visited)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::Struct(index) => {
+                for field in self.structs[index].fields.clone() {
+                    let field_type = self.resolve_type(&field.ty, field.span)?;
+                    if !self.reference_target_is_supported(field_type, visited)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::Enum(index) => {
+                for variant in self.enums[index].variants.clone() {
+                    for payload in variant.payload {
+                        let payload_type = self.resolve_type(&payload, variant.span)?;
+                        if !self.reference_target_is_supported(payload_type, visited)? {
+                            return Ok(false);
+                        }
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::I64
+            | ValueType::F32
+            | ValueType::F64
+            | ValueType::Bool
+            | ValueType::Str
+            | ValueType::Unit
+            | ValueType::Function(_)
+            | ValueType::Reference(_) => Ok(true),
+        }
+    }
+
+    fn reference_element_is_supported(
+        &mut self,
+        element: ArrayElementType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, String> {
+        self.reference_target_is_supported(ValueType::from(element), visited)
     }
 
     pub(super) fn function_type(
@@ -368,18 +479,6 @@ impl<'ctx> Codegen<'ctx> {
         })
     }
 
-    pub(super) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {
-        let index = if let Some(index) = self.vector_shape_ids.get(&element) {
-            *index
-        } else {
-            let index = self.vector_shapes.len();
-            self.vector_shapes.push(VectorShape { element });
-            self.vector_shape_ids.insert(element, index);
-            index
-        };
-        ValueType::Vector(index)
-    }
-
     pub(super) fn llvm_array_type(&self, index: usize) -> Option<inkwell::types::ArrayType<'ctx>> {
         let shape = self.array_shapes[index];
         Some(
@@ -437,6 +536,12 @@ impl<'ctx> Codegen<'ctx> {
                 let mut payload_fields = Vec::with_capacity(variant.payload.len());
                 for ty in &variant.payload {
                     let value_type = self.resolve_type(ty, variant.span)?;
+                    if matches!(value_type, ValueType::Reference(_)) {
+                        return Err(format!(
+                            "line {}:{}: references cannot be stored in enums",
+                            variant.span.line, variant.span.column
+                        ));
+                    }
                     if value_type == ValueType::Unit {
                         return Err(format!(
                             "line {}:{}: enum payloads cannot have type `unit`",
@@ -502,6 +607,12 @@ impl<'ctx> Codegen<'ctx> {
                     Type::Unit => {
                         return Err(format!(
                             "line {}:{}: struct fields cannot have type `unit`",
+                            field.span.line, field.span.column
+                        ));
+                    }
+                    Type::Reference(_) => {
+                        return Err(format!(
+                            "line {}:{}: references cannot be stored in structs",
                             field.span.line, field.span.column
                         ));
                     }
@@ -602,6 +713,12 @@ impl<'ctx> Codegen<'ctx> {
                 .map(|p| self.resolve_type(&p.ty, p.span))
                 .collect::<Result<_, _>>()?;
             let ret: ValueType = self.resolve_type(&function.return_type, function.span)?;
+            if matches!(ret, ValueType::Reference(_)) {
+                return Err(format!(
+                    "line {}:{}: functions cannot return references",
+                    function.span.line, function.span.column
+                ));
+            }
             let llvm_name = if function.name == "main" {
                 "vaca_main"
             } else if program.functions_are_qualified {

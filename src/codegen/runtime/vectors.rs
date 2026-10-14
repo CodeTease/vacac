@@ -323,6 +323,18 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
+    pub(in crate::codegen) fn vector_type(&mut self, element: ArrayElementType) -> ValueType {
+        let index = if let Some(index) = self.vector_shape_ids.get(&element) {
+            *index
+        } else {
+            let index = self.vector_shapes.len();
+            self.vector_shapes.push(VectorShape { element });
+            self.vector_shape_ids.insert(element, index);
+            index
+        };
+        ValueType::Vector(index)
+    }
+
     pub(in crate::codegen) fn resolve_array_element(
         &mut self,
         element: &Type,
@@ -344,6 +356,15 @@ impl<'ctx> Codegen<'ctx> {
                 let ValueType::Tuple(index) = self.resolve_type(element, span)? else {
                     unreachable!()
                 };
+                if self.tuple_shapes[index]
+                    .iter()
+                    .any(|ty| matches!(ty, ValueType::Reference(_)))
+                {
+                    return Err(format!(
+                        "line {}:{}: references cannot be stored in tuples",
+                        span.line, span.column
+                    ));
+                }
                 Ok(ArrayElementType::Tuple(index))
             }
             Type::Function(_, _) => {
@@ -360,6 +381,10 @@ impl<'ctx> Codegen<'ctx> {
             }
             Type::Unit => Err(format!(
                 "line {}:{}: array elements cannot have type `unit`",
+                span.line, span.column
+            )),
+            Type::Reference(_) => Err(format!(
+                "line {}:{}: references cannot be stored in arrays or vectors",
                 span.line, span.column
             )),
             Type::Named(name) if self.enum_ids.contains_key(name) => {

@@ -19,6 +19,7 @@ enum ValueType {
     Tuple(usize),
     Vector(usize),
     Function(usize),
+    Reference(usize),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -63,6 +64,8 @@ struct Checker {
     vector_shape_ids: HashMap<ArrayElementType, usize>,
     function_shapes: Vec<FunctionShape>,
     function_shape_ids: HashMap<FunctionShape, usize>,
+    reference_types: Vec<ValueType>,
+    reference_type_ids: HashMap<ValueType, usize>,
     lambda_scope_boundaries: Vec<usize>,
     lambda_capture_scopes: Vec<Vec<String>>,
     lambda_captures: HashMap<(Option<usize>, usize, usize), Vec<String>>,
@@ -98,6 +101,8 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         vector_shape_ids: HashMap::new(),
         function_shapes: Vec::new(),
         function_shape_ids: HashMap::new(),
+        reference_types: Vec::new(),
+        reference_type_ids: HashMap::new(),
         lambda_scope_boundaries: Vec::new(),
         lambda_capture_scopes: Vec::new(),
         lambda_captures: HashMap::new(),

@@ -32,6 +32,7 @@ enum ValueType {
     Tuple(usize),
     Vector(usize),
     Function(usize),
+    Reference(usize),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -93,6 +94,8 @@ struct Codegen<'ctx> {
     vector_shape_ids: HashMap<ArrayElementType, usize>,
     function_shapes: Vec<FunctionShape>,
     function_shape_ids: HashMap<FunctionShape, usize>,
+    reference_types: Vec<ValueType>,
+    reference_type_ids: HashMap<ValueType, usize>,
     scopes: Vec<HashMap<String, Local<'ctx>>>,
     string_literals: HashMap<String, PointerValue<'ctx>>,
     loop_targets: Vec<LoopTarget<'ctx>>,
@@ -181,6 +184,9 @@ impl<'ctx> Codegen<'ctx> {
                         .join(", "),
                     self.type_name(shape.return_type)
                 )
+            }
+            ValueType::Reference(index) => {
+                format!("&{}", self.type_name(self.reference_types[index]))
             }
         }
     }

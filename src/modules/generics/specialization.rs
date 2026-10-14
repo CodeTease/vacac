@@ -186,6 +186,11 @@ impl Specializer {
                 substitutions,
                 span,
             )?)),
+            Type::Reference(element) => Type::Reference(Box::new(self.normalize_type(
+                *element,
+                substitutions,
+                span,
+            )?)),
             other => other,
         })
     }

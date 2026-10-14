@@ -54,6 +54,9 @@ impl Checker {
                 immutable,
                 span,
             } => {
+                if matches!(ty, Some(Type::Reference(_))) && !*immutable {
+                    return Err(at(*span, "reference bindings must be immutable"));
+                }
                 let value_type = if let Some(ty) = ty {
                     let expected = self.resolve_type(ty, *span)?;
                     self.check_expr_expected(value, expected)?
@@ -68,6 +71,9 @@ impl Checker {
                 } else {
                     self.check_expr(value, false)?
                 };
+                if matches!(value_type, ValueType::Reference(_)) && !*immutable {
+                    return Err(at(*span, "reference bindings must be immutable"));
+                }
                 if matches!(value, Expr::Array(elements, _) if elements.is_empty()) && ty.is_none()
                 {
                     return Err(at(
@@ -141,6 +147,9 @@ impl Checker {
                         format!("cannot assign to immutable binding `{name}`"),
                     ));
                 }
+                if matches!(binding_type, ValueType::Reference(_)) {
+                    return Err(at(*span, "reference bindings cannot be reassigned"));
+                }
                 let value_type = self.check_expr_expected(value, binding_type)?;
                 self.expect_type(
                     value_type,
@@ -176,6 +185,9 @@ impl Checker {
                     return Err(at(*span, format!("undefined variable `{root}`")));
                 };
                 let target_type = self.check_place(target, binding_type)?;
+                if matches!(target_type, ValueType::Reference(_)) {
+                    return Err(at(*span, "reference bindings cannot be reassigned"));
+                }
                 let vector_place = self.place_crosses_vector(target, binding_type)?;
                 if vector_place {
                     let value_type = self.check_expr_expected(value, target_type)?;
@@ -330,6 +342,9 @@ impl Checker {
                 }
                 if let Some(value) = value {
                     let value_type = self.check_expr(value, false)?;
+                    if matches!(value_type, ValueType::Reference(_)) {
+                        return Err(at(*span, "references cannot escape through loop breaks"));
+                    }
                     if value_type == ValueType::Unit {
                         return Err(at(*span, "a loop break value cannot have type `unit`"));
                     }

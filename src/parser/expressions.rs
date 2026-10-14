@@ -70,6 +70,22 @@ impl Parser {
                 span: Span::from(&operator),
             });
         }
+        if self.at(&TokenKind::Amp) {
+            let operator = self.advance().clone();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Borrow,
+                value: Box::new(self.parse_expression(11)?),
+                span: Span::from(&operator),
+            });
+        }
+        if self.at(&TokenKind::Star) {
+            let operator = self.advance().clone();
+            return Ok(Expr::Unary {
+                op: UnaryOp::Dereference,
+                value: Box::new(self.parse_expression(11)?),
+                span: Span::from(&operator),
+            });
+        }
         if self.at(&TokenKind::Fn) {
             let start = self.advance().clone();
             self.consume(&TokenKind::LParen, "`(` after `fn` in lambda")?;

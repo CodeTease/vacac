@@ -12,7 +12,14 @@ impl Checker {
             value_type,
             ValueType::Bool | ValueType::I64 | ValueType::F32 | ValueType::F64
         ) {
-            return self.check_scalar_match(value_type, arms, span);
+            let result = self.check_scalar_match(value_type, arms, span)?;
+            if matches!(result, ValueType::Reference(_)) {
+                return Err(at(
+                    span,
+                    "references cannot escape through match expressions",
+                ));
+            }
+            return Ok(result);
         }
         if matches!(
             value_type,
@@ -49,6 +56,12 @@ impl Checker {
             if result == ValueType::Unit {
                 return Err(at(arm.span, "match arms must produce a value"));
             }
+            if matches!(result, ValueType::Reference(_)) {
+                return Err(at(
+                    span,
+                    "references cannot escape through match expressions",
+                ));
+            }
             return Ok(result);
         }
         if !matches!(value_type, ValueType::Enum(_)) {
@@ -60,7 +73,14 @@ impl Checker {
                 ),
             ));
         }
-        self.check_destructuring_match(value_type, arms, span)
+        let result = self.check_destructuring_match(value_type, arms, span)?;
+        if matches!(result, ValueType::Reference(_)) {
+            return Err(at(
+                span,
+                "references cannot escape through match expressions",
+            ));
+        }
+        Ok(result)
     }
 
     fn check_scalar_match(

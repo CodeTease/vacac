@@ -139,6 +139,12 @@ impl<'ctx> Codegen<'ctx> {
         match statement {
             Stmt::Assign { name, value, span } => {
                 let (pointer, ty) = if let Some(local) = self.lookup_local(name) {
+                    if matches!(local.ty, ValueType::Reference(_)) {
+                        return Err(format!(
+                            "line {}:{}: reference bindings cannot be reassigned",
+                            span.line, span.column
+                        ));
+                    }
                     if local.immutable {
                         let reason = if local.loop_variable {
                             format!("cannot assign to immutable loop variable `{name}`")
@@ -199,6 +205,15 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     )
                 })?;
+                if self
+                    .lookup_local(name)
+                    .is_some_and(|local| matches!(local.ty, ValueType::Reference(_)))
+                {
+                    return Err(format!(
+                        "line {}:{}: reference bindings cannot be reassigned",
+                        span.line, span.column
+                    ));
+                }
                 let (root_pointer, root_type, mutable, loop_variable) =
                     if let Some(local) = self.lookup_local(name) {
                         (

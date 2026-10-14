@@ -187,6 +187,7 @@ impl<'ctx> Codegen<'ctx> {
                 Ok(equal)
             }
             ValueType::Enum(enum_id) => self.emit_enum_equality(enum_id, left, right),
+            ValueType::Reference(_) => Err("references cannot be compared".into()),
             ValueType::Unit => Err("void expressions cannot be compared".into()),
         }
     }

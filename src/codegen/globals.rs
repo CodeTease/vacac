@@ -9,9 +9,10 @@ impl<'ctx> Codegen<'ctx> {
                 .as_ref()
                 .ok_or_else(|| format!("global `{}` has no resolved type", declaration.name))?;
             let ty = self.resolve_type(ty, declaration.span)?;
-            if ty == ValueType::Unit || matches!(ty, ValueType::Vector(_)) {
+            if ty == ValueType::Unit || matches!(ty, ValueType::Vector(_) | ValueType::Reference(_))
+            {
                 return Err(format!(
-                    "line {}:{}: global initializer type cannot be `unit` or a vector",
+                    "line {}:{}: global initializer type cannot be `unit`, a vector, or a reference",
                     declaration.span.line, declaration.span.column
                 ));
             }
@@ -750,7 +751,7 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Struct(index) => Some(ArrayElementType::Struct(index)),
             ValueType::Tuple(index) => Some(ArrayElementType::Tuple(index)),
             ValueType::Function(index) => Some(ArrayElementType::Function(index)),
-            ValueType::Unit => None,
+            ValueType::Unit | ValueType::Reference(_) => None,
         }
     }
 }

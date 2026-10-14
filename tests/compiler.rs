@@ -26,6 +26,8 @@ mod language;
 mod matching_loops;
 #[path = "compiler/modules.rs"]
 mod modules;
+#[path = "compiler/references.rs"]
+mod references;
 #[path = "compiler/runtime.rs"]
 mod runtime;
 #[path = "compiler/strings.rs"]

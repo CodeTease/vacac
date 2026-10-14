@@ -29,6 +29,9 @@ impl Specializer {
             (Type::Vector(pattern), Type::Vector(actual)) => {
                 self.unify(pattern, actual, substitutions, span)
             }
+            (Type::Reference(pattern), Type::Reference(actual)) => {
+                self.unify(pattern, actual, substitutions, span)
+            }
             (Type::Array(pattern, pattern_length), Type::Array(actual, actual_length)) => {
                 if pattern_length != actual_length {
                     return Err(Diagnostic::at(
@@ -233,9 +236,21 @@ impl Specializer {
                     _ => None,
                 }
             }
-            Expr::Unary { value, .. } => {
-                self.infer_expr_type_inner(value, variables, visiting_globals)
-            }
+            Expr::Unary { op, value, .. } => match op {
+                UnaryOp::Borrow => Some(Type::Reference(Box::new(self.infer_expr_type_inner(
+                    value,
+                    variables,
+                    visiting_globals,
+                )?))),
+                UnaryOp::Dereference => {
+                    match self.infer_expr_type_inner(value, variables, visiting_globals)? {
+                        Type::Reference(element) => Some(*element),
+                        _ => None,
+                    }
+                }
+                UnaryOp::Negate => self.infer_expr_type_inner(value, variables, visiting_globals),
+                UnaryOp::Not => Some(Type::Bool),
+            },
             Expr::Binary { op, left, .. } => match op {
                 BinaryOp::Equal
                 | BinaryOp::NotEqual
@@ -315,5 +330,6 @@ pub(super) fn type_key(ty: &Type) -> String {
             type_key(result)
         ),
         Type::Vector(element) => format!("Vec<{}>", type_key(element)),
+        Type::Reference(element) => format!("&{}", type_key(element)),
     }
 }

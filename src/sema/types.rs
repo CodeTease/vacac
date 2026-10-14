@@ -9,12 +9,33 @@ impl Checker {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
+            Type::Reference(element) => {
+                let element = self.resolve_type(element, span)?;
+                if element == ValueType::Unit {
+                    return Err(at(span, "references cannot target `unit`"));
+                }
+                if matches!(element, ValueType::Reference(_)) {
+                    return Err(at(span, "references to references are not supported"));
+                }
+                if !self
+                    .reference_target_is_supported(element, &mut std::collections::HashSet::new())?
+                {
+                    return Err(at(
+                        span,
+                        "references to values containing vectors are not supported",
+                    ));
+                }
+                self.reference_type(element)
+            }
             Type::Tuple(elements) => {
                 let mut types = Vec::with_capacity(elements.len());
                 for element in elements {
                     let element_type = self.resolve_type(element, span)?;
                     if element_type == ValueType::Unit {
                         return Err(at(span, "tuple elements cannot have type `unit`"));
+                    }
+                    if matches!(element_type, ValueType::Reference(_)) {
+                        return Err(at(span, "references cannot be stored in tuples"));
                     }
                     types.push(element_type);
                 }
@@ -33,6 +54,9 @@ impl Checker {
                     param_types.push(param_type);
                 }
                 let return_type = self.resolve_type(result, span)?;
+                if matches!(return_type, ValueType::Reference(_)) {
+                    return Err(at(span, "function types cannot return references"));
+                }
                 self.function_type(param_types, return_type)
             }
             Type::Array(element, length) => {
@@ -94,6 +118,9 @@ impl Checker {
                         .join(", "),
                     self.type_name(shape.return_type)
                 )
+            }
+            ValueType::Reference(index) => {
+                format!("&{}", self.type_name(self.reference_types[index]))
             }
             ValueType::Enum(index) => self
                 .enums
@@ -228,10 +255,16 @@ impl Checker {
                 if types.contains(&ValueType::Unit) {
                     return Err(at(span, "tuple elements cannot have type `unit`"));
                 }
+                if types.iter().any(|ty| matches!(ty, ValueType::Reference(_))) {
+                    return Err(at(span, "references cannot be stored in tuples"));
+                }
                 if types.is_empty() {
                     return Err(at(span, "tuple types must contain at least one element"));
                 }
                 ArrayElementType::Tuple(self.tuple_shape(types))
+            }
+            Type::Reference(_) => {
+                return Err(at(span, "references cannot be stored in arrays or vectors"));
             }
             Type::Function(_, _) => {
                 let ValueType::Function(index) = self.resolve_type(element, span)? else {
@@ -253,6 +286,66 @@ impl Checker {
                 ));
             }
         })
+    }
+
+    pub(super) fn reference_target_is_supported(
+        &mut self,
+        ty: ValueType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, Diagnostic> {
+        if !visited.insert(ty) {
+            return Ok(true);
+        }
+        match ty {
+            ValueType::Vector(_) => Ok(false),
+            ValueType::Array(index) => {
+                self.reference_element_is_supported(self.array_shapes[index].element, visited)
+            }
+            ValueType::Tuple(index) => {
+                for element in self.tuple_shapes[index].clone() {
+                    if !self.reference_target_is_supported(element, visited)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::Struct(index) => {
+                for field in self.structs[index].fields.clone() {
+                    let field_type = self.resolve_type(&field.ty, field.span)?;
+                    if !self.reference_target_is_supported(field_type, visited)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::Enum(index) => {
+                for variant in self.enums[index].variants.clone() {
+                    for payload in variant.payload {
+                        let payload_type = self.resolve_type(&payload, variant.span)?;
+                        if !self.reference_target_is_supported(payload_type, visited)? {
+                            return Ok(false);
+                        }
+                    }
+                }
+                Ok(true)
+            }
+            ValueType::I64
+            | ValueType::F32
+            | ValueType::F64
+            | ValueType::Bool
+            | ValueType::Str
+            | ValueType::Unit
+            | ValueType::Function(_)
+            | ValueType::Reference(_) => Ok(true),
+        }
+    }
+
+    fn reference_element_is_supported(
+        &mut self,
+        element: ArrayElementType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, Diagnostic> {
+        self.reference_target_is_supported(ValueType::from(element), visited)
     }
 
     fn tuple_shape(&mut self, elements: Vec<ValueType>) -> usize {
@@ -288,6 +381,18 @@ impl Checker {
             index
         };
         ValueType::Function(index)
+    }
+
+    pub(super) fn reference_type(&mut self, element: ValueType) -> ValueType {
+        let index = if let Some(index) = self.reference_type_ids.get(&element) {
+            *index
+        } else {
+            let index = self.reference_types.len();
+            self.reference_types.push(element);
+            self.reference_type_ids.insert(element, index);
+            index
+        };
+        ValueType::Reference(index)
     }
 
     pub(super) fn check_block_result(
@@ -438,6 +543,9 @@ impl Checker {
             ValueType::Vector(index) => Type::Vector(Box::new(
                 self.type_from_element(self.vector_shapes[index].element),
             )),
+            ValueType::Reference(index) => {
+                Type::Reference(Box::new(self.type_from_value(self.reference_types[index])))
+            }
             ValueType::Tuple(index) => Type::Tuple(
                 self.tuple_shapes[index]
                     .iter()
@@ -485,7 +593,10 @@ impl Checker {
             return Ok(true);
         }
         match ty {
-            ValueType::Unit | ValueType::Vector(_) | ValueType::Function(_) => Ok(false),
+            ValueType::Unit
+            | ValueType::Vector(_)
+            | ValueType::Function(_)
+            | ValueType::Reference(_) => Ok(false),
             ValueType::Array(index) => {
                 self.global_element_is_static(self.array_shapes[index].element, visited)
             }

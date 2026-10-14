@@ -240,6 +240,9 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Vector(index) => ArrayElementType::Vector(index),
             ValueType::Tuple(index) => ArrayElementType::Tuple(index),
             ValueType::Function(index) => ArrayElementType::Function(index),
+            ValueType::Reference(_) => {
+                return Err("references cannot be stored in arrays or vectors".into());
+            }
             ValueType::Unit => return Err("array elements cannot have type `unit`".into()),
         };
         let array_type = self.array_type(element, elements.len() as u32);

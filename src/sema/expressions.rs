@@ -243,6 +243,12 @@ impl Checker {
                     ValueType::Vector(index) => ArrayElementType::Vector(index),
                     ValueType::Tuple(index) => ArrayElementType::Tuple(index),
                     ValueType::Function(index) => ArrayElementType::Function(index),
+                    ValueType::Reference(_) => {
+                        return Err(at(
+                            *span,
+                            "references cannot be stored in arrays or vectors",
+                        ));
+                    }
                     ValueType::Unit => {
                         return Err(at(*span, "array elements cannot have type `unit`"));
                     }
@@ -270,12 +276,23 @@ impl Checker {
                     if ty == ValueType::Unit {
                         return Err(at(*span, "tuple elements cannot have type `unit`"));
                     }
+                    if matches!(ty, ValueType::Reference(_)) {
+                        return Err(at(*span, "references cannot be stored in tuples"));
+                    }
                     types.push(ty);
                 }
                 Ok(self.tuple_type(types))
             }
             Expr::Variable(name, span) => {
                 if let Some((scope_index, ty)) = self.lookup_local_with_scope(name) {
+                    if matches!(ty, ValueType::Reference(_))
+                        && self
+                            .lambda_scope_boundaries
+                            .last()
+                            .is_some_and(|boundary| scope_index < *boundary)
+                    {
+                        return Err(at(*span, "closures cannot capture references"));
+                    }
                     self.record_lambda_capture(name, scope_index);
                     Ok(ty)
                 } else if let Some(global) = self.find_global_name(name) {
@@ -397,6 +414,55 @@ impl Checker {
                 Ok(ValueType::Struct(struct_id))
             }
             Expr::Unary { op, value, span } => {
+                if matches!(op, UnaryOp::Borrow) {
+                    let Expr::Variable(name, _) = value.as_ref() else {
+                        return Err(at(
+                            *span,
+                            "borrowing currently requires a named local binding",
+                        ));
+                    };
+                    let Some((scope_index, target_type)) = self.lookup_local_with_scope(name)
+                    else {
+                        return Err(at(*span, "only local bindings can be borrowed"));
+                    };
+                    if !self.is_immutable_binding(name) {
+                        return Err(at(*span, "only immutable local bindings can be borrowed"));
+                    }
+                    if self
+                        .lambda_scope_boundaries
+                        .last()
+                        .is_some_and(|boundary| scope_index < *boundary)
+                    {
+                        return Err(at(*span, "closures cannot capture references"));
+                    }
+                    if matches!(target_type, ValueType::Reference(_)) {
+                        return Err(at(*span, "references to references are not supported"));
+                    }
+                    if !self.reference_target_is_supported(
+                        target_type,
+                        &mut std::collections::HashSet::new(),
+                    )? {
+                        return Err(at(
+                            *span,
+                            "references to values containing vectors are not supported",
+                        ));
+                    }
+                    self.record_lambda_capture(name, scope_index);
+                    return Ok(self.reference_type(target_type));
+                }
+                if matches!(op, UnaryOp::Dereference) {
+                    let reference_type = self.check_expr(value, false)?;
+                    let ValueType::Reference(index) = reference_type else {
+                        return Err(at(
+                            *span,
+                            format!(
+                                "unary `*` requires a reference, got {}",
+                                self.type_name(reference_type)
+                            ),
+                        ));
+                    };
+                    return Ok(self.reference_types[index]);
+                }
                 let value_type = self.check_expr(
                     value,
                     matches!(op, UnaryOp::Negate) && matches!(value.as_ref(), Expr::Integer(_, _)),
@@ -406,6 +472,7 @@ impl Checker {
                     UnaryOp::Negate if value_type == ValueType::F64 => ValueType::F64,
                     UnaryOp::Negate => ValueType::I64,
                     UnaryOp::Not => ValueType::Bool,
+                    UnaryOp::Borrow | UnaryOp::Dereference => unreachable!(),
                 };
                 self.expect_type(value_type, expected, *span, "unary operator operand")?;
                 Ok(expected)
@@ -452,6 +519,9 @@ impl Checker {
                     BinaryOp::Equal | BinaryOp::NotEqual => {
                         if left_type == ValueType::Unit {
                             return Err(at(*span, "void expressions cannot be compared"));
+                        }
+                        if matches!(left_type, ValueType::Reference(_)) {
+                            return Err(at(*span, "references cannot be compared"));
                         }
                         ValueType::Bool
                     }
@@ -609,6 +679,9 @@ impl Checker {
                     param_types.push(ty);
                 }
                 let return_type = self.resolve_type(return_type, *span)?;
+                if matches!(return_type, ValueType::Reference(_)) {
+                    return Err(at(*span, "functions and lambdas cannot return references"));
+                }
                 let boundary = self.scopes.len();
                 self.lambda_scope_boundaries.push(boundary);
                 self.lambda_capture_scopes.push(Vec::new());
@@ -620,6 +693,12 @@ impl Checker {
                         .last_mut()
                         .unwrap()
                         .insert(param.name.clone(), *ty);
+                    if matches!(ty, ValueType::Reference(_)) {
+                        self.immutable_scopes
+                            .last_mut()
+                            .unwrap()
+                            .insert(param.name.clone());
+                    }
                 }
                 let previous_return_type = self.current_return_type;
                 let previous_loops = std::mem::take(&mut self.loop_contexts);
@@ -670,6 +749,12 @@ impl Checker {
                 }
                 if then_type == ValueType::Unit {
                     return Err(at(*span, "`if` expression branches must produce a value"));
+                }
+                if matches!(then_type, ValueType::Reference(_)) {
+                    return Err(at(
+                        *span,
+                        "references cannot escape through `if` expressions",
+                    ));
                 }
                 Ok(then_type)
             }

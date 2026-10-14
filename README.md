@@ -153,6 +153,30 @@ through fields or array elements. As with other declarations, a global in a
 different module must be marked `pub` to be accessed through its qualified
 name.
 
+## Safe references (initial subset)
+
+Vaca supports immutable references to immutable local bindings. Use `&T` as a
+reference type, `&value` to borrow an eligible local, and `*reference` to read
+through it:
+
+```vaca
+fn read(value: &i64) -> i64 { *value }
+
+fn main() -> i64 {
+    const answer = 42;
+    read(&answer) - 42
+}
+```
+
+This initial subset intentionally has no lifetime inference or mutable
+references. Only a named `const` local without vector contents may be borrowed;
+references may be passed as function parameters and used locally, but cannot be
+returned, captured by closures, stored in globals, structs, enums, tuples,
+arrays, or vectors, or escape through `if`, `match`, or loop expressions.
+Reference parameters are read-only. Borrowing mutable `let` bindings, fields,
+array/vector elements, and rvalues is rejected. Raw pointers, `&mut`, and pointer
+FFI are not implemented.
+
 ## Expression conditionals
 
 In addition to statement-style `if`/`else`, an `if` with an `else` can produce a value:

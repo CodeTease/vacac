@@ -258,7 +258,74 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Struct {
                 name, fields, span, ..
             } => self.emit_struct_literal(name, fields, *span),
-            Expr::Unary { op, value, .. } => {
+            Expr::Unary { op, value, span } => {
+                if matches!(op, UnaryOp::Borrow) {
+                    let Expr::Variable(name, _) = value.as_ref() else {
+                        return Err(format!(
+                            "line {}:{}: borrowing currently requires a named local binding",
+                            span.line, span.column
+                        ));
+                    };
+                    let local = self.lookup_local(name).ok_or_else(|| {
+                        format!(
+                            "line {}:{}: only local bindings can be borrowed",
+                            span.line, span.column
+                        )
+                    })?;
+                    if !local.immutable {
+                        return Err(format!(
+                            "line {}:{}: only immutable local bindings can be borrowed",
+                            span.line, span.column
+                        ));
+                    }
+                    if matches!(local.ty, ValueType::Reference(_)) {
+                        return Err(format!(
+                            "line {}:{}: references to references are not supported",
+                            span.line, span.column
+                        ));
+                    }
+                    if !self.reference_target_is_supported(
+                        local.ty,
+                        &mut std::collections::HashSet::new(),
+                    )? {
+                        return Err(format!(
+                            "line {}:{}: references to values containing vectors are not supported",
+                            span.line, span.column
+                        ));
+                    }
+                    let reference_type = self.reference_type(local.ty);
+                    return Ok(TypedValue {
+                        value: Some(local.pointer.into()),
+                        ty: reference_type,
+                    });
+                }
+                if matches!(op, UnaryOp::Dereference) {
+                    let reference = self.emit_expression(value)?;
+                    let ValueType::Reference(index) = reference.ty else {
+                        return Err(format!(
+                            "line {}:{}: unary `*` requires a reference, got {}",
+                            span.line,
+                            span.column,
+                            self.type_name(reference.ty)
+                        ));
+                    };
+                    let loaded = self
+                        .builder
+                        .build_load(
+                            self.llvm_type(self.reference_types[index])
+                                .ok_or("reference target has no LLVM type")?,
+                            reference
+                                .value
+                                .ok_or("reference value is missing")?
+                                .into_pointer_value(),
+                            "reference.deref",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    return Ok(TypedValue {
+                        value: Some(loaded),
+                        ty: self.reference_types[index],
+                    });
+                }
                 if matches!(op, UnaryOp::Negate)
                     && matches!(value.as_ref(), Expr::Integer(n, _) if *n == (i64::MAX as u64) + 1)
                 {
@@ -323,6 +390,7 @@ impl<'ctx> Codegen<'ctx> {
                             ty: ValueType::Bool,
                         })
                     }
+                    UnaryOp::Borrow | UnaryOp::Dereference => unreachable!(),
                 }
             }
             Expr::Binary {
@@ -360,6 +428,12 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|param| self.resolve_type(&param.ty, param.span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.resolve_type(&synthetic.return_type, synthetic.span)?;
+                if matches!(ret, ValueType::Reference(_)) {
+                    return Err(format!(
+                        "line {}:{}: lambdas cannot return references",
+                        span.line, span.column
+                    ));
+                }
                 let capture_names = self
                     .lambda_captures
                     .get(&(span.file, span.line, span.column))
@@ -370,6 +444,12 @@ impl<'ctx> Codegen<'ctx> {
                     let local = self.lookup_local(&capture_name).ok_or_else(|| {
                         format!("internal error: captured local `{capture_name}` is unavailable")
                     })?;
+                    if matches!(local.ty, ValueType::Reference(_)) {
+                        return Err(format!(
+                            "line {}:{}: closures cannot capture references",
+                            span.line, span.column
+                        ));
+                    }
                     captures.push((capture_name, local.ty, local.pointer));
                 }
                 self.lambda_capture_types.insert(
@@ -474,16 +554,43 @@ impl<'ctx> Codegen<'ctx> {
                 condition,
                 then_block,
                 else_block,
-                ..
-            } => self.emit_if_expression(condition, then_block, else_block),
+                span,
+            } => {
+                let value = self.emit_if_expression(condition, then_block, else_block)?;
+                if matches!(value.ty, ValueType::Reference(_)) {
+                    return Err(format!(
+                        "line {}:{}: references cannot escape through `if` expressions",
+                        span.line, span.column
+                    ));
+                }
+                Ok(value)
+            }
             Expr::Variant {
                 enum_name,
                 variant_name,
                 payload,
                 span,
             } => self.emit_enum_variant(enum_name, variant_name, payload.as_deref(), *span),
-            Expr::Match { value, arms, span } => self.emit_match(value, arms, *span),
-            Expr::Loop { body, .. } => self.emit_loop_expression(body),
+            Expr::Match { value, arms, span } => {
+                let value = self.emit_match(value, arms, *span)?;
+                if matches!(value.ty, ValueType::Reference(_)) {
+                    return Err(format!(
+                        "line {}:{}: references cannot escape through match expressions",
+                        span.line, span.column
+                    ));
+                }
+                Ok(value)
+            }
+            Expr::Loop { body, span } => {
+                let value = self.emit_loop_expression(body)?;
+                if matches!(value.ty, ValueType::Reference(_)) {
+                    return Err(format!(
+                        "line {}:{}: references cannot escape through loop expressions",
+                        span.line, span.column
+                    ));
+                }
+                Ok(value)
+            }
         }
     }
 

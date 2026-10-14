@@ -64,6 +64,9 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
             Type::Array(element, _) | Type::Vector(element) => {
                 check_type(element, parameters, generic_structs, known_types, span)
             }
+            Type::Reference(element) => {
+                check_type(element, parameters, generic_structs, known_types, span)
+            }
             Type::Tuple(elements) => {
                 if elements.is_empty() {
                     return Err(Diagnostic::at(
@@ -85,6 +88,12 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                         ));
                     }
                     check_type(param, parameters, generic_structs, known_types, span)?;
+                }
+                if matches!(result.as_ref(), Type::Reference(_)) {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        "function types cannot return references",
+                    ));
                 }
                 check_type(result, parameters, generic_structs, known_types, span)
             }

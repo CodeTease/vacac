@@ -106,6 +106,9 @@ impl Checker {
                         ValueType::Unit => {
                             return Err(at(variant.span, "enum payloads cannot have type `unit`"));
                         }
+                        ValueType::Reference(_) => {
+                            return Err(at(variant.span, "references cannot be stored in enums"));
+                        }
                         _ => {}
                     }
                 }
@@ -117,6 +120,9 @@ impl Checker {
                 match self.resolve_type(&field.ty, field.span)? {
                     ValueType::Unit => {
                         return Err(at(field.span, "struct fields cannot have type `unit`"));
+                    }
+                    ValueType::Reference(_) => {
+                        return Err(at(field.span, "references cannot be stored in structs"));
                     }
                     _ => {}
                 }
@@ -192,6 +198,12 @@ impl Checker {
                 .map(|param| self.resolve_type(&param.ty, param.span))
                 .collect::<Result<_, _>>()?;
             let return_type = self.resolve_type(&function.return_type, function.span)?;
+            if matches!(return_type, ValueType::Reference(_)) {
+                return Err(at(function.span, "functions cannot return references"));
+            }
+            if matches!(return_type, ValueType::Reference(_)) {
+                return Err(at(function.span, "functions cannot return references"));
+            }
             self.signatures.insert(
                 function.name.clone(),
                 Signature {
@@ -309,6 +321,12 @@ impl Checker {
                 .map(|param| self.resolve_type(&param.ty, param.span))
                 .collect::<Result<_, _>>()?;
             let return_type = self.resolve_type(&function.return_type, function.span)?;
+            if matches!(return_type, ValueType::Reference(_)) {
+                return Err(at(
+                    function.span,
+                    "extern functions cannot return references",
+                ));
+            }
             self.signatures.insert(
                 function.name.clone(),
                 Signature {
@@ -401,10 +419,12 @@ impl Checker {
         let result = (|| {
             if let Some(ty) = &declaration.ty {
                 let expected = self.resolve_type(ty, declaration.span)?;
-                if expected == ValueType::Unit || matches!(expected, ValueType::Vector(_)) {
+                if expected == ValueType::Unit
+                    || matches!(expected, ValueType::Vector(_) | ValueType::Reference(_))
+                {
                     return Err(at(
                         declaration.span,
-                        "global initializer type cannot be `unit` or a vector",
+                        "global initializer type cannot be `unit`, a vector, or a reference",
                     ));
                 }
             }
@@ -569,6 +589,9 @@ impl Checker {
         for param in &function.params {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
+            if matches!(ty, ValueType::Reference(_)) {
+                self.immutable_scopes[0].insert(param.name.clone());
+            }
         }
         let return_type = self.resolve_type(&function.return_type, function.span)?;
         self.current_return_type = return_type;
