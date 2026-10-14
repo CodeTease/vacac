@@ -44,13 +44,15 @@ impl Parser {
                 _ => None,
             })
             .collect();
-        let enum_names = tokens
+        let mut enum_names: HashSet<String> = tokens
             .windows(2)
             .filter_map(|pair| match (&pair[0].kind, &pair[1].kind) {
                 (TokenKind::Enum, TokenKind::Ident(name)) => Some(name.clone()),
                 _ => None,
             })
             .collect();
+        // `Result` is a compiler-provided prelude enum and is available in every source file.
+        enum_names.insert("Result".to_owned());
         Self {
             tokens,
             current: 0,
@@ -209,6 +211,7 @@ fn span_of_expr_parser(expr: &Expr) -> Span {
         | Expr::Lambda { span, .. }
         | Expr::If { span, .. }
         | Expr::Match { span, .. }
+        | Expr::Try { span, .. }
         | Expr::Variant { span, .. } => *span,
     }
 }

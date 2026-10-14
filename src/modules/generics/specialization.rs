@@ -156,12 +156,27 @@ impl Specializer {
                     .into_iter()
                     .map(|argument| self.normalize_type(argument, substitutions, span))
                     .collect::<Result<Vec<_>, _>>()?;
-                self.instantiate_struct(&name, arguments, span)?
+                if self.generic_structs.contains_key(&name) {
+                    self.instantiate_struct(&name, arguments, span)?
+                } else if self.generic_enums.contains_key(&name) {
+                    self.instantiate_enum(&name, arguments, span)?
+                } else {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("`{name}` is not a generic type"),
+                    ));
+                }
             }
             Type::Named(name) if self.generic_structs.contains_key(&name) => {
                 return Err(Diagnostic::at(
                     span.into(),
                     format!("generic struct `{name}` requires explicit type arguments"),
+                ));
+            }
+            Type::Named(name) if self.generic_enums.contains_key(&name) => {
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("generic enum `{name}` requires explicit type arguments"),
                 ));
             }
             Type::Array(element, length) => Type::Array(
@@ -249,6 +264,62 @@ impl Specializer {
             field.ty = self.normalize_type(field.ty.clone(), &substitutions, field.span)?;
         }
         self.generated_structs.push(concrete);
+        Ok(Type::Named(concrete_name))
+    }
+
+    pub(super) fn instantiate_enum(
+        &mut self,
+        template_name: &str,
+        arguments: Vec<Type>,
+        span: Span,
+    ) -> Result<Type, Diagnostic> {
+        let Some(template) = self.generic_enums.get(template_name).cloned() else {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("`{template_name}` is not a generic enum"),
+            ));
+        };
+        if arguments.len() != template.generic_params.len() {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "generic enum `{template_name}` expects {} type argument(s), got {}",
+                    template.generic_params.len(),
+                    arguments.len()
+                ),
+            ));
+        }
+        let concrete_name = format!(
+            "{template_name}::<{}>",
+            arguments.iter().map(type_key).collect::<Vec<_>>().join(",")
+        );
+        if self.enum_instances.contains_key(&concrete_name) {
+            return Ok(Type::Named(concrete_name));
+        }
+        self.new_instance(span)?;
+        self.enum_instances.insert(
+            concrete_name.clone(),
+            (template_name.to_owned(), arguments.clone()),
+        );
+        let substitutions = template
+            .generic_params
+            .iter()
+            .cloned()
+            .zip(arguments)
+            .collect::<Substitution>();
+        let mut concrete = template;
+        concrete.name = concrete_name.clone();
+        concrete.generic_params.clear();
+        for variant in &mut concrete.variants {
+            for payload in &mut variant.payload {
+                *payload = self.normalize_type(payload.clone(), &substitutions, variant.span)?;
+            }
+        }
+        self.generated_enums.push(concrete);
+        if let Some(declaration) = self.generated_enums.last() {
+            self.enum_declarations
+                .insert(declaration.name.clone(), declaration.clone());
+        }
         Ok(Type::Named(concrete_name))
     }
 

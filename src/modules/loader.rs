@@ -1,4 +1,4 @@
-use crate::ast::Program;
+use crate::ast::{EnumDecl, EnumVariant, Program, Span, Type};
 use crate::diagnostic::Diagnostic;
 use crate::{lexer, parser};
 use std::collections::{HashMap, HashSet};
@@ -9,11 +9,35 @@ pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
         Diagnostic::new(format!("cannot read source file: {error}"))
             .with_file(root.display().to_string())
     })?;
+    let result_span = Span {
+        line: 1,
+        column: 1,
+        end_column: 1,
+        file: None,
+    };
     let mut loader = Loader {
         active: HashSet::new(),
         loaded: HashMap::new(),
         program: Program {
-            enums: Vec::new(),
+            enums: vec![EnumDecl {
+                name: "Result".into(),
+                generic_params: vec!["T".into(), "E".into()],
+                variants: vec![
+                    EnumVariant {
+                        name: "Ok".into(),
+                        payload: vec![Type::Parameter("T".into())],
+                        span: result_span,
+                    },
+                    EnumVariant {
+                        name: "Err".into(),
+                        payload: vec![Type::Parameter("E".into())],
+                        span: result_span,
+                    },
+                ],
+                span: result_span,
+                is_public: true,
+                module: String::new(),
+            }],
             structs: Vec::new(),
             globals: Vec::new(),
             functions: Vec::new(),

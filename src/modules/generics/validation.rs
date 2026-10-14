@@ -6,6 +6,12 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
         .filter(|declaration| !declaration.generic_params.is_empty())
         .map(|declaration| (declaration.name.as_str(), declaration.generic_params.len()))
         .collect::<HashMap<_, _>>();
+    let generic_enums = program
+        .enums
+        .iter()
+        .filter(|declaration| !declaration.generic_params.is_empty())
+        .map(|declaration| (declaration.name.as_str(), declaration.generic_params.len()))
+        .collect::<HashMap<_, _>>();
     let known_types = program
         .structs
         .iter()
@@ -22,6 +28,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
         ty: &Type,
         parameters: &std::collections::HashSet<&str>,
         generic_structs: &HashMap<&str, usize>,
+        generic_enums: &HashMap<&str, usize>,
         known_types: &std::collections::HashSet<&str>,
         span: Span,
     ) -> Result<(), Diagnostic> {
@@ -31,45 +38,82 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 format!("unknown generic type parameter `{name}`"),
             )),
             Type::Applied(name, arguments) => {
-                let Some(expected) = generic_structs.get(name.as_str()) else {
+                let struct_arity = generic_structs.get(name.as_str());
+                let enum_arity = generic_enums.get(name.as_str());
+                let is_struct = struct_arity.is_some();
+                let expected_arity = struct_arity.or(enum_arity);
+                let Some(expected) = expected_arity else {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("`{name}` is not a generic struct"),
+                        format!("`{name}` is not a generic type"),
                     ));
                 };
                 if arguments.len() != *expected {
                     return Err(Diagnostic::at(
                         span.into(),
                         format!(
-                            "generic struct `{name}` expects {expected} type argument(s), got {}",
+                            "generic {} `{name}` expects {expected} type argument(s), got {}",
+                            if is_struct { "struct" } else { "enum" },
                             arguments.len()
                         ),
                     ));
                 }
                 for argument in arguments {
-                    check_type(argument, parameters, generic_structs, known_types, span)?;
+                    check_type(
+                        argument,
+                        parameters,
+                        generic_structs,
+                        generic_enums,
+                        known_types,
+                        span,
+                    )?;
                 }
                 Ok(())
             }
-            Type::Named(name) if generic_structs.contains_key(name.as_str()) => {
+            Type::Named(name)
+                if generic_structs.contains_key(name.as_str())
+                    || generic_enums.contains_key(name.as_str()) =>
+            {
                 Err(Diagnostic::at(
                     span.into(),
-                    format!("generic struct `{name}` requires explicit type arguments"),
+                    format!(
+                        "generic {} `{name}` requires explicit type arguments",
+                        if generic_structs.contains_key(name.as_str()) {
+                            "struct"
+                        } else {
+                            "enum"
+                        }
+                    ),
                 ))
             }
             Type::Named(name) if !known_types.contains(name.as_str()) => Err(Diagnostic::at(
                 span.into(),
                 format!("unknown type `{name}`"),
             )),
-            Type::Array(element, _) | Type::Vector(element) => {
-                check_type(element, parameters, generic_structs, known_types, span)
-            }
-            Type::Reference(element) => {
-                check_type(element, parameters, generic_structs, known_types, span)
-            }
-            Type::MutableReference(element) | Type::RawPointer(element, _) => {
-                check_type(element, parameters, generic_structs, known_types, span)
-            }
+            Type::Array(element, _) | Type::Vector(element) => check_type(
+                element,
+                parameters,
+                generic_structs,
+                generic_enums,
+                known_types,
+                span,
+            ),
+            Type::Reference(element) => check_type(
+                element,
+                parameters,
+                generic_structs,
+                generic_enums,
+                known_types,
+                span,
+            ),
+            Type::MutableReference(element) | Type::RawPointer(element, _) => check_type(
+                element,
+                parameters,
+                generic_structs,
+                generic_enums,
+                known_types,
+                span,
+            ),
             Type::Tuple(elements) => {
                 if elements.is_empty() {
                     return Err(Diagnostic::at(
@@ -78,7 +122,14 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                     ));
                 }
                 for element in elements {
-                    check_type(element, parameters, generic_structs, known_types, span)?;
+                    check_type(
+                        element,
+                        parameters,
+                        generic_structs,
+                        generic_enums,
+                        known_types,
+                        span,
+                    )?;
                 }
                 Ok(())
             }
@@ -90,7 +141,14 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                             "function type parameters cannot have type `unit`",
                         ));
                     }
-                    check_type(param, parameters, generic_structs, known_types, span)?;
+                    check_type(
+                        param,
+                        parameters,
+                        generic_structs,
+                        generic_enums,
+                        known_types,
+                        span,
+                    )?;
                 }
                 if matches!(result.as_ref(), Type::Reference(_)) {
                     return Err(Diagnostic::at(
@@ -98,7 +156,14 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                         "function types cannot return references",
                     ));
                 }
-                check_type(result, parameters, generic_structs, known_types, span)
+                check_type(
+                    result,
+                    parameters,
+                    generic_structs,
+                    generic_enums,
+                    known_types,
+                    span,
+                )
             }
             Type::Parameter(_)
             | Type::Named(_)
@@ -139,9 +204,46 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 &field.ty,
                 &parameters,
                 &generic_structs,
+                &generic_enums,
                 &known_types,
                 field.span,
             )?;
+        }
+    }
+    for declaration in program
+        .enums
+        .iter()
+        .filter(|declaration| !declaration.generic_params.is_empty())
+    {
+        let parameters = declaration
+            .generic_params
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        let mut variants = std::collections::HashSet::new();
+        for variant in &declaration.variants {
+            if !variants.insert(variant.name.as_str()) {
+                return Err(Diagnostic::at(
+                    variant.span.into(),
+                    format!("enum variant `{}` is defined more than once", variant.name),
+                ));
+            }
+            for payload in &variant.payload {
+                if *payload == Type::Unit {
+                    return Err(Diagnostic::at(
+                        variant.span.into(),
+                        "enum payloads cannot have type `unit`",
+                    ));
+                }
+                check_type(
+                    payload,
+                    &parameters,
+                    &generic_structs,
+                    &generic_enums,
+                    &known_types,
+                    variant.span,
+                )?;
+            }
         }
     }
     for function in program
@@ -172,6 +274,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 &param.ty,
                 &parameters,
                 &generic_structs,
+                &generic_enums,
                 &known_types,
                 param.span,
             )?;
@@ -180,6 +283,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
             &function.return_type,
             &parameters,
             &generic_structs,
+            &generic_enums,
             &known_types,
             function.span,
         )?;

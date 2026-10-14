@@ -94,6 +94,7 @@ pub struct StructField {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
+    pub generic_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
     pub span: Span,
     pub is_public: bool,
@@ -264,12 +265,17 @@ pub enum Expr {
         arms: Vec<MatchArm>,
         span: Span,
     },
+    Try {
+        value: Box<Expr>,
+        span: Span,
+    },
     Loop {
         body: Box<Block>,
         span: Span,
     },
     Variant {
         enum_name: String,
+        type_arguments: Vec<Type>,
         variant_name: String,
         payload: Option<Vec<Expr>>,
         span: Span,

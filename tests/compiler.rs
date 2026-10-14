@@ -30,6 +30,8 @@ mod modules;
 mod pointers;
 #[path = "compiler/references.rs"]
 mod references;
+#[path = "compiler/results.rs"]
+mod results;
 #[path = "compiler/runtime.rs"]
 mod runtime;
 #[path = "compiler/strings.rs"]

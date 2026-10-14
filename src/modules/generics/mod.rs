@@ -12,22 +12,36 @@ struct PendingFunction {
 struct Specializer {
     global_declarations: HashMap<String, GlobalDecl>,
     module_context: String,
+    current_return_type: Option<Type>,
     generic_functions: HashMap<String, Function>,
     generic_structs: HashMap<String, StructDecl>,
+    generic_enums: HashMap<String, EnumDecl>,
     enum_names: std::collections::HashSet<String>,
     enum_declarations: HashMap<String, EnumDecl>,
     concrete_structs: HashMap<String, StructDecl>,
     function_instances: HashMap<(String, Vec<String>), String>,
     struct_instances: HashMap<String, (String, Vec<Type>)>,
+    enum_instances: HashMap<String, (String, Vec<Type>)>,
     signatures: HashMap<String, (Vec<Type>, Type)>,
     function_queue: VecDeque<PendingFunction>,
     generated_structs: Vec<StructDecl>,
+    generated_enums: Vec<EnumDecl>,
     instance_count: usize,
 }
 
 const MAX_INSTANCES: usize = 512;
 
 pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
+    if let Some(declaration) = program
+        .enums
+        .iter()
+        .find(|declaration| declaration.name == "Result" && declaration.span.file.is_some())
+    {
+        return Err(Diagnostic::at(
+            declaration.span.into(),
+            "`Result` is a reserved compiler-provided prelude enum",
+        ));
+    }
     validation::validate_templates(program)?;
     const RESERVED_FUNCTIONS: &[&str] = &[
         "print_i64",
@@ -78,6 +92,7 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
             .map(|global| (global.name.clone(), global.clone()))
             .collect(),
         module_context: String::new(),
+        current_return_type: None,
         generic_functions: program
             .functions
             .iter()
@@ -86,6 +101,12 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
             .collect(),
         generic_structs: program
             .structs
+            .iter()
+            .filter(|declaration| !declaration.generic_params.is_empty())
+            .map(|declaration| (declaration.name.clone(), declaration.clone()))
+            .collect(),
+        generic_enums: program
+            .enums
             .iter()
             .filter(|declaration| !declaration.generic_params.is_empty())
             .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -108,9 +129,11 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
             .collect(),
         function_instances: HashMap::new(),
         struct_instances: HashMap::new(),
+        enum_instances: HashMap::new(),
         signatures: HashMap::new(),
         function_queue: VecDeque::new(),
         generated_structs: Vec::new(),
+        generated_enums: Vec::new(),
         instance_count: 0,
     };
 
@@ -120,13 +143,29 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
     program
         .structs
         .retain(|declaration| declaration.generic_params.is_empty());
+    program
+        .enums
+        .retain(|declaration| declaration.generic_params.is_empty());
 
     for global in &mut program.globals {
         specializer.module_context = global.module.clone();
         if let Some(ty) = global.ty.take() {
-            global.ty = Some(specializer.normalize_type(ty, &Substitution::new(), global.span)?);
+            let ty = specializer.normalize_type(ty, &Substitution::new(), global.span)?;
+            specializer.process_expr_with_expected(
+                &mut global.value,
+                &Substitution::new(),
+                &mut HashMap::new(),
+                &ty,
+                global.span,
+            )?;
+            global.ty = Some(ty);
+        } else {
+            specializer.process_expr(
+                &mut global.value,
+                &Substitution::new(),
+                &mut HashMap::new(),
+            )?;
         }
-        specializer.process_expr(&mut global.value, &Substitution::new(), &mut HashMap::new())?;
     }
     specializer.module_context.clear();
 
@@ -203,6 +242,7 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
     }
 
     program.structs.append(&mut specializer.generated_structs);
+    program.enums.append(&mut specializer.generated_enums);
     Ok(())
 }
 

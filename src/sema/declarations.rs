@@ -532,6 +532,12 @@ impl Checker {
                 }
             }
             Expr::Unary { value, .. } => self.check_constant_initializer(value)?,
+            Expr::Try { span, .. } => {
+                return Err(at(
+                    *span,
+                    "global initializers must be compile-time constant expressions",
+                ));
+            }
             Expr::Binary { left, right, .. } => {
                 self.check_constant_initializer(left)?;
                 self.check_constant_initializer(right)?;

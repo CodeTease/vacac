@@ -25,6 +25,14 @@ impl Parser {
                 };
                 continue;
             }
+            if self.at(&TokenKind::Question) {
+                let span = Span::from(self.advance());
+                left = Expr::Try {
+                    value: Box::new(left),
+                    span,
+                };
+                continue;
+            }
             if self.at(&TokenKind::LParen) {
                 let span = Span::from(self.advance());
                 let args = self.parse_call_arguments()?;
@@ -260,6 +268,7 @@ impl Parser {
                         let variant_name = path.pop().expect("path has multiple segments");
                         return Ok(Expr::Variant {
                             enum_name: path.join("::"),
+                            type_arguments: Vec::new(),
                             variant_name,
                             payload: None,
                             span,
@@ -354,6 +363,7 @@ impl Parser {
                     };
                     Ok(Expr::Variant {
                         enum_name,
+                        type_arguments,
                         variant_name,
                         payload,
                         span,

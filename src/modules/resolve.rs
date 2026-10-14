@@ -11,6 +11,16 @@ struct Symbol {
 }
 
 pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
+    if let Some(declaration) = program
+        .enums
+        .iter()
+        .find(|declaration| declaration.name == "Result" && declaration.span.file.is_some())
+    {
+        return Err(Diagnostic::at(
+            declaration.span.into(),
+            "`Result` is a reserved compiler-provided prelude enum",
+        ));
+    }
     let mut symbols = HashMap::<String, Symbol>::new();
     for declaration in &program.enums {
         add_symbol(
@@ -214,6 +224,12 @@ fn resolve_reference(
     span: crate::ast::Span,
     symbols: &HashMap<String, Symbol>,
 ) -> Result<String, Diagnostic> {
+    if name == "Result" {
+        return Ok("Result".into());
+    }
+    if name == "Result" {
+        return Ok("Result".into());
+    }
     let already_qualified = symbols.contains_key(name);
     let symbol = if already_qualified {
         symbols.get(name)
@@ -438,6 +454,7 @@ fn resolve_expr(
                 let payload = std::mem::take(args);
                 *expr = Expr::Variant {
                     enum_name,
+                    type_arguments: std::mem::take(type_arguments),
                     variant_name,
                     payload: Some(payload),
                     span: *span,
@@ -486,6 +503,9 @@ fn resolve_expr(
         Expr::Loop { body, span } => {
             resolve_block(body, module, *span, symbols, struct_names, enum_names)?
         }
+        Expr::Try { value, .. } => {
+            resolve_expr(value, module, symbols, struct_names, enum_names)?;
+        }
         Expr::Variant {
             enum_name,
             payload,
@@ -515,6 +535,7 @@ fn resolve_expr(
                 {
                     *expr = Expr::Variant {
                         enum_name: resolved_enum,
+                        type_arguments: Vec::new(),
                         variant_name: variant_name.to_owned(),
                         payload: None,
                         span: *span,

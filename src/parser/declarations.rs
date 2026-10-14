@@ -30,6 +30,11 @@ impl Parser {
     pub(super) fn parse_enum(&mut self, is_public: bool) -> Result<EnumDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Enum, "`enum`")?;
         let name = self.take_ident("enum name")?;
+        let generic_params = self.parse_generic_parameters()?;
+        let previous_type_parameters = std::mem::replace(
+            &mut self.type_parameters,
+            generic_params.iter().cloned().collect(),
+        );
         self.consume(&TokenKind::LBrace, "`{` after enum name")?;
         let mut variants = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
@@ -61,11 +66,14 @@ impl Parser {
             }
         }
         if variants.is_empty() {
+            self.type_parameters = previous_type_parameters;
             return Err(unexpected(self.peek(), "at least one enum variant"));
         }
         self.consume(&TokenKind::RBrace, "`}` after enum variants")?;
+        self.type_parameters = previous_type_parameters;
         Ok(EnumDecl {
             name,
+            generic_params,
             variants,
             span: Span::from(&start),
             is_public,

@@ -22,7 +22,7 @@
 
 * [ ] Automatic memory management (reference counting or garbage collection); currently heap-backed vectors and concatenated strings are retained until process exit.
 * [ ] Standard library beyond the current built-ins (`print_i64`, `print_f32`, `print_f64`, `print`, `println`, `read_i64`, `len`, `vec_new`, and `vec_push`).
-* [ ] Recoverable error handling and propagation (for example, `Result`/`?` or try/catch); current runtime failures terminate the process.
+* [x] Recoverable error handling with the built-in generic `Result<T, E>` prelude enum and postfix `?` propagation; runtime faults still terminate the process.
 * [ ] Async/await and concurrency (threads / multithreading).
 
 ## Diagnostic Engine

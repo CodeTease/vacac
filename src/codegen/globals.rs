@@ -362,6 +362,7 @@ impl<'ctx> Codegen<'ctx> {
                 variant_name,
                 payload,
                 span,
+                ..
             } => {
                 let enum_id = *self
                     .enum_ids
@@ -503,6 +504,7 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Call { span, .. }
             | Expr::CallValue { span, .. }
             | Expr::Lambda { span, .. }
+            | Expr::Try { span, .. }
             | Expr::If { span, .. }
             | Expr::Match { span, .. }
             | Expr::Loop { span, .. } => {
@@ -891,6 +893,7 @@ fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Lambda { span, .. }
         | Expr::If { span, .. }
         | Expr::Match { span, .. }
+        | Expr::Try { span, .. }
         | Expr::Loop { span, .. }
         | Expr::Variant { span, .. } => *span,
     }

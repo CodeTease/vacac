@@ -68,8 +68,11 @@ impl Specializer {
                 "generic tuple argument arities do not match",
             )),
             (Type::Applied(pattern_name, pattern_args), Type::Named(actual_name)) => {
-                let Some((actual_template, actual_args)) = self.struct_instances.get(actual_name)
-                else {
+                let instance = self
+                    .struct_instances
+                    .get(actual_name)
+                    .or_else(|| self.enum_instances.get(actual_name));
+                let Some((actual_template, actual_args)) = instance else {
                     return Err(Diagnostic::at(
                         span.into(),
                         format!(
@@ -319,7 +322,27 @@ impl Specializer {
             Expr::Variant { enum_name, .. } => self
                 .enum_names
                 .contains(enum_name)
-                .then(|| Type::Named(enum_name.clone())),
+                .then(|| Type::Named(enum_name.clone()))
+                .or_else(|| {
+                    self.enum_instances
+                        .contains_key(enum_name)
+                        .then(|| Type::Named(enum_name.clone()))
+                }),
+            Expr::Try { value, .. } => {
+                let Type::Named(name) =
+                    self.infer_expr_type_inner(value, variables, visiting_globals)?
+                else {
+                    return None;
+                };
+                self.enum_declarations
+                    .get(&name)?
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == "Ok")?
+                    .payload
+                    .first()
+                    .cloned()
+            }
             Expr::Loop { .. } => None,
         }
     }

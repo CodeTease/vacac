@@ -958,6 +958,7 @@ impl Checker {
                 variant_name,
                 payload,
                 span,
+                ..
             } => {
                 let enum_id = self
                     .enum_ids
@@ -1012,6 +1013,66 @@ impl Checker {
                     }
                 }
                 Ok(ValueType::Enum(enum_id))
+            }
+            Expr::Try { value, span } => {
+                let operand_type = self.check_expr(value, false)?;
+                let ValueType::Enum(operand_id) = operand_type else {
+                    return Err(at(*span, "postfix `?` requires a `Result<T, E>` value"));
+                };
+                let operand = self.enums[operand_id].clone();
+                if !operand.name.starts_with("Result::<") {
+                    return Err(at(
+                        *span,
+                        "postfix `?` requires the built-in `Result<T, E>` type",
+                    ));
+                }
+                let ok = operand.variants.iter().find(|variant| variant.name == "Ok");
+                let err = operand
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == "Err");
+                let (Some(ok), Some(err)) = (ok, err) else {
+                    return Err(at(
+                        *span,
+                        "built-in `Result<T, E>` has an invalid variant definition",
+                    ));
+                };
+                if ok.payload.len() != 1 || err.payload.len() != 1 {
+                    return Err(at(
+                        *span,
+                        "built-in `Result<T, E>` must have one payload in each variant",
+                    ));
+                }
+                let error_type = self.resolve_type(&err.payload[0], *span)?;
+                let ValueType::Enum(return_id) = self.current_return_type else {
+                    return Err(at(
+                        *span,
+                        "postfix `?` can only be used in a function returning `Result<T, E>`",
+                    ));
+                };
+                let return_enum = &self.enums[return_id];
+                if !return_enum.name.starts_with("Result::<") {
+                    return Err(at(
+                        *span,
+                        "postfix `?` can only be used in a function returning `Result<T, E>`",
+                    ));
+                }
+                let return_error = return_enum
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == "Err")
+                    .and_then(|variant| {
+                        (variant.payload.len() == 1).then(|| variant.payload[0].clone())
+                    })
+                    .ok_or_else(|| {
+                        at(
+                            *span,
+                            "enclosing `Result<T, E>` has an invalid `Err` variant",
+                        )
+                    })?;
+                let return_error_type = self.resolve_type(&return_error, *span)?;
+                self.expect_type(error_type, return_error_type, *span, "error propagation")?;
+                self.resolve_type(&ok.payload[0], *span)
             }
             Expr::Match { value, arms, span } => self.check_match_expr(value, arms, *span),
             Expr::Loop { body, span } => {
