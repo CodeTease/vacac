@@ -72,8 +72,30 @@ impl Parser {
         }
         if self.at(&TokenKind::Amp) {
             let operator = self.advance().clone();
+            if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "raw") {
+                self.advance();
+                let op = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "mut") {
+                    self.advance();
+                    UnaryOp::RawBorrowMut
+                } else if self.take(&TokenKind::Const) {
+                    UnaryOp::RawBorrowConst
+                } else {
+                    return Err(unexpected(self.peek(), "`const` or `mut` after `&raw`"));
+                };
+                return Ok(Expr::Unary {
+                    op,
+                    value: Box::new(self.parse_expression(11)?),
+                    span: Span::from(&operator),
+                });
+            }
+            let op = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "mut") {
+                self.advance();
+                UnaryOp::BorrowMut
+            } else {
+                UnaryOp::Borrow
+            };
             return Ok(Expr::Unary {
-                op: UnaryOp::Borrow,
+                op,
                 value: Box::new(self.parse_expression(11)?),
                 span: Span::from(&operator),
             });

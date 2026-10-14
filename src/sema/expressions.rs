@@ -126,6 +126,19 @@ impl Checker {
     ) -> Result<ValueType, Diagnostic> {
         match expr {
             Expr::Variable(_, _) => Ok(ty),
+            Expr::Unary {
+                op: UnaryOp::Dereference,
+                value,
+                span,
+            } => match self.check_expr(value, false)? {
+                ValueType::Reference(index) => Ok(self.reference_types[index]),
+                ValueType::MutableReference(index) => Ok(self.mutable_reference_types[index]),
+                ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].0),
+                other => Err(at(
+                    *span,
+                    format!("cannot dereference {}", self.type_name(other)),
+                )),
+            },
             Expr::Field { value, name, span } => {
                 let ty = self.check_place(value, ty)?;
                 let ValueType::Struct(struct_id) = ty else {
@@ -152,6 +165,29 @@ impl Checker {
                 self.resolve_type(&field_type, field_span)
             }
             Expr::Index { array, index, span } => {
+                if let Expr::Unary {
+                    op: UnaryOp::Dereference,
+                    ..
+                } = array.as_ref()
+                {
+                    let array_type = self.check_place(array, ty)?;
+                    let index_type = self.check_expr(index, false)?;
+                    self.expect_type(
+                        index_type,
+                        ValueType::I64,
+                        span_of_expr(index),
+                        "array index",
+                    )?;
+                    return match array_type {
+                        ValueType::Array(index) => {
+                            Ok(ValueType::from(self.array_shapes[index].element))
+                        }
+                        ValueType::Vector(index) => {
+                            Ok(ValueType::from(self.vector_shapes[index].element))
+                        }
+                        _ => Err(at(*span, "indexing requires an array (or vector)")),
+                    };
+                }
                 let ty = self.check_place(array, ty)?;
                 let index_type = self.check_expr(index, false)?;
                 self.expect_type(
@@ -176,6 +212,54 @@ impl Checker {
                 "assignment target must be a local variable, field, or array element",
             )),
         }
+    }
+
+    fn check_raw_pointer_place(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+        mutable: bool,
+    ) -> Result<ValueType, Diagnostic> {
+        if !matches!(expr, Expr::Variable(_, _)) {
+            return Err(at(
+                span,
+                "raw address-taking currently requires a local or global variable",
+            ));
+        }
+        let root = assignment_root(expr).ok_or_else(|| {
+            at(
+                span,
+                "raw address-taking requires a variable, field, or array element",
+            )
+        })?;
+        let root_type = if let Some(ty) = self.lookup_local(root) {
+            self.reject_mutably_borrowed(root, span)?;
+            if mutable && self.is_immutable_binding(root) {
+                return Err(at(
+                    span,
+                    "cannot take a mutable raw pointer to an immutable binding",
+                ));
+            }
+            ty
+        } else if let Some(global) = self.find_global_name(root) {
+            let declaration = self.global_declarations[&global].clone();
+            if declaration.module != self.module_context && !declaration.is_public {
+                return Err(at(span, format!("global `{root}` is private")));
+            }
+            if mutable && !declaration.mutable {
+                return Err(at(
+                    span,
+                    "cannot take a mutable raw pointer to an immutable global",
+                ));
+            }
+            self.check_global(&global, span)?
+        } else {
+            return Err(at(span, format!("undefined variable `{root}`")));
+        };
+        if matches!(expr, Expr::Variable(_, _)) {
+            return Ok(root_type);
+        }
+        self.check_place(expr, root_type)
     }
 
     pub(super) fn place_crosses_vector(
@@ -243,7 +327,8 @@ impl Checker {
                     ValueType::Vector(index) => ArrayElementType::Vector(index),
                     ValueType::Tuple(index) => ArrayElementType::Tuple(index),
                     ValueType::Function(index) => ArrayElementType::Function(index),
-                    ValueType::Reference(_) => {
+                    ValueType::RawPointer(index) => ArrayElementType::RawPointer(index),
+                    ValueType::Reference(_) | ValueType::MutableReference(_) => {
                         return Err(at(
                             *span,
                             "references cannot be stored in arrays or vectors",
@@ -276,7 +361,7 @@ impl Checker {
                     if ty == ValueType::Unit {
                         return Err(at(*span, "tuple elements cannot have type `unit`"));
                     }
-                    if matches!(ty, ValueType::Reference(_)) {
+                    if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                         return Err(at(*span, "references cannot be stored in tuples"));
                     }
                     types.push(ty);
@@ -284,8 +369,9 @@ impl Checker {
                 Ok(self.tuple_type(types))
             }
             Expr::Variable(name, span) => {
+                self.reject_mutably_borrowed(name, *span)?;
                 if let Some((scope_index, ty)) = self.lookup_local_with_scope(name) {
-                    if matches!(ty, ValueType::Reference(_))
+                    if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
                         && self
                             .lambda_scope_boundaries
                             .last()
@@ -435,7 +521,10 @@ impl Checker {
                     {
                         return Err(at(*span, "closures cannot capture references"));
                     }
-                    if matches!(target_type, ValueType::Reference(_)) {
+                    if matches!(
+                        target_type,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
                         return Err(at(*span, "references to references are not supported"));
                     }
                     if !self.reference_target_is_supported(
@@ -450,18 +539,81 @@ impl Checker {
                     self.record_lambda_capture(name, scope_index);
                     return Ok(self.reference_type(target_type));
                 }
-                if matches!(op, UnaryOp::Dereference) {
-                    let reference_type = self.check_expr(value, false)?;
-                    let ValueType::Reference(index) = reference_type else {
+                if matches!(op, UnaryOp::BorrowMut) {
+                    if !self.allow_mutable_borrow_initializer {
                         return Err(at(
                             *span,
-                            format!(
-                                "unary `*` requires a reference, got {}",
-                                self.type_name(reference_type)
-                            ),
+                            "mutable borrows must initialize a local reference binding",
+                        ));
+                    }
+                    let Expr::Variable(name, _) = value.as_ref() else {
+                        return Err(at(
+                            *span,
+                            "mutable borrowing currently requires a named local binding",
                         ));
                     };
-                    return Ok(self.reference_types[index]);
+                    let Some((scope_index, target_type)) = self.lookup_local_with_scope(name)
+                    else {
+                        return Err(at(*span, "only local bindings can be borrowed"));
+                    };
+                    if self.is_immutable_binding(name) || self.is_loop_variable(name) {
+                        return Err(at(
+                            *span,
+                            "mutable borrowing requires a mutable local binding",
+                        ));
+                    }
+                    if self.is_mutably_borrowed(name) {
+                        return Err(at(*span, format!("`{name}` is already mutably borrowed")));
+                    }
+                    if self
+                        .lambda_scope_boundaries
+                        .last()
+                        .is_some_and(|boundary| scope_index < *boundary)
+                    {
+                        return Err(at(*span, "closures cannot capture mutable references"));
+                    }
+                    if matches!(
+                        target_type,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
+                        return Err(at(*span, "references to references are not supported"));
+                    }
+                    if !self.reference_target_is_supported(
+                        target_type,
+                        &mut std::collections::HashSet::new(),
+                    )? {
+                        return Err(at(
+                            *span,
+                            "references to values containing vectors are not supported",
+                        ));
+                    }
+                    return Ok(self.mutable_reference_type(target_type));
+                }
+                if matches!(op, UnaryOp::RawBorrowConst | UnaryOp::RawBorrowMut) {
+                    let place_type = self.check_raw_pointer_place(
+                        value,
+                        *span,
+                        matches!(op, UnaryOp::RawBorrowMut),
+                    )?;
+                    return Ok(
+                        self.raw_pointer_type(place_type, matches!(op, UnaryOp::RawBorrowMut))
+                    );
+                }
+                if matches!(op, UnaryOp::Dereference) {
+                    return match self.check_expr(value, false)? {
+                        ValueType::Reference(index) => Ok(self.reference_types[index]),
+                        ValueType::MutableReference(index) => {
+                            Ok(self.mutable_reference_types[index])
+                        }
+                        ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].0),
+                        other => Err(at(
+                            *span,
+                            format!(
+                                "unary `*` requires a reference or raw pointer, got {}",
+                                self.type_name(other)
+                            ),
+                        )),
+                    };
                 }
                 let value_type = self.check_expr(
                     value,
@@ -472,7 +624,11 @@ impl Checker {
                     UnaryOp::Negate if value_type == ValueType::F64 => ValueType::F64,
                     UnaryOp::Negate => ValueType::I64,
                     UnaryOp::Not => ValueType::Bool,
-                    UnaryOp::Borrow | UnaryOp::Dereference => unreachable!(),
+                    UnaryOp::Borrow
+                    | UnaryOp::BorrowMut
+                    | UnaryOp::RawBorrowConst
+                    | UnaryOp::RawBorrowMut
+                    | UnaryOp::Dereference => unreachable!(),
                 };
                 self.expect_type(value_type, expected, *span, "unary operator operand")?;
                 Ok(expected)
@@ -520,8 +676,25 @@ impl Checker {
                         if left_type == ValueType::Unit {
                             return Err(at(*span, "void expressions cannot be compared"));
                         }
-                        if matches!(left_type, ValueType::Reference(_)) {
-                            return Err(at(*span, "references cannot be compared"));
+                        if matches!(
+                            left_type,
+                            ValueType::Reference(_)
+                                | ValueType::MutableReference(_)
+                                | ValueType::RawPointer(_)
+                        ) {
+                            return Err(at(
+                                *span,
+                                "references and raw pointers cannot be compared",
+                            ));
+                        }
+                        if self.contains_raw_pointer(
+                            left_type,
+                            &mut std::collections::HashSet::new(),
+                        )? {
+                            return Err(at(
+                                *span,
+                                "values containing raw pointers cannot be compared",
+                            ));
                         }
                         ValueType::Bool
                     }
@@ -640,6 +813,20 @@ impl Checker {
                 let params = signature.params;
                 let return_type = signature.return_type;
                 for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
+                    if let Expr::Unary {
+                        op: UnaryOp::BorrowMut,
+                        value,
+                        ..
+                    } = arg
+                        && let Expr::Variable(source, source_span) = value.as_ref()
+                    {
+                        if self.is_mutably_borrowed(source) {
+                            return Err(at(
+                                *source_span,
+                                format!("`{source}` is already mutably borrowed"),
+                            ));
+                        }
+                    }
                     let actual = self.check_expr_expected(arg, expected)?;
                     self.expect_type(
                         actual,
@@ -679,7 +866,10 @@ impl Checker {
                     param_types.push(ty);
                 }
                 let return_type = self.resolve_type(return_type, *span)?;
-                if matches!(return_type, ValueType::Reference(_)) {
+                if matches!(
+                    return_type,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(at(*span, "functions and lambdas cannot return references"));
                 }
                 let boundary = self.scopes.len();
@@ -688,12 +878,13 @@ impl Checker {
                 self.scopes.push(HashMap::new());
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
+                self.mutable_borrows.push(std::collections::HashSet::new());
                 for (param, ty) in params.iter().zip(param_types.iter()) {
                     self.scopes
                         .last_mut()
                         .unwrap()
                         .insert(param.name.clone(), *ty);
-                    if matches!(ty, ValueType::Reference(_)) {
+                    if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                         self.immutable_scopes
                             .last_mut()
                             .unwrap()
@@ -709,6 +900,7 @@ impl Checker {
                 self.scopes.pop();
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
+                self.mutable_borrows.pop();
                 self.lambda_scope_boundaries.pop();
                 let captures = self.lambda_capture_scopes.pop().unwrap_or_default();
                 self.lambda_captures
@@ -750,7 +942,10 @@ impl Checker {
                 if then_type == ValueType::Unit {
                     return Err(at(*span, "`if` expression branches must produce a value"));
                 }
-                if matches!(then_type, ValueType::Reference(_)) {
+                if matches!(
+                    then_type,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(at(
                         *span,
                         "references cannot escape through `if` expressions",

@@ -106,7 +106,7 @@ impl Checker {
                         ValueType::Unit => {
                             return Err(at(variant.span, "enum payloads cannot have type `unit`"));
                         }
-                        ValueType::Reference(_) => {
+                        ValueType::Reference(_) | ValueType::MutableReference(_) => {
                             return Err(at(variant.span, "references cannot be stored in enums"));
                         }
                         _ => {}
@@ -121,7 +121,7 @@ impl Checker {
                     ValueType::Unit => {
                         return Err(at(field.span, "struct fields cannot have type `unit`"));
                     }
-                    ValueType::Reference(_) => {
+                    ValueType::Reference(_) | ValueType::MutableReference(_) => {
                         return Err(at(field.span, "references cannot be stored in structs"));
                     }
                     _ => {}
@@ -198,10 +198,10 @@ impl Checker {
                 .map(|param| self.resolve_type(&param.ty, param.span))
                 .collect::<Result<_, _>>()?;
             let return_type = self.resolve_type(&function.return_type, function.span)?;
-            if matches!(return_type, ValueType::Reference(_)) {
-                return Err(at(function.span, "functions cannot return references"));
-            }
-            if matches!(return_type, ValueType::Reference(_)) {
+            if matches!(
+                return_type,
+                ValueType::Reference(_) | ValueType::MutableReference(_)
+            ) {
                 return Err(at(function.span, "functions cannot return references"));
             }
             self.signatures.insert(
@@ -321,7 +321,10 @@ impl Checker {
                 .map(|param| self.resolve_type(&param.ty, param.span))
                 .collect::<Result<_, _>>()?;
             let return_type = self.resolve_type(&function.return_type, function.span)?;
-            if matches!(return_type, ValueType::Reference(_)) {
+            if matches!(
+                return_type,
+                ValueType::Reference(_) | ValueType::MutableReference(_)
+            ) {
                 return Err(at(
                     function.span,
                     "extern functions cannot return references",
@@ -451,6 +454,12 @@ impl Checker {
                 span_of_expr(&declaration.value),
                 &format!("initializer for global `{name}`"),
             )?;
+            if self.contains_raw_pointer(ty, &mut std::collections::HashSet::new())? {
+                return Err(at(
+                    declaration.span,
+                    "global initializers cannot contain raw pointers",
+                ));
+            }
             if !self.global_type_is_static(ty, &mut std::collections::HashSet::new())? {
                 return Err(at(
                     declaration.span,
@@ -581,15 +590,17 @@ impl Checker {
     pub(super) fn check_function(&mut self, function: &Function) -> Result<(), Diagnostic> {
         self.scopes.clear();
         self.immutable_scopes.clear();
+        self.mutable_borrows.clear();
         self.loop_scopes.clear();
         self.loop_contexts.clear();
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
+        self.mutable_borrows.push(std::collections::HashSet::new());
         for param in &function.params {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
-            if matches!(ty, ValueType::Reference(_)) {
+            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                 self.immutable_scopes[0].insert(param.name.clone());
             }
         }

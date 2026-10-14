@@ -209,7 +209,25 @@ impl Parser {
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.take(&TokenKind::Amp) {
-            Ok(Type::Reference(Box::new(self.parse_type()?)))
+            if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "mut") {
+                self.advance();
+                Ok(Type::MutableReference(Box::new(self.parse_type()?)))
+            } else {
+                Ok(Type::Reference(Box::new(self.parse_type()?)))
+            }
+        } else if self.take(&TokenKind::Star) {
+            let mutable = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "mut") {
+                self.advance();
+                true
+            } else if self.take(&TokenKind::Const) {
+                false
+            } else {
+                return Err(unexpected(
+                    self.peek(),
+                    "`mut` or `const` after `*` in raw pointer type",
+                ));
+            };
+            Ok(Type::RawPointer(Box::new(self.parse_type()?), mutable))
         } else if self.take(&TokenKind::Fn) {
             self.consume(&TokenKind::LParen, "`(` after `fn` in function type")?;
             let mut params = Vec::new();

@@ -10,6 +10,31 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<(PointerValue<'ctx>, ValueType), String> {
         match expr {
             Expr::Variable(name, _) if name == root_name => Ok((root_pointer, root_type)),
+            Expr::Unary {
+                op: UnaryOp::Dereference,
+                value,
+                span,
+            } => {
+                let pointer_value = self.emit_expression(value)?;
+                let target_type = match pointer_value.ty {
+                    ValueType::Reference(index) => self.reference_types[index],
+                    ValueType::MutableReference(index) => self.mutable_reference_types[index],
+                    ValueType::RawPointer(index) => self.raw_pointer_types[index].0,
+                    other => {
+                        return Err(format!(
+                            "line {}:{}: cannot dereference {}",
+                            span.line,
+                            span.column,
+                            self.type_name(other)
+                        ));
+                    }
+                };
+                let pointer = pointer_value
+                    .value
+                    .ok_or("dereference pointer has no value")?
+                    .into_pointer_value();
+                Ok((pointer, target_type))
+            }
             Expr::Field { value, name, span } => {
                 let (base_pointer, base_type) =
                     self.emit_place_pointer(value, root_name, root_pointer, root_type)?;
@@ -135,11 +160,67 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    pub(super) fn emit_address_of_place(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<(PointerValue<'ctx>, ValueType), String> {
+        if !matches!(expr, Expr::Variable(_, _)) {
+            return Err("raw address-taking currently requires a local or global variable".into());
+        }
+        let name = codegen_assignment_root(expr)
+            .ok_or("raw address-taking requires a variable, field, or array element")?;
+        let (root_pointer, root_type) = if let Some(local) = self.lookup_local(name) {
+            (local.pointer, local.ty)
+        } else {
+            let global_name = self
+                .resolve_global_name(name)
+                .ok_or_else(|| format!("undefined variable `{name}`"))?;
+            let declaration = self.global_declarations[&global_name].clone();
+            if declaration.module != self.module_context && !declaration.is_public {
+                return Err(format!("global `{name}` is private"));
+            }
+            (
+                self.globals[&global_name].as_pointer_value(),
+                self.global_types[&global_name],
+            )
+        };
+        self.emit_place_pointer(expr, name, root_pointer, root_type)
+    }
+
+    fn place_is_mutable(&mut self, expr: &Expr) -> Result<bool, String> {
+        match expr {
+            Expr::Unary {
+                op: UnaryOp::Dereference,
+                value,
+                span,
+            } => {
+                let pointer = self.emit_expression(value)?;
+                match pointer.ty {
+                    ValueType::MutableReference(_) => Ok(true),
+                    ValueType::Reference(_) => Ok(false),
+                    ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].1),
+                    other => Err(format!(
+                        "line {}:{}: cannot dereference {}",
+                        span.line,
+                        span.column,
+                        self.type_name(other)
+                    )),
+                }
+            }
+            Expr::Field { value, .. } => self.place_is_mutable(value),
+            Expr::Index { array, .. } => self.place_is_mutable(array),
+            _ => Ok(false),
+        }
+    }
+
     pub(super) fn emit_assignment_statement(&mut self, statement: &Stmt) -> Result<bool, String> {
         match statement {
             Stmt::Assign { name, value, span } => {
                 let (pointer, ty) = if let Some(local) = self.lookup_local(name) {
-                    if matches!(local.ty, ValueType::Reference(_)) {
+                    if matches!(
+                        local.ty,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
                         return Err(format!(
                             "line {}:{}: reference bindings cannot be reassigned",
                             span.line, span.column
@@ -205,9 +286,13 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     )
                 })?;
-                if self
-                    .lookup_local(name)
-                    .is_some_and(|local| matches!(local.ty, ValueType::Reference(_)))
+                if matches!(target, Expr::Variable(_, _))
+                    && self.lookup_local(name).is_some_and(|local| {
+                        matches!(
+                            local.ty,
+                            ValueType::Reference(_) | ValueType::MutableReference(_)
+                        )
+                    })
                 {
                     return Err(format!(
                         "line {}:{}: reference bindings cannot be reassigned",
@@ -243,8 +328,24 @@ impl<'ctx> Codegen<'ctx> {
                             false,
                         )
                     };
-                let vector_place = self.place_mutates_vector(target, name, root_type)?;
-                if !mutable && !vector_place {
+                let through_pointer = codegen_place_contains_dereference(target);
+                let vector_place =
+                    !through_pointer && self.place_mutates_vector(target, name, root_type)?;
+                if through_pointer && !self.place_is_mutable(target)? {
+                    if let Expr::Unary { value: pointer, .. } = target
+                        && matches!(self.emit_expression(pointer)?.ty, ValueType::Reference(_))
+                    {
+                        return Err(format!(
+                            "line {}:{}: assignment target must start with a variable",
+                            span.line, span.column
+                        ));
+                    }
+                    return Err(format!(
+                        "line {}:{}: cannot assign through an immutable pointer",
+                        span.line, span.column
+                    ));
+                }
+                if !through_pointer && !mutable && !vector_place {
                     let reason = if loop_variable {
                         format!("cannot assign through immutable loop variable `{name}`")
                     } else {
@@ -346,6 +447,28 @@ fn codegen_assignment_root(expr: &Expr) -> Option<&str> {
         Expr::Variable(name, _) => Some(name),
         Expr::Field { value, .. } => codegen_assignment_root(value),
         Expr::Index { array, .. } => codegen_assignment_root(array),
+        Expr::Unary {
+            op:
+                UnaryOp::Dereference
+                | UnaryOp::RawBorrowConst
+                | UnaryOp::RawBorrowMut
+                | UnaryOp::BorrowMut
+                | UnaryOp::Borrow,
+            value,
+            ..
+        } => codegen_assignment_root(value),
         _ => None,
+    }
+}
+
+fn codegen_place_contains_dereference(expr: &Expr) -> bool {
+    match expr {
+        Expr::Unary {
+            op: UnaryOp::Dereference,
+            ..
+        } => true,
+        Expr::Field { value, .. } => codegen_place_contains_dereference(value),
+        Expr::Index { array, .. } => codegen_place_contains_dereference(array),
+        _ => false,
     }
 }

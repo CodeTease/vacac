@@ -98,6 +98,8 @@ Some examples to explore:
   pass, and read named structs.
 - [`const_and_struct_fields.vca`](examples/const_and_struct_fields.vca) — use an
   immutable `const` value and update fields of a mutable local struct.
+- [`pointers.rs`](tests/compiler/pointers.rs) — checked mutable references and
+  explicitly raw pointer reads/writes.
 - [`modules/`](examples/modules/) — split a program across nested source files
   and use qualified public structs, enums, and functions.
 
@@ -153,29 +155,49 @@ through fields or array elements. As with other declarations, a global in a
 different module must be marked `pub` to be accessed through its qualified
 name.
 
-## Safe references (initial subset)
+## References and raw pointers
 
-Vaca supports immutable references to immutable local bindings. Use `&T` as a
-reference type, `&value` to borrow an eligible local, and `*reference` to read
-through it:
+Shared references use `&T`; `&value` borrows an eligible immutable local, and
+`*reference` reads through it. Mutable references use `&mut T` and `&mut value`:
 
 ```vaca
 fn read(value: &i64) -> i64 { *value }
+fn increment(value: &mut i64) -> unit { *value = *value + 1; }
 
 fn main() -> i64 {
     const answer = 42;
-    read(&answer) - 42
+    let count = 41;
+    if true {
+        const count_ref: &mut i64 = &mut count;
+        increment(count_ref);
+        0
+    } else {
+        0
+    };
+    read(&answer) + count - 84
 }
 ```
 
-This initial subset intentionally has no lifetime inference or mutable
-references. Only a named `const` local without vector contents may be borrowed;
-references may be passed as function parameters and used locally, but cannot be
-returned, captured by closures, stored in globals, structs, enums, tuples,
-arrays, or vectors, or escape through `if`, `match`, or loop expressions.
-Reference parameters are read-only. Borrowing mutable `let` bindings, fields,
-array/vector elements, and rvalues is rejected. Raw pointers, `&mut`, and pointer
-FFI are not implemented.
+Mutable references are restricted to named mutable local bindings (`let`, never
+`const` or loop variables). A mutable reference must be held in a `const` local;
+while that borrow's lexical block is active, direct reads/writes or another
+mutable borrow of the source are rejected. The borrow must first be bound to a
+local reference variable, which can then be passed to functions and written
+through with `*reference`. It cannot be returned, captured by a
+closure, stored in aggregates/globals, or escape through expressions. Shared
+references remain read-only and keep the same local-only restrictions.
+
+Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
+place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
+their target and mutability in Vaca's type checker, are not implicitly
+convertible to references or between const and mutable forms, and may be stored
+in aggregates or passed/returned by functions. A `*const T` cannot be assigned
+through; `*mut T` can. Dereferencing raw pointers has **no runtime validity or
+lifetime check**: the programmer must ensure the pointer is valid and points to
+an appropriately aligned live object. There is no null literal, pointer
+arithmetic/comparison, raw-pointer global initializer, pointer FFI, or general
+address-taking of aggregate subplaces yet. Raw pointers and safe references are
+distinct and do not implicitly coerce between one another.
 
 ## Expression conditionals
 
@@ -410,6 +432,10 @@ fn main() -> i64 {
 Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. Match patterns use `EnumName::Variant`; payload variants bind or ignore every field, for example `Event::Record(id, _, label)`, and tuple/array/struct payloads can be recursively destructured. The payload count and types must match the declaration. Scalar patterns may be booleans, signed integers, or floating-point literals (use the `f32` suffix for an `f32` pattern). Float pattern equality follows IEEE `==`: `+0.0` and `-0.0` are equal and duplicate, while NaN matches no float literal. Floating-point matches always require a `_` wildcard because their pattern set is not exhaustive. For booleans, integers, and enums a final `_` wildcard or identifier binding may handle remaining values; it is optional when every possible value or variant is otherwise covered. Wildcards and identifier catch-alls must be unique and last, and duplicate or unreachable arms are rejected. Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same non-`unit` type. Enum values may be bound, assigned, passed to and returned from functions, stored in fixed-size arrays, inspected with `match`, and compared for equality or inequality. Two enums are equal when they have the same variant and equal payloads; payload strings compare by contents and aggregate payloads compare recursively. Payloads may be any non-`unit` value type, including tuples, arrays, structs, and other enums. Recursive by-value aggregate layouts are rejected.
 
 ## Vaca v0.1 syntax
+
+In addition to the by-value types described below, the compiler supports
+`&T`, `&mut T`, `*const T`, and `*mut T` as documented in
+[References and raw pointers](#references-and-raw-pointers).
 
 ```text
 fn factorial(n: i64) -> i64 {

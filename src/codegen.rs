@@ -33,6 +33,8 @@ enum ValueType {
     Vector(usize),
     Function(usize),
     Reference(usize),
+    MutableReference(usize),
+    RawPointer(usize),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -96,6 +98,10 @@ struct Codegen<'ctx> {
     function_shape_ids: HashMap<FunctionShape, usize>,
     reference_types: Vec<ValueType>,
     reference_type_ids: HashMap<ValueType, usize>,
+    mutable_reference_types: Vec<ValueType>,
+    mutable_reference_type_ids: HashMap<ValueType, usize>,
+    raw_pointer_types: Vec<(ValueType, bool)>,
+    raw_pointer_type_ids: HashMap<(ValueType, bool), usize>,
     scopes: Vec<HashMap<String, Local<'ctx>>>,
     string_literals: HashMap<String, PointerValue<'ctx>>,
     loop_targets: Vec<LoopTarget<'ctx>>,
@@ -188,6 +194,20 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Reference(index) => {
                 format!("&{}", self.type_name(self.reference_types[index]))
             }
+            ValueType::MutableReference(index) => {
+                format!(
+                    "&mut {}",
+                    self.type_name(self.mutable_reference_types[index])
+                )
+            }
+            ValueType::RawPointer(index) => {
+                let (target, mutable) = self.raw_pointer_types[index];
+                format!(
+                    "*{} {}",
+                    if mutable { "mut" } else { "const" },
+                    self.type_name(target)
+                )
+            }
         }
     }
 
@@ -224,6 +244,14 @@ impl<'ctx> Codegen<'ctx> {
                         .collect::<Vec<_>>()
                         .join(", "),
                     self.type_name(shape.return_type)
+                )
+            }
+            ArrayElementType::RawPointer(index) => {
+                let (target, mutable) = self.raw_pointer_types[index];
+                format!(
+                    "*{} {}",
+                    if mutable { "mut" } else { "const" },
+                    self.type_name(target)
                 )
             }
         }

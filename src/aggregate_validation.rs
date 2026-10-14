@@ -30,6 +30,8 @@ pub(crate) fn validate_aggregate_cycles(
             // any otherwise by-value aggregate cycle.
             Type::Vector(_)
             | Type::Reference(_)
+            | Type::MutableReference(_)
+            | Type::RawPointer(_, _)
             | Type::Function(_, _)
             | Type::I64
             | Type::F32

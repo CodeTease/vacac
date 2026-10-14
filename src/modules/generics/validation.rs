@@ -67,6 +67,9 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
             Type::Reference(element) => {
                 check_type(element, parameters, generic_structs, known_types, span)
             }
+            Type::MutableReference(element) | Type::RawPointer(element, _) => {
+                check_type(element, parameters, generic_structs, known_types, span)
+            }
             Type::Tuple(elements) => {
                 if elements.is_empty() {
                     return Err(Diagnostic::at(

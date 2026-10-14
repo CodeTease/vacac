@@ -11,7 +11,10 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(function_value);
         self.return_type = self.resolve_type(&function.return_type, function.span)?;
-        if matches!(self.return_type, ValueType::Reference(_)) {
+        if matches!(
+            self.return_type,
+            ValueType::Reference(_) | ValueType::MutableReference(_)
+        ) {
             return Err(format!(
                 "line {}:{}: functions cannot return references",
                 function.span.line, function.span.column
@@ -86,7 +89,10 @@ impl<'ctx> Codegen<'ctx> {
                 Local {
                     pointer: alloca,
                     ty,
-                    immutable: matches!(ty, ValueType::Reference(_)),
+                    immutable: matches!(
+                        ty,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ),
                     loop_variable: false,
                 },
             );
@@ -177,12 +183,6 @@ impl<'ctx> Codegen<'ctx> {
                 immutable,
                 span,
             } => {
-                if matches!(ty, Some(Type::Reference(_))) && !*immutable {
-                    return Err(format!(
-                        "line {}:{}: reference bindings must be immutable",
-                        span.line, span.column
-                    ));
-                }
                 let value = if let Some(ty) = ty.as_ref() {
                     let array_type = self.resolve_type(ty, *span)?;
                     self.emit_expression_expected(value, array_type)?
@@ -195,7 +195,11 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 }
-                if matches!(value.ty, ValueType::Reference(_)) && !*immutable {
+                if matches!(
+                    value.ty,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) && !*immutable
+                {
                     return Err(format!(
                         "line {}:{}: reference bindings must be immutable",
                         span.line, span.column
@@ -277,10 +281,12 @@ impl<'ctx> Codegen<'ctx> {
                     .as_ref()
                     .map(|expr| self.emit_expression(expr))
                     .transpose()?;
-                if emitted_value
-                    .as_ref()
-                    .is_some_and(|value| matches!(value.ty, ValueType::Reference(_)))
-                {
+                if emitted_value.as_ref().is_some_and(|value| {
+                    matches!(
+                        value.ty,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    )
+                }) {
                     return Err(format!(
                         "line {}:{}: references cannot escape through loop breaks",
                         span.line, span.column

@@ -191,6 +191,13 @@ impl Specializer {
                 substitutions,
                 span,
             )?)),
+            Type::MutableReference(element) => Type::MutableReference(Box::new(
+                self.normalize_type(*element, substitutions, span)?,
+            )),
+            Type::RawPointer(element, mutable) => Type::RawPointer(
+                Box::new(self.normalize_type(*element, substitutions, span)?),
+                mutable,
+            ),
             other => other,
         })
     }

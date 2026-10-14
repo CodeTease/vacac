@@ -356,10 +356,9 @@ impl<'ctx> Codegen<'ctx> {
                 let ValueType::Tuple(index) = self.resolve_type(element, span)? else {
                     unreachable!()
                 };
-                if self.tuple_shapes[index]
-                    .iter()
-                    .any(|ty| matches!(ty, ValueType::Reference(_)))
-                {
+                if self.tuple_shapes[index].iter().any(|ty| {
+                    matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
+                }) {
                     return Err(format!(
                         "line {}:{}: references cannot be stored in tuples",
                         span.line, span.column
@@ -387,6 +386,16 @@ impl<'ctx> Codegen<'ctx> {
                 "line {}:{}: references cannot be stored in arrays or vectors",
                 span.line, span.column
             )),
+            Type::MutableReference(_) => Err(format!(
+                "line {}:{}: references cannot be stored in arrays or vectors",
+                span.line, span.column
+            )),
+            Type::RawPointer(_, _) => {
+                let ValueType::RawPointer(index) = self.resolve_type(element, span)? else {
+                    unreachable!()
+                };
+                Ok(ArrayElementType::RawPointer(index))
+            }
             Type::Named(name) if self.enum_ids.contains_key(name) => {
                 Ok(ArrayElementType::Enum(self.enum_ids[name]))
             }

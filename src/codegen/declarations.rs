@@ -52,6 +52,10 @@ impl<'ctx> Codegen<'ctx> {
             function_shape_ids: HashMap::new(),
             reference_types: Vec::new(),
             reference_type_ids: HashMap::new(),
+            mutable_reference_types: Vec::new(),
+            mutable_reference_type_ids: HashMap::new(),
+            raw_pointer_types: Vec::new(),
+            raw_pointer_type_ids: HashMap::new(),
             scopes: Vec::new(),
             string_literals: HashMap::new(),
             loop_targets: Vec::new(),
@@ -99,7 +103,9 @@ impl<'ctx> Codegen<'ctx> {
                     )
                     .into(),
             ),
-            ValueType::Reference(_) => Some(self.context.ptr_type(AddressSpace::default()).into()),
+            ValueType::Reference(_) | ValueType::MutableReference(_) | ValueType::RawPointer(_) => {
+                Some(self.context.ptr_type(AddressSpace::default()).into())
+            }
             ValueType::Array(index) => Some(self.llvm_array_type(index)?.into()),
             ValueType::Tuple(index) => {
                 let elements = self.tuple_shapes[index].clone();
@@ -151,7 +157,10 @@ impl<'ctx> Codegen<'ctx> {
                         span.line, span.column
                     ));
                 }
-                if matches!(element, ValueType::Reference(_)) {
+                if matches!(
+                    element,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(format!(
                         "line {}:{}: references to references are not supported",
                         span.line, span.column
@@ -166,6 +175,48 @@ impl<'ctx> Codegen<'ctx> {
                     ));
                 }
                 self.reference_type(element)
+            }
+            Type::MutableReference(element) => {
+                let element = self.resolve_type(element, span)?;
+                if element == ValueType::Unit
+                    || matches!(
+                        element,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    )
+                {
+                    return Err(format!(
+                        "line {}:{}: invalid mutable reference target",
+                        span.line, span.column
+                    ));
+                }
+                if !self
+                    .reference_target_is_supported(element, &mut std::collections::HashSet::new())?
+                {
+                    return Err(format!(
+                        "line {}:{}: references to values containing vectors are not supported",
+                        span.line, span.column
+                    ));
+                }
+                self.mutable_reference_type(element)
+            }
+            Type::RawPointer(element, mutable) => {
+                let element = self.resolve_type(element, span)?;
+                if element == ValueType::Unit {
+                    return Err(format!(
+                        "line {}:{}: raw pointers cannot target `unit`",
+                        span.line, span.column
+                    ));
+                }
+                if matches!(
+                    element,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
+                    return Err(format!(
+                        "line {}:{}: raw pointers cannot target safe references",
+                        span.line, span.column
+                    ));
+                }
+                self.raw_pointer_type(element, *mutable)
             }
             Type::Tuple(elements) => {
                 if elements.is_empty() {
@@ -183,7 +234,7 @@ impl<'ctx> Codegen<'ctx> {
                             span.line, span.column
                         ));
                     }
-                    if matches!(ty, ValueType::Reference(_)) {
+                    if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                         return Err(format!(
                             "line {}:{}: references cannot be stored in tuples",
                             span.line, span.column
@@ -206,7 +257,10 @@ impl<'ctx> Codegen<'ctx> {
                     param_types.push(param_type);
                 }
                 let return_type = self.resolve_type(result, span)?;
-                if matches!(return_type, ValueType::Reference(_)) {
+                if matches!(
+                    return_type,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(format!(
                         "line {}:{}: function types cannot return references",
                         span.line, span.column
@@ -280,6 +334,31 @@ impl<'ctx> Codegen<'ctx> {
         ValueType::Reference(index)
     }
 
+    pub(super) fn mutable_reference_type(&mut self, element: ValueType) -> ValueType {
+        let index = if let Some(index) = self.mutable_reference_type_ids.get(&element) {
+            *index
+        } else {
+            let index = self.mutable_reference_types.len();
+            self.mutable_reference_types.push(element);
+            self.mutable_reference_type_ids.insert(element, index);
+            index
+        };
+        ValueType::MutableReference(index)
+    }
+
+    pub(super) fn raw_pointer_type(&mut self, element: ValueType, mutable: bool) -> ValueType {
+        let key = (element, mutable);
+        let index = if let Some(index) = self.raw_pointer_type_ids.get(&key) {
+            *index
+        } else {
+            let index = self.raw_pointer_types.len();
+            self.raw_pointer_types.push(key);
+            self.raw_pointer_type_ids.insert(key, index);
+            index
+        };
+        ValueType::RawPointer(index)
+    }
+
     pub(super) fn reference_target_is_supported(
         &mut self,
         ty: ValueType,
@@ -328,7 +407,9 @@ impl<'ctx> Codegen<'ctx> {
             | ValueType::Str
             | ValueType::Unit
             | ValueType::Function(_)
-            | ValueType::Reference(_) => Ok(true),
+            | ValueType::Reference(_)
+            | ValueType::MutableReference(_)
+            | ValueType::RawPointer(_) => Ok(true),
         }
     }
 
@@ -536,7 +617,10 @@ impl<'ctx> Codegen<'ctx> {
                 let mut payload_fields = Vec::with_capacity(variant.payload.len());
                 for ty in &variant.payload {
                     let value_type = self.resolve_type(ty, variant.span)?;
-                    if matches!(value_type, ValueType::Reference(_)) {
+                    if matches!(
+                        value_type,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
                         return Err(format!(
                             "line {}:{}: references cannot be stored in enums",
                             variant.span.line, variant.span.column
@@ -592,7 +676,12 @@ impl<'ctx> Codegen<'ctx> {
             self.module_context = declaration.module.clone();
             for field in &declaration.fields {
                 match &field.ty {
-                    Type::I64 | Type::Bool | Type::Str | Type::Array(_, _) | Type::Vector(_) => {}
+                    Type::I64
+                    | Type::Bool
+                    | Type::Str
+                    | Type::Array(_, _)
+                    | Type::Vector(_)
+                    | Type::RawPointer(_, _) => {}
                     Type::Tuple(_) => {}
                     Type::F32 | Type::F64 => {}
                     Type::Function(_, _) => {}
@@ -610,7 +699,7 @@ impl<'ctx> Codegen<'ctx> {
                             field.span.line, field.span.column
                         ));
                     }
-                    Type::Reference(_) => {
+                    Type::Reference(_) | Type::MutableReference(_) => {
                         return Err(format!(
                             "line {}:{}: references cannot be stored in structs",
                             field.span.line, field.span.column
@@ -713,7 +802,10 @@ impl<'ctx> Codegen<'ctx> {
                 .map(|p| self.resolve_type(&p.ty, p.span))
                 .collect::<Result<_, _>>()?;
             let ret: ValueType = self.resolve_type(&function.return_type, function.span)?;
-            if matches!(ret, ValueType::Reference(_)) {
+            if matches!(
+                ret,
+                ValueType::Reference(_) | ValueType::MutableReference(_)
+            ) {
                 return Err(format!(
                     "line {}:{}: functions cannot return references",
                     function.span.line, function.span.column

@@ -48,6 +48,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Vector(index) => Self::Vector(index),
             ArrayElementType::Tuple(index) => Self::Tuple(index),
             ArrayElementType::Function(index) => Self::Function(index),
+            ArrayElementType::RawPointer(index) => Self::RawPointer(index),
         }
     }
 }

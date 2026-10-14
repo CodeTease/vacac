@@ -278,7 +278,10 @@ impl<'ctx> Codegen<'ctx> {
                             span.line, span.column
                         ));
                     }
-                    if matches!(local.ty, ValueType::Reference(_)) {
+                    if matches!(
+                        local.ty,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
                         return Err(format!(
                             "line {}:{}: references to references are not supported",
                             span.line, span.column
@@ -299,31 +302,131 @@ impl<'ctx> Codegen<'ctx> {
                         ty: reference_type,
                     });
                 }
-                if matches!(op, UnaryOp::Dereference) {
-                    let reference = self.emit_expression(value)?;
-                    let ValueType::Reference(index) = reference.ty else {
+                if matches!(op, UnaryOp::BorrowMut) {
+                    let Expr::Variable(name, _) = value.as_ref() else {
                         return Err(format!(
-                            "line {}:{}: unary `*` requires a reference, got {}",
-                            span.line,
-                            span.column,
-                            self.type_name(reference.ty)
+                            "line {}:{}: mutable borrowing currently requires a named local binding",
+                            span.line, span.column
                         ));
                     };
-                    let loaded = self
-                        .builder
-                        .build_load(
-                            self.llvm_type(self.reference_types[index])
-                                .ok_or("reference target has no LLVM type")?,
+                    let local = self.lookup_local(name).ok_or_else(|| {
+                        format!(
+                            "line {}:{}: only local bindings can be borrowed",
+                            span.line, span.column
+                        )
+                    })?;
+                    if local.immutable || local.loop_variable {
+                        return Err(format!(
+                            "line {}:{}: mutable borrowing requires a mutable local binding",
+                            span.line, span.column
+                        ));
+                    }
+                    if !self.reference_target_is_supported(
+                        local.ty,
+                        &mut std::collections::HashSet::new(),
+                    )? {
+                        return Err(format!(
+                            "line {}:{}: references to values containing vectors are not supported",
+                            span.line, span.column
+                        ));
+                    }
+                    if matches!(
+                        local.ty,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
+                        return Err(format!(
+                            "line {}:{}: references to references are not supported",
+                            span.line, span.column
+                        ));
+                    }
+                    let ty = self.mutable_reference_type(local.ty);
+                    return Ok(TypedValue {
+                        value: Some(local.pointer.into()),
+                        ty,
+                    });
+                }
+                if matches!(op, UnaryOp::RawBorrowConst | UnaryOp::RawBorrowMut) {
+                    if matches!(op, UnaryOp::RawBorrowMut) {
+                        let Expr::Variable(name, _) = value.as_ref() else {
+                            return Err(format!(
+                                "line {}:{}: raw address-taking currently requires a local or global variable",
+                                span.line, span.column
+                            ));
+                        };
+                        if let Some(local) = self.lookup_local(name) {
+                            if local.immutable || local.loop_variable {
+                                return Err(format!(
+                                    "line {}:{}: cannot take a mutable raw pointer to an immutable binding",
+                                    span.line, span.column
+                                ));
+                            }
+                        } else if let Some(global_name) = self.resolve_global_name(name) {
+                            if !self.global_declarations[&global_name].mutable {
+                                return Err(format!(
+                                    "line {}:{}: cannot take a mutable raw pointer to an immutable global",
+                                    span.line, span.column
+                                ));
+                            }
+                        } else {
+                            return Err(format!(
+                                "line {}:{}: undefined variable `{name}`",
+                                span.line, span.column
+                            ));
+                        }
+                    }
+                    let (pointer, target_type) = self.emit_address_of_place(value)?;
+                    let ty =
+                        self.raw_pointer_type(target_type, matches!(op, UnaryOp::RawBorrowMut));
+                    return Ok(TypedValue {
+                        value: Some(pointer.into()),
+                        ty,
+                    });
+                }
+                if matches!(op, UnaryOp::Dereference) {
+                    let reference = self.emit_expression(value)?;
+                    let (target_type, pointer) = match reference.ty {
+                        ValueType::Reference(index) => (
+                            self.reference_types[index],
                             reference
                                 .value
                                 .ok_or("reference value is missing")?
                                 .into_pointer_value(),
+                        ),
+                        ValueType::MutableReference(index) => (
+                            self.mutable_reference_types[index],
+                            reference
+                                .value
+                                .ok_or("reference value is missing")?
+                                .into_pointer_value(),
+                        ),
+                        ValueType::RawPointer(index) => (
+                            self.raw_pointer_types[index].0,
+                            reference
+                                .value
+                                .ok_or("pointer value is missing")?
+                                .into_pointer_value(),
+                        ),
+                        _ => {
+                            return Err(format!(
+                                "line {}:{}: unary `*` requires a reference or raw pointer, got {}",
+                                span.line,
+                                span.column,
+                                self.type_name(reference.ty)
+                            ));
+                        }
+                    };
+                    let loaded = self
+                        .builder
+                        .build_load(
+                            self.llvm_type(target_type)
+                                .ok_or("reference target has no LLVM type")?,
+                            pointer,
                             "reference.deref",
                         )
                         .map_err(|error| error.to_string())?;
                     return Ok(TypedValue {
                         value: Some(loaded),
-                        ty: self.reference_types[index],
+                        ty: target_type,
                     });
                 }
                 if matches!(op, UnaryOp::Negate)
@@ -390,7 +493,11 @@ impl<'ctx> Codegen<'ctx> {
                             ty: ValueType::Bool,
                         })
                     }
-                    UnaryOp::Borrow | UnaryOp::Dereference => unreachable!(),
+                    UnaryOp::Borrow
+                    | UnaryOp::BorrowMut
+                    | UnaryOp::RawBorrowConst
+                    | UnaryOp::RawBorrowMut
+                    | UnaryOp::Dereference => unreachable!(),
                 }
             }
             Expr::Binary {
@@ -428,7 +535,10 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|param| self.resolve_type(&param.ty, param.span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.resolve_type(&synthetic.return_type, synthetic.span)?;
-                if matches!(ret, ValueType::Reference(_)) {
+                if matches!(
+                    ret,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(format!(
                         "line {}:{}: lambdas cannot return references",
                         span.line, span.column
@@ -444,7 +554,10 @@ impl<'ctx> Codegen<'ctx> {
                     let local = self.lookup_local(&capture_name).ok_or_else(|| {
                         format!("internal error: captured local `{capture_name}` is unavailable")
                     })?;
-                    if matches!(local.ty, ValueType::Reference(_)) {
+                    if matches!(
+                        local.ty,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
                         return Err(format!(
                             "line {}:{}: closures cannot capture references",
                             span.line, span.column

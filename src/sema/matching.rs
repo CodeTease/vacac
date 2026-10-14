@@ -13,7 +13,10 @@ impl Checker {
             ValueType::Bool | ValueType::I64 | ValueType::F32 | ValueType::F64
         ) {
             let result = self.check_scalar_match(value_type, arms, span)?;
-            if matches!(result, ValueType::Reference(_)) {
+            if matches!(
+                result,
+                ValueType::Reference(_) | ValueType::MutableReference(_)
+            ) {
                 return Err(at(
                     span,
                     "references cannot escape through match expressions",
@@ -48,15 +51,20 @@ impl Checker {
             self.scopes.push(std::mem::take(&mut scope));
             self.immutable_scopes.push(std::collections::HashSet::new());
             self.loop_scopes.push(std::collections::HashSet::new());
+            self.mutable_borrows.push(std::collections::HashSet::new());
             let result = self.check_block_result(&arm.body, arm.span);
             self.scopes.pop();
             self.immutable_scopes.pop();
             self.loop_scopes.pop();
+            self.mutable_borrows.pop();
             let result = result?;
             if result == ValueType::Unit {
                 return Err(at(arm.span, "match arms must produce a value"));
             }
-            if matches!(result, ValueType::Reference(_)) {
+            if matches!(
+                result,
+                ValueType::Reference(_) | ValueType::MutableReference(_)
+            ) {
                 return Err(at(
                     span,
                     "references cannot escape through match expressions",
@@ -74,7 +82,10 @@ impl Checker {
             ));
         }
         let result = self.check_destructuring_match(value_type, arms, span)?;
-        if matches!(result, ValueType::Reference(_)) {
+        if matches!(
+            result,
+            ValueType::Reference(_) | ValueType::MutableReference(_)
+        ) {
             return Err(at(
                 span,
                 "references cannot escape through match expressions",

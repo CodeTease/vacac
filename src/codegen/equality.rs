@@ -188,6 +188,8 @@ impl<'ctx> Codegen<'ctx> {
             }
             ValueType::Enum(enum_id) => self.emit_enum_equality(enum_id, left, right),
             ValueType::Reference(_) => Err("references cannot be compared".into()),
+            ValueType::MutableReference(_) => Err("references cannot be compared".into()),
+            ValueType::RawPointer(_) => Err("raw pointers cannot be compared".into()),
             ValueType::Unit => Err("void expressions cannot be compared".into()),
         }
     }

@@ -14,7 +14,10 @@ impl Checker {
                 if element == ValueType::Unit {
                     return Err(at(span, "references cannot target `unit`"));
                 }
-                if matches!(element, ValueType::Reference(_)) {
+                if matches!(
+                    element,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(at(span, "references to references are not supported"));
                 }
                 if !self
@@ -27,6 +30,40 @@ impl Checker {
                 }
                 self.reference_type(element)
             }
+            Type::MutableReference(element) => {
+                let element = self.resolve_type(element, span)?;
+                if element == ValueType::Unit {
+                    return Err(at(span, "references cannot target `unit`"));
+                }
+                if matches!(
+                    element,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
+                    return Err(at(span, "references to references are not supported"));
+                }
+                if !self
+                    .reference_target_is_supported(element, &mut std::collections::HashSet::new())?
+                {
+                    return Err(at(
+                        span,
+                        "references to values containing vectors are not supported",
+                    ));
+                }
+                self.mutable_reference_type(element)
+            }
+            Type::RawPointer(element, mutable) => {
+                let element = self.resolve_type(element, span)?;
+                if element == ValueType::Unit {
+                    return Err(at(span, "raw pointers cannot target `unit`"));
+                }
+                if matches!(
+                    element,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
+                    return Err(at(span, "raw pointers cannot target safe references"));
+                }
+                self.raw_pointer_type(element, *mutable)
+            }
             Type::Tuple(elements) => {
                 let mut types = Vec::with_capacity(elements.len());
                 for element in elements {
@@ -34,7 +71,10 @@ impl Checker {
                     if element_type == ValueType::Unit {
                         return Err(at(span, "tuple elements cannot have type `unit`"));
                     }
-                    if matches!(element_type, ValueType::Reference(_)) {
+                    if matches!(
+                        element_type,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
                         return Err(at(span, "references cannot be stored in tuples"));
                     }
                     types.push(element_type);
@@ -54,7 +94,10 @@ impl Checker {
                     param_types.push(param_type);
                 }
                 let return_type = self.resolve_type(result, span)?;
-                if matches!(return_type, ValueType::Reference(_)) {
+                if matches!(
+                    return_type,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
                     return Err(at(span, "function types cannot return references"));
                 }
                 self.function_type(param_types, return_type)
@@ -122,6 +165,20 @@ impl Checker {
             ValueType::Reference(index) => {
                 format!("&{}", self.type_name(self.reference_types[index]))
             }
+            ValueType::MutableReference(index) => {
+                format!(
+                    "&mut {}",
+                    self.type_name(self.mutable_reference_types[index])
+                )
+            }
+            ValueType::RawPointer(index) => {
+                let (target, mutable) = self.raw_pointer_types[index];
+                format!(
+                    "*{} {}",
+                    if mutable { "mut" } else { "const" },
+                    self.type_name(target)
+                )
+            }
             ValueType::Enum(index) => self
                 .enums
                 .get(index)
@@ -174,6 +231,14 @@ impl Checker {
                         .collect::<Vec<_>>()
                         .join(", "),
                     self.type_name(shape.return_type)
+                )
+            }
+            ArrayElementType::RawPointer(index) => {
+                let (target, mutable) = self.raw_pointer_types[index];
+                format!(
+                    "*{} {}",
+                    if mutable { "mut" } else { "const" },
+                    self.type_name(target)
                 )
             }
         }
@@ -255,7 +320,9 @@ impl Checker {
                 if types.contains(&ValueType::Unit) {
                     return Err(at(span, "tuple elements cannot have type `unit`"));
                 }
-                if types.iter().any(|ty| matches!(ty, ValueType::Reference(_))) {
+                if types.iter().any(|ty| {
+                    matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
+                }) {
                     return Err(at(span, "references cannot be stored in tuples"));
                 }
                 if types.is_empty() {
@@ -265,6 +332,17 @@ impl Checker {
             }
             Type::Reference(_) => {
                 return Err(at(span, "references cannot be stored in arrays or vectors"));
+            }
+            Type::MutableReference(_) => {
+                return Err(at(span, "references cannot be stored in arrays or vectors"));
+            }
+            Type::RawPointer(element, mutable) => {
+                let ValueType::RawPointer(index) =
+                    self.resolve_type(&Type::RawPointer(element.clone(), *mutable), span)?
+                else {
+                    unreachable!()
+                };
+                ArrayElementType::RawPointer(index)
             }
             Type::Function(_, _) => {
                 let ValueType::Function(index) = self.resolve_type(element, span)? else {
@@ -336,7 +414,9 @@ impl Checker {
             | ValueType::Str
             | ValueType::Unit
             | ValueType::Function(_)
-            | ValueType::Reference(_) => Ok(true),
+            | ValueType::Reference(_)
+            | ValueType::MutableReference(_)
+            | ValueType::RawPointer(_) => Ok(true),
         }
     }
 
@@ -395,6 +475,31 @@ impl Checker {
         ValueType::Reference(index)
     }
 
+    pub(super) fn mutable_reference_type(&mut self, element: ValueType) -> ValueType {
+        let index = if let Some(index) = self.mutable_reference_type_ids.get(&element) {
+            *index
+        } else {
+            let index = self.mutable_reference_types.len();
+            self.mutable_reference_types.push(element);
+            self.mutable_reference_type_ids.insert(element, index);
+            index
+        };
+        ValueType::MutableReference(index)
+    }
+
+    pub(super) fn raw_pointer_type(&mut self, element: ValueType, mutable: bool) -> ValueType {
+        let key = (element, mutable);
+        let index = if let Some(index) = self.raw_pointer_type_ids.get(&key) {
+            *index
+        } else {
+            let index = self.raw_pointer_types.len();
+            self.raw_pointer_types.push(key);
+            self.raw_pointer_type_ids.insert(key, index);
+            index
+        };
+        ValueType::RawPointer(index)
+    }
+
     pub(super) fn check_block_result(
         &mut self,
         block: &Block,
@@ -403,6 +508,7 @@ impl Checker {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
+        self.mutable_borrows.push(std::collections::HashSet::new());
         let result = (|| {
             for statement in &block.statements {
                 match statement {
@@ -431,6 +537,7 @@ impl Checker {
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
+        self.mutable_borrows.pop();
         result
     }
 
@@ -525,6 +632,101 @@ impl Checker {
             .unwrap_or(false)
     }
 
+    pub(super) fn is_mutably_borrowed(&self, name: &str) -> bool {
+        self.mutable_borrows
+            .iter()
+            .any(|scope| scope.contains(name))
+    }
+
+    pub(super) fn reject_mutably_borrowed(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
+        if self.is_mutably_borrowed(name) {
+            Err(at(
+                span,
+                format!("cannot access `{name}` while it is mutably borrowed"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn place_is_mutable(&mut self, expr: &Expr) -> Result<bool, Diagnostic> {
+        match expr {
+            Expr::Unary {
+                op: UnaryOp::Dereference,
+                value,
+                span,
+            } => match self.check_expr(value, false)? {
+                ValueType::MutableReference(_) => Ok(true),
+                ValueType::Reference(_) => Ok(false),
+                ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].1),
+                other => Err(at(
+                    *span,
+                    format!("cannot dereference {}", self.type_name(other)),
+                )),
+            },
+            Expr::Field { value, .. } => self.place_is_mutable(value),
+            Expr::Index { array, .. } => self.place_is_mutable(array),
+            _ => Ok(false),
+        }
+    }
+
+    pub(super) fn contains_raw_pointer(
+        &mut self,
+        ty: ValueType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, Diagnostic> {
+        if matches!(ty, ValueType::RawPointer(_)) {
+            return Ok(true);
+        }
+        if !visited.insert(ty) {
+            return Ok(false);
+        }
+        match ty {
+            ValueType::Array(index) => self
+                .contains_raw_pointer(ValueType::from(self.array_shapes[index].element), visited),
+            ValueType::Vector(index) => self
+                .contains_raw_pointer(ValueType::from(self.vector_shapes[index].element), visited),
+            ValueType::Tuple(index) => {
+                for element in self.tuple_shapes[index].clone() {
+                    if self.contains_raw_pointer(element, visited)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ValueType::Struct(index) => {
+                for field in self.structs[index].fields.clone() {
+                    let field_type = self.resolve_type(&field.ty, field.span)?;
+                    if self.contains_raw_pointer(field_type, visited)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ValueType::Enum(index) => {
+                for variant in self.enums[index].variants.clone() {
+                    for payload in variant.payload {
+                        let field_type = self.resolve_type(&payload, variant.span)?;
+                        if self.contains_raw_pointer(field_type, visited)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            ValueType::RawPointer(_) => Ok(true),
+            ValueType::I64
+            | ValueType::F32
+            | ValueType::F64
+            | ValueType::Bool
+            | ValueType::Str
+            | ValueType::Unit
+            | ValueType::Function(_)
+            | ValueType::Reference(_)
+            | ValueType::MutableReference(_) => Ok(false),
+        }
+    }
+
     pub(super) fn type_from_value(&self, ty: ValueType) -> Type {
         match ty {
             ValueType::I64 => Type::I64,
@@ -545,6 +747,13 @@ impl Checker {
             )),
             ValueType::Reference(index) => {
                 Type::Reference(Box::new(self.type_from_value(self.reference_types[index])))
+            }
+            ValueType::MutableReference(index) => Type::MutableReference(Box::new(
+                self.type_from_value(self.mutable_reference_types[index]),
+            )),
+            ValueType::RawPointer(index) => {
+                let (target, mutable) = self.raw_pointer_types[index];
+                Type::RawPointer(Box::new(self.type_from_value(target)), mutable)
             }
             ValueType::Tuple(index) => Type::Tuple(
                 self.tuple_shapes[index]
@@ -581,6 +790,10 @@ impl Checker {
             ArrayElementType::Vector(index) => self.type_from_value(ValueType::Vector(index)),
             ArrayElementType::Tuple(index) => self.type_from_value(ValueType::Tuple(index)),
             ArrayElementType::Function(index) => self.type_from_value(ValueType::Function(index)),
+            ArrayElementType::RawPointer(index) => {
+                let (target, mutable) = self.raw_pointer_types[index];
+                Type::RawPointer(Box::new(self.type_from_value(target)), mutable)
+            }
         }
     }
 
@@ -596,7 +809,9 @@ impl Checker {
             ValueType::Unit
             | ValueType::Vector(_)
             | ValueType::Function(_)
-            | ValueType::Reference(_) => Ok(false),
+            | ValueType::Reference(_)
+            | ValueType::MutableReference(_) => Ok(false),
+            ValueType::RawPointer(_) => Ok(false),
             ValueType::Array(index) => {
                 self.global_element_is_static(self.array_shapes[index].element, visited)
             }
@@ -675,6 +890,11 @@ pub(super) fn assignment_root(expr: &Expr) -> Option<&str> {
         Expr::Variable(name, _) => Some(name),
         Expr::Field { value, .. } => assignment_root(value),
         Expr::Index { array, .. } => assignment_root(array),
+        Expr::Unary {
+            op: UnaryOp::Dereference,
+            value,
+            ..
+        } => assignment_root(value),
         _ => None,
     }
 }
@@ -697,6 +917,7 @@ impl From<ArrayElementType> for ValueType {
             ArrayElementType::Vector(index) => Self::Vector(index),
             ArrayElementType::Tuple(index) => Self::Tuple(index),
             ArrayElementType::Function(index) => Self::Function(index),
+            ArrayElementType::RawPointer(index) => Self::RawPointer(index),
         }
     }
 }

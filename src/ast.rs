@@ -11,6 +11,8 @@ pub enum Type {
     Array(Box<Type>, u32),
     Vector(Box<Type>),
     Reference(Box<Type>),
+    MutableReference(Box<Type>),
+    RawPointer(Box<Type>, bool),
     Named(String),
     Applied(String, Vec<Type>),
     Parameter(String),
@@ -29,6 +31,7 @@ pub enum ArrayElementType {
     Function(usize),
     Array(usize),
     Vector(usize),
+    RawPointer(usize),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -307,6 +310,9 @@ pub enum UnaryOp {
     Negate,
     Not,
     Borrow,
+    BorrowMut,
+    RawBorrowConst,
+    RawBorrowMut,
     Dereference,
 }
 

@@ -32,6 +32,14 @@ impl Specializer {
             (Type::Reference(pattern), Type::Reference(actual)) => {
                 self.unify(pattern, actual, substitutions, span)
             }
+            (Type::MutableReference(pattern), Type::MutableReference(actual)) => {
+                self.unify(pattern, actual, substitutions, span)
+            }
+            (Type::RawPointer(pattern, pattern_mut), Type::RawPointer(actual, actual_mut))
+                if pattern_mut == actual_mut =>
+            {
+                self.unify(pattern, actual, substitutions, span)
+            }
             (Type::Array(pattern, pattern_length), Type::Array(actual, actual_length)) => {
                 if pattern_length != actual_length {
                     return Err(Diagnostic::at(
@@ -242,9 +250,23 @@ impl Specializer {
                     variables,
                     visiting_globals,
                 )?))),
+                UnaryOp::BorrowMut => Some(Type::MutableReference(Box::new(
+                    self.infer_expr_type_inner(value, variables, visiting_globals)?,
+                ))),
+                UnaryOp::RawBorrowConst => Some(Type::RawPointer(
+                    Box::new(self.infer_expr_type_inner(value, variables, visiting_globals)?),
+                    false,
+                )),
+                UnaryOp::RawBorrowMut => Some(Type::RawPointer(
+                    Box::new(self.infer_expr_type_inner(value, variables, visiting_globals)?),
+                    true,
+                )),
                 UnaryOp::Dereference => {
                     match self.infer_expr_type_inner(value, variables, visiting_globals)? {
                         Type::Reference(element) => Some(*element),
+                        Type::MutableReference(element) | Type::RawPointer(element, _) => {
+                            Some(*element)
+                        }
                         _ => None,
                     }
                 }
@@ -331,5 +353,11 @@ pub(super) fn type_key(ty: &Type) -> String {
         ),
         Type::Vector(element) => format!("Vec<{}>", type_key(element)),
         Type::Reference(element) => format!("&{}", type_key(element)),
+        Type::MutableReference(element) => format!("&mut {}", type_key(element)),
+        Type::RawPointer(element, mutable) => format!(
+            "*{} {}",
+            if *mutable { "mut" } else { "const" },
+            type_key(element)
+        ),
     }
 }

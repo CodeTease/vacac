@@ -9,10 +9,20 @@ impl<'ctx> Codegen<'ctx> {
                 .as_ref()
                 .ok_or_else(|| format!("global `{}` has no resolved type", declaration.name))?;
             let ty = self.resolve_type(ty, declaration.span)?;
-            if ty == ValueType::Unit || matches!(ty, ValueType::Vector(_) | ValueType::Reference(_))
+            if ty == ValueType::Unit
+                || matches!(
+                    ty,
+                    ValueType::Vector(_) | ValueType::Reference(_) | ValueType::MutableReference(_)
+                )
             {
                 return Err(format!(
                     "line {}:{}: global initializer type cannot be `unit`, a vector, or a reference",
+                    declaration.span.line, declaration.span.column
+                ));
+            }
+            if self.global_type_contains_raw_pointer(ty, &mut std::collections::HashSet::new())? {
+                return Err(format!(
+                    "line {}:{}: global initializers cannot contain raw pointers",
                     declaration.span.line, declaration.span.column
                 ));
             }
@@ -34,6 +44,73 @@ impl<'ctx> Codegen<'ctx> {
             self.global_states.insert(declaration.name.clone(), 0);
         }
         Ok(())
+    }
+
+    fn global_type_contains_raw_pointer(
+        &mut self,
+        ty: ValueType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, String> {
+        if matches!(ty, ValueType::RawPointer(_)) {
+            return Ok(true);
+        }
+        if !visited.insert(ty) {
+            return Ok(false);
+        }
+        match ty {
+            ValueType::Array(index) => {
+                self.global_element_contains_raw_pointer(self.array_shapes[index].element, visited)
+            }
+            ValueType::Vector(index) => {
+                self.global_element_contains_raw_pointer(self.vector_shapes[index].element, visited)
+            }
+            ValueType::Tuple(index) => {
+                for element in self.tuple_shapes[index].clone() {
+                    if self.global_type_contains_raw_pointer(element, visited)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ValueType::Struct(index) => {
+                for field in self.structs[index].fields.clone() {
+                    let field_type = self.resolve_type(&field.ty, field.span)?;
+                    if self.global_type_contains_raw_pointer(field_type, visited)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ValueType::Enum(index) => {
+                for variant in self.enums[index].variants.clone() {
+                    for payload in variant.payload {
+                        let payload_type = self.resolve_type(&payload, variant.span)?;
+                        if self.global_type_contains_raw_pointer(payload_type, visited)? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            ValueType::Function(_) => Ok(false),
+            ValueType::I64
+            | ValueType::F32
+            | ValueType::F64
+            | ValueType::Bool
+            | ValueType::Str
+            | ValueType::Unit
+            | ValueType::Reference(_)
+            | ValueType::MutableReference(_)
+            | ValueType::RawPointer(_) => Ok(false),
+        }
+    }
+
+    fn global_element_contains_raw_pointer(
+        &mut self,
+        element: ArrayElementType,
+        visited: &mut std::collections::HashSet<ValueType>,
+    ) -> Result<bool, String> {
+        self.global_type_contains_raw_pointer(ValueType::from(element), visited)
     }
 
     pub(super) fn define_globals(&mut self, program: &Program) -> Result<(), String> {
@@ -751,7 +828,8 @@ impl<'ctx> Codegen<'ctx> {
             ValueType::Struct(index) => Some(ArrayElementType::Struct(index)),
             ValueType::Tuple(index) => Some(ArrayElementType::Tuple(index)),
             ValueType::Function(index) => Some(ArrayElementType::Function(index)),
-            ValueType::Unit | ValueType::Reference(_) => None,
+            ValueType::Unit | ValueType::Reference(_) | ValueType::MutableReference(_) => None,
+            ValueType::RawPointer(index) => Some(ArrayElementType::RawPointer(index)),
         }
     }
 }
