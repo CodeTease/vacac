@@ -2,6 +2,8 @@ use crate::ast::*;
 use crate::diagnostic::Diagnostic;
 use std::collections::{HashMap, VecDeque};
 
+mod expected;
+
 type Substitution = HashMap<String, Type>;
 
 struct PendingFunction {

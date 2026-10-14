@@ -147,6 +147,7 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
 mod declarations;
 mod expressions;
 mod matching;
+mod places;
 mod statements;
 mod types;
 

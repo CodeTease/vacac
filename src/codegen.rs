@@ -144,6 +144,7 @@ mod arrays;
 mod calls;
 mod declarations;
 mod equality;
+mod expression_helpers;
 mod expressions;
 mod globals;
 mod loops;
@@ -151,6 +152,7 @@ mod matching;
 mod operators;
 mod output;
 mod places;
+mod results;
 mod runtime;
 mod statements;
 
