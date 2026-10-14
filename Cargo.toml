@@ -6,3 +6,11 @@ description = "A small static compiler for the Vaca language"
 
 [dependencies]
 inkwell = { version = "0.10.0", features = ["llvm22-1"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
