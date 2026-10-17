@@ -70,9 +70,11 @@ object or executable. Use `--quiet` (or `-q`) to suppress success messages, and
 `--version` prints the compiler version.
 
 When parsing fails, the compiler attempts to recover at top-level declaration
-boundaries and report further syntax errors from the remaining declarations and
-loaded modules. Malformed declarations are skipped; any parser or module-loading
-diagnostics stop compilation before semantic checking and code generation.
+boundaries and within function bodies and match arms, reporting further syntax
+errors from later declarations, statements, and arms where possible. Recovery is
+best-effort: malformed declarations or nested constructs may be skipped, and
+any parser or module-loading diagnostics stop compilation before semantic
+checking and code generation.
 
 Diagnostics use one-based source line and column numbers. Columns count Unicode
 scalar values (a tab is one source column); human-readable excerpts expand tabs

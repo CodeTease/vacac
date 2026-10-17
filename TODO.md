@@ -34,7 +34,7 @@
 * [x] Align source underlines for tabs and Unicode scalar-value columns, with a four-column tab stop and regression tests.
 * [x] Expand diagnostic tests across lexer, parser, semantic analysis, modules, and codegen to cover locations, excerpts, underlines, and JSON output.
 * [x] Recover from malformed top-level declarations and report multiple parser diagnostics across declarations and loaded modules; malformed declarations are skipped and prevent later compiler phases.
-* [ ] Fine-grained parser recovery within function bodies and other nested constructs.
+* [x] Recover within function bodies and match arms to report multiple syntax errors while preserving later statements, arms, and declarations where possible.
 * [ ] Rich Diagnostic with hints/suggestions.
 
 ## Future

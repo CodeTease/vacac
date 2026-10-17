@@ -29,6 +29,7 @@ pub struct Parser {
     parsing_match_value: bool,
     type_close_debt: usize,
     type_parameters: HashSet<String>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Parser {
@@ -62,6 +63,7 @@ impl Parser {
             parsing_match_value: false,
             type_close_debt: 0,
             type_parameters: HashSet::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -74,9 +76,10 @@ impl Parser {
         let mut modules = Vec::new();
         let mut diagnostics = Vec::new();
         while !self.at(&TokenKind::Eof) {
+            let parser_diagnostic_count = self.diagnostics.len();
             let declaration_start = self.current;
             let is_public = self.take(&TokenKind::Pub);
-            match self.parse_top_level_declaration(
+            let declaration_result = self.parse_top_level_declaration(
                 is_public,
                 &mut enums,
                 &mut structs,
@@ -84,11 +87,39 @@ impl Parser {
                 &mut functions,
                 &mut extern_functions,
                 &mut modules,
-            ) {
+            );
+            match declaration_result {
                 Ok(()) => {}
                 Err(error) => {
                     diagnostics.push(error);
                     self.synchronize_top_level(declaration_start);
+                }
+            }
+            if self.diagnostics.len() > parser_diagnostic_count {
+                if let Some(function) = functions.last()
+                    && function.span.line == self.tokens[declaration_start].line
+                    && function.span.column == self.tokens[declaration_start].column
+                {
+                    functions.pop();
+                }
+                self.synchronize_top_level(declaration_start);
+            }
+            if diagnostics
+                .last()
+                .is_some_and(|diagnostic| diagnostic.message.contains("found `end of file`"))
+                && self.diagnostics.len() > parser_diagnostic_count
+            {
+                diagnostics.pop();
+                if let Some((index, _)) = self
+                    .tokens
+                    .iter()
+                    .enumerate()
+                    .skip(declaration_start + 1)
+                    .find(|(_, token)| matches!(token.kind, TokenKind::Fn))
+                {
+                    self.current = index;
+                } else {
+                    break;
                 }
             }
         }
@@ -99,9 +130,11 @@ impl Parser {
             && globals.is_empty()
             && modules.is_empty()
             && diagnostics.is_empty()
+            && self.diagnostics.is_empty()
         {
             diagnostics.push("program must contain at least one declaration".into());
         }
+        diagnostics.extend(std::mem::take(&mut self.diagnostics));
         (
             Program {
                 enums,
@@ -205,6 +238,77 @@ impl Parser {
         self.type_close_debt = 0;
     }
 
+    pub(super) fn report(&mut self, diagnostic: Diagnostic) {
+        self.diagnostics.push(diagnostic);
+    }
+
+    pub(super) fn synchronize_statement(&mut self) {
+        let mut braces = 0usize;
+        let mut parentheses = 0usize;
+        let mut brackets = 0usize;
+
+        while !self.at(&TokenKind::Eof) {
+            if braces == 0 && parentheses == 0 && brackets == 0 {
+                if self.at(&TokenKind::RBrace) {
+                    return;
+                }
+                if is_statement_boundary(&self.peek().kind) {
+                    return;
+                }
+                if self.at(&TokenKind::Semicolon) {
+                    self.advance();
+                    return;
+                }
+            }
+
+            match &self.peek().kind {
+                TokenKind::LBrace => braces += 1,
+                TokenKind::RBrace if braces > 0 => braces -= 1,
+                TokenKind::RBrace if parentheses == 0 && brackets == 0 => return,
+                TokenKind::LParen => parentheses += 1,
+                TokenKind::RParen => parentheses = parentheses.saturating_sub(1),
+                TokenKind::LBracket => brackets += 1,
+                TokenKind::RBracket => brackets = brackets.saturating_sub(1),
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
+    pub(super) fn synchronize_match_arm(&mut self) {
+        let start = self.current;
+        let mut braces = 0usize;
+        let mut parentheses = 0usize;
+        let mut brackets = 0usize;
+
+        while !self.at(&TokenKind::Eof) {
+            if braces == 0 && parentheses == 0 && brackets == 0 {
+                if self.at(&TokenKind::RBrace) {
+                    return;
+                }
+                if self.at(&TokenKind::Comma) {
+                    self.advance();
+                    return;
+                }
+                if self.current > start && can_start_pattern(&self.peek().kind) {
+                    return;
+                }
+            }
+
+            match &self.peek().kind {
+                TokenKind::LBrace => braces += 1,
+                TokenKind::RBrace if braces > 0 => braces -= 1,
+                TokenKind::RBrace if parentheses == 0 && brackets == 0 => return,
+                TokenKind::LParen => parentheses += 1,
+                TokenKind::RParen => parentheses = parentheses.saturating_sub(1),
+                TokenKind::LBracket => brackets += 1,
+                TokenKind::RBracket => brackets = brackets.saturating_sub(1),
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
     fn take_ident(&mut self, expected: &str) -> Result<String, Diagnostic> {
         match self.advance().kind.clone() {
             TokenKind::Ident(name) => Ok(name),
@@ -261,6 +365,35 @@ impl Parser {
         }
         Err(unexpected(self.peek(), "`>` after generic type argument"))
     }
+}
+
+fn is_statement_boundary(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Let
+            | TokenKind::Const
+            | TokenKind::If
+            | TokenKind::While
+            | TokenKind::For
+            | TokenKind::Break
+            | TokenKind::Continue
+            | TokenKind::Return
+    )
+}
+
+fn can_start_pattern(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Ident(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Integer(_)
+            | TokenKind::Float(_)
+            | TokenKind::Float32(_)
+            | TokenKind::Minus
+            | TokenKind::LParen
+            | TokenKind::LBracket
+    )
 }
 
 fn is_top_level_start(kind: &TokenKind) -> bool {

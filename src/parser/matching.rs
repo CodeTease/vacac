@@ -179,17 +179,32 @@ impl Parser {
         let mut arms = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
             let start = self.peek().clone();
-            let pattern = self.parse_pattern()?;
-            self.consume(&TokenKind::Equal, "`=` in match arm")?;
-            self.consume(&TokenKind::Greater, "`>` in match arm (`=>`)")?;
-            let body = self.parse_block()?;
-            arms.push(MatchArm {
-                pattern,
-                span: Span::from(&start),
-                body,
-            });
-            if !self.take(&TokenKind::Comma) && !self.at(&TokenKind::RBrace) {
-                return Err(unexpected(self.peek(), "`,` or `}` after match arm"));
+            let parsed_arm = (|| {
+                let pattern = self.parse_pattern()?;
+                self.consume(&TokenKind::Equal, "`=` in match arm")?;
+                self.consume(&TokenKind::Greater, "`>` in match arm (`=>`)")?;
+                let body = self.parse_block()?;
+                Ok::<_, Diagnostic>(MatchArm {
+                    pattern,
+                    span: Span::from(&start),
+                    body,
+                })
+            })();
+            match parsed_arm {
+                Ok(arm) => {
+                    arms.push(arm);
+                    if !self.at(&TokenKind::RBrace) {
+                        if !self.take(&TokenKind::Comma) {
+                            self.report(unexpected(self.peek(), "`,` or `}` after match arm"));
+                            self.synchronize_match_arm();
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.report(error);
+                    self.synchronize_match_arm();
+                    return Err(unexpected(self.peek(), "valid match arm"));
+                }
             }
         }
         if arms.is_empty() {
