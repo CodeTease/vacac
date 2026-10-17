@@ -69,6 +69,11 @@ object or executable. Use `--quiet` (or `-q`) to suppress success messages, and
 `--json` to emit errors as JSON for tools. `--help` lists all options and
 `--version` prints the compiler version.
 
+When parsing fails, the compiler attempts to recover at top-level declaration
+boundaries and report further syntax errors from the remaining declarations and
+loaded modules. Malformed declarations are skipped; any parser or module-loading
+diagnostics stop compilation before semantic checking and code generation.
+
 Diagnostics use one-based source line and column numbers. Columns count Unicode
 scalar values (a tab is one source column); human-readable excerpts expand tabs
 to four-column stops and align carets using the same scalar-value convention.

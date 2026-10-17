@@ -33,7 +33,8 @@
 * [x] Make human-readable, `Display`, and JSON diagnostic output consistent; define and test the JSON output contract and escaping.
 * [x] Align source underlines for tabs and Unicode scalar-value columns, with a four-column tab stop and regression tests.
 * [x] Expand diagnostic tests across lexer, parser, semantic analysis, modules, and codegen to cover locations, excerpts, underlines, and JSON output.
-* [ ] Error recovery instead of fail-fast.
+* [x] Recover from malformed top-level declarations and report multiple parser diagnostics across declarations and loaded modules; malformed declarations are skipped and prevent later compiler phases.
+* [ ] Fine-grained parser recovery within function bodies and other nested constructs.
 * [ ] Rich Diagnostic with hints/suggestions.
 
 ## Future
