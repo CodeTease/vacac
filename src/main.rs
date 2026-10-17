@@ -7,7 +7,7 @@ mod modules;
 mod parser;
 mod sema;
 
-use diagnostic::Diagnostic;
+use diagnostic::{Diagnostic, DiagnosticSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -188,7 +188,7 @@ fn object_path(output: &Path) -> PathBuf {
     path
 }
 
-fn run() -> Result<i32, Diagnostic> {
+fn run() -> Result<i32, DiagnosticSet> {
     let options = match parse_args()? {
         ParseArgs::Help => {
             print!("{HELP}");
@@ -247,9 +247,7 @@ fn run() -> Result<i32, Diagnostic> {
             })?;
             let status = link_object(&object, &output, &link_objects, &link_search, &link_libs)?;
             if !status.success() {
-                return Err(Diagnostic::new(format!(
-                    "linker exited with status {status}"
-                )));
+                return Err(Diagnostic::new(format!("linker exited with status {status}")).into());
             }
             if !quiet {
                 println!("built {}", output.display());
@@ -270,9 +268,7 @@ fn run() -> Result<i32, Diagnostic> {
                 &link_libs,
             )?;
             if !status.success() {
-                return Err(Diagnostic::new(format!(
-                    "linker exited with status {status}"
-                )));
+                return Err(Diagnostic::new(format!("linker exited with status {status}")).into());
             }
             let status = Command::new(&executable)
                 .status()
@@ -415,11 +411,15 @@ fn main() -> ExitCode {
     let json_diagnostics = std::env::args_os().any(|arg| arg == "--json");
     match run() {
         Ok(code) => ExitCode::from(code as u8),
-        Err(error) => {
+        Err(errors) => {
             if json_diagnostics {
-                eprintln!("{}", error.render_json());
+                for error in errors.diagnostics {
+                    eprintln!("{}", error.render_json());
+                }
             } else {
-                eprintln!("vacac: {}", error.render_human());
+                for error in errors.diagnostics {
+                    eprintln!("vacac: {}", error.render_human());
+                }
             }
             ExitCode::from(1)
         }

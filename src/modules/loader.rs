@@ -1,10 +1,10 @@
 use crate::ast::{EnumDecl, EnumVariant, Program, Span, Type};
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Diagnostic, DiagnosticSet};
 use crate::{lexer, parser};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
+pub(super) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
     let root = std::fs::canonicalize(root).map_err(|error| {
         Diagnostic::new(format!("cannot read source file: {error}"))
             .with_file(root.display().to_string())
@@ -18,6 +18,7 @@ pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
     let mut loader = Loader {
         active: HashSet::new(),
         loaded: HashMap::new(),
+        diagnostics: Vec::new(),
         program: Program {
             enums: vec![EnumDecl {
                 name: "Result".into(),
@@ -50,12 +51,16 @@ pub(super) fn load(root: &Path) -> Result<Program, Diagnostic> {
         },
     };
     loader.visit(&root, String::new())?;
+    if !loader.diagnostics.is_empty() {
+        return Err(DiagnosticSet::new(loader.diagnostics));
+    }
     Ok(loader.program)
 }
 
 struct Loader {
     active: HashSet<PathBuf>,
     loaded: HashMap<PathBuf, String>,
+    diagnostics: Vec<Diagnostic>,
     program: Program,
 }
 
@@ -89,9 +94,13 @@ impl Loader {
         let filename = path.display().to_string();
         let tokens = lexer::lex_named(&source, Some(source_id))
             .map_err(|error| error.with_source_id(source_id, filename.clone(), &source))?;
-        let mut parsed = parser::Parser::new_in_module(tokens, module.clone())
-            .parse_program()
-            .map_err(|error| error.with_source_id(source_id, filename.clone(), &source))?;
+        let (mut parsed, diagnostics) =
+            parser::Parser::new_in_module(tokens, module.clone()).parse_program();
+        self.diagnostics.extend(
+            diagnostics
+                .into_iter()
+                .map(|error| error.with_source_id(source_id, filename.clone(), &source)),
+        );
         self.program.source_files.push(filename);
         self.program.source_texts.push(source);
 

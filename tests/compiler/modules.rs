@@ -27,6 +27,21 @@ fn module_project(
 }
 
 #[test]
+fn parser_reports_syntax_errors_from_root_and_nested_modules_together() {
+    let (directory, compile) = module_project(
+        "parser-errors-multiple-modules",
+        "mod broken;\nfn main() -> i64 { let value = ; 0 }\n",
+        &[("broken.vca", "pub fn value( -> i64 { 0 }\n")],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(stderr.contains("main.vca:2:"), "{stderr}");
+    assert!(stderr.contains("broken.vca:1:"), "{stderr}");
+    assert!(stderr.matches("vacac:").count() == 2, "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn nested_modules_resolve_qualified_functions_types_and_enums() {
     let (directory, compile) = module_project(
         "nested-success",

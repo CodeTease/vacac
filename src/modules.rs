@@ -1,12 +1,12 @@
 use crate::ast::Program;
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::DiagnosticSet;
 use std::path::Path;
 
 mod generics;
 mod loader;
 mod resolve;
 
-pub(crate) fn load(root: &Path) -> Result<Program, Diagnostic> {
+pub(crate) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
     let mut program = loader::load(root)?;
     program.modules.clear();
     resolve::resolve_names(&mut program)?;

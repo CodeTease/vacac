@@ -65,48 +65,31 @@ impl Parser {
         }
     }
 
-    pub fn parse_program(mut self) -> Result<Program, Diagnostic> {
+    pub fn parse_program(mut self) -> (Program, Vec<Diagnostic>) {
         let mut enums = Vec::new();
         let mut structs = Vec::new();
         let mut globals = Vec::new();
         let mut functions = Vec::new();
         let mut extern_functions = Vec::new();
         let mut modules = Vec::new();
+        let mut diagnostics = Vec::new();
         while !self.at(&TokenKind::Eof) {
+            let declaration_start = self.current;
             let is_public = self.take(&TokenKind::Pub);
-            if self.take(&TokenKind::Mod) {
-                if is_public {
-                    return Err(unexpected(
-                        self.previous(),
-                        "a declaration after `pub` (`pub mod` is not supported)",
-                    ));
+            match self.parse_top_level_declaration(
+                is_public,
+                &mut enums,
+                &mut structs,
+                &mut globals,
+                &mut functions,
+                &mut extern_functions,
+                &mut modules,
+            ) {
+                Ok(()) => {}
+                Err(error) => {
+                    diagnostics.push(error);
+                    self.synchronize_top_level(declaration_start);
                 }
-                let token = self.previous().clone();
-                let name = self.take_ident("module name")?;
-                self.consume(&TokenKind::Semicolon, "`;` after module declaration")?;
-                modules.push(ModuleDecl {
-                    name,
-                    span: Span::from(&token),
-                });
-                continue;
-            }
-            if self.at(&TokenKind::Enum) {
-                enums.push(self.parse_enum(is_public)?);
-            } else if self.at(&TokenKind::Struct) {
-                structs.push(self.parse_struct(is_public)?);
-            } else if self.at(&TokenKind::Const) || self.at(&TokenKind::Let) {
-                let mutable = self.at(&TokenKind::Let);
-                globals.push(self.parse_global(is_public, mutable)?);
-            } else if self.at(&TokenKind::Extern) {
-                extern_functions.push(self.parse_extern_function(is_public)?);
-            } else {
-                if !self.at(&TokenKind::Fn) {
-                    return Err(unexpected(
-                        self.peek(),
-                        "`fn`, `extern`, `struct`, `enum`, `const`, `let`, or `mod` declaration",
-                    ));
-                }
-                functions.push(self.parse_function(is_public)?);
             }
         }
         if functions.is_empty()
@@ -115,21 +98,103 @@ impl Parser {
             && structs.is_empty()
             && globals.is_empty()
             && modules.is_empty()
+            && diagnostics.is_empty()
         {
-            return Err("program must contain at least one declaration".into());
+            diagnostics.push("program must contain at least one declaration".into());
         }
-        Ok(Program {
-            enums,
-            structs,
-            globals,
-            functions,
-            extern_functions,
-            modules,
-            source_files: Vec::new(),
-            source_texts: Vec::new(),
-            functions_are_qualified: false,
-            lambda_captures: HashMap::new(),
-        })
+        (
+            Program {
+                enums,
+                structs,
+                globals,
+                functions,
+                extern_functions,
+                modules,
+                source_files: Vec::new(),
+                source_texts: Vec::new(),
+                functions_are_qualified: false,
+                lambda_captures: HashMap::new(),
+            },
+            diagnostics,
+        )
+    }
+
+    fn parse_top_level_declaration(
+        &mut self,
+        is_public: bool,
+        enums: &mut Vec<EnumDecl>,
+        structs: &mut Vec<StructDecl>,
+        globals: &mut Vec<GlobalDecl>,
+        functions: &mut Vec<Function>,
+        extern_functions: &mut Vec<ExternFunction>,
+        modules: &mut Vec<ModuleDecl>,
+    ) -> Result<(), Diagnostic> {
+        if self.take(&TokenKind::Mod) {
+            if is_public {
+                return Err(unexpected(
+                    self.previous(),
+                    "a declaration after `pub` (`pub mod` is not supported)",
+                ));
+            }
+            let token = self.previous().clone();
+            let name = self.take_ident("module name")?;
+            self.consume(&TokenKind::Semicolon, "`;` after module declaration")?;
+            modules.push(ModuleDecl {
+                name,
+                span: Span::from(&token),
+            });
+        } else if self.at(&TokenKind::Enum) {
+            enums.push(self.parse_enum(is_public)?);
+        } else if self.at(&TokenKind::Struct) {
+            structs.push(self.parse_struct(is_public)?);
+        } else if self.at(&TokenKind::Const) || self.at(&TokenKind::Let) {
+            let mutable = self.at(&TokenKind::Let);
+            globals.push(self.parse_global(is_public, mutable)?);
+        } else if self.at(&TokenKind::Extern) {
+            extern_functions.push(self.parse_extern_function(is_public)?);
+        } else if self.at(&TokenKind::Fn) {
+            functions.push(self.parse_function(is_public)?);
+        } else {
+            return Err(unexpected(
+                self.peek(),
+                "`fn`, `extern`, `struct`, `enum`, `const`, `let`, or `mod` declaration",
+            ));
+        }
+        Ok(())
+    }
+
+    fn synchronize_top_level(&mut self, declaration_start: usize) {
+        let mut braces = 0usize;
+        let mut parentheses = 0usize;
+        let mut brackets = 0usize;
+
+        for index in declaration_start..self.tokens.len() {
+            let token = &self.tokens[index];
+            let is_candidate = index >= self.current
+                && index > declaration_start
+                && is_top_level_start(&token.kind)
+                && ((braces == 0 && parentheses == 0 && brackets == 0) || token.column == 1);
+            if is_candidate {
+                self.current = index;
+                self.type_parameters.clear();
+                self.type_close_debt = 0;
+                return;
+            }
+
+            match &token.kind {
+                TokenKind::LBrace => braces += 1,
+                TokenKind::RBrace => braces = braces.saturating_sub(1),
+                TokenKind::LParen => parentheses += 1,
+                TokenKind::RParen => parentheses = parentheses.saturating_sub(1),
+                TokenKind::LBracket => brackets += 1,
+                TokenKind::RBracket => brackets = brackets.saturating_sub(1),
+                _ => {}
+            }
+        }
+
+        self.current = self.tokens.len().saturating_sub(1);
+        self.type_parameters.clear();
+        self.type_close_debt = 0;
     }
 
     fn take_ident(&mut self, expected: &str) -> Result<String, Diagnostic> {
@@ -188,6 +253,20 @@ impl Parser {
         }
         Err(unexpected(self.peek(), "`>` after generic type argument"))
     }
+}
+
+fn is_top_level_start(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Pub
+            | TokenKind::Fn
+            | TokenKind::Extern
+            | TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Const
+            | TokenKind::Let
+            | TokenKind::Mod
+    )
 }
 
 fn span_of_expr_parser(expr: &Expr) -> Span {

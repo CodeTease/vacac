@@ -19,6 +19,35 @@ pub struct Diagnostic {
     pub source_line: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticSet {
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+impl DiagnosticSet {
+    pub fn new(diagnostics: Vec<Diagnostic>) -> Self {
+        Self { diagnostics }
+    }
+}
+
+impl From<Diagnostic> for DiagnosticSet {
+    fn from(diagnostic: Diagnostic) -> Self {
+        Self::new(vec![diagnostic])
+    }
+}
+
+impl From<String> for DiagnosticSet {
+    fn from(message: String) -> Self {
+        Diagnostic::new(message).into()
+    }
+}
+
+impl From<&str> for DiagnosticSet {
+    fn from(message: &str) -> Self {
+        Diagnostic::new(message).into()
+    }
+}
+
 impl Diagnostic {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
