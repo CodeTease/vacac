@@ -170,10 +170,18 @@ impl Parser {
 
         for index in declaration_start..self.tokens.len() {
             let token = &self.tokens[index];
+            let delimiters_are_balanced = braces == 0 && parentheses == 0 && brackets == 0;
             let is_candidate = index >= self.current
                 && index > declaration_start
                 && is_top_level_start(&token.kind)
-                && ((braces == 0 && parentheses == 0 && brackets == 0) || token.column == 1);
+                && (delimiters_are_balanced
+                    || (token.column == 1
+                        && !delimiters_close_after(
+                            &self.tokens[index..],
+                            braces,
+                            parentheses,
+                            brackets,
+                        )));
             if is_candidate {
                 self.current = index;
                 self.type_parameters.clear();
@@ -267,6 +275,95 @@ fn is_top_level_start(kind: &TokenKind) -> bool {
             | TokenKind::Let
             | TokenKind::Mod
     )
+}
+
+fn delimiters_close_after(
+    tokens: &[Token],
+    mut braces: usize,
+    mut parentheses: usize,
+    mut brackets: usize,
+) -> bool {
+    for token in tokens {
+        match &token.kind {
+            TokenKind::LBrace => braces += 1,
+            TokenKind::RBrace => braces = braces.saturating_sub(1),
+            TokenKind::LParen => parentheses += 1,
+            TokenKind::RParen => parentheses = parentheses.saturating_sub(1),
+            TokenKind::LBracket => brackets += 1,
+            TokenKind::RBracket => brackets = brackets.saturating_sub(1),
+            _ => {}
+        }
+        if braces == 0 && parentheses == 0 && brackets == 0 {
+            return true;
+        }
+        if matches!(token.kind, TokenKind::Eof) {
+            break;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::Parser;
+    use crate::lexer;
+
+    #[test]
+    fn recovery_does_not_treat_a_line_start_keyword_inside_a_body_as_top_level() {
+        let source = "fn broken() -> i64 {\n    let value = ;\nfn decoy() -> i64 { 7 }\n}\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            program
+                .functions
+                .iter()
+                .map(|function| function.name.as_str())
+                .collect::<Vec<_>>(),
+            ["main"]
+        );
+    }
+
+    #[test]
+    fn recovery_recognizes_a_declaration_after_an_unclosed_body() {
+        let source = "fn broken() -> i64 { let value = ;\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            program
+                .functions
+                .iter()
+                .map(|function| function.name.as_str())
+                .collect::<Vec<_>>(),
+            ["main"]
+        );
+    }
+
+    #[test]
+    fn recovery_retains_later_declarations_with_blank_lines_and_indentation() {
+        let source = "fn broken() -> i64 { let value = ; 0 }\n\n    pub fn recovered() -> i64 { 1 }\n\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(
+            program
+                .functions
+                .iter()
+                .map(|function| function.name.as_str())
+                .collect::<Vec<_>>(),
+            ["recovered", "main"]
+        );
+        assert!(program.functions[0].is_public);
+    }
+
+    #[test]
+    fn recovery_from_a_malformed_declaration_at_eof_terminates_with_one_diagnostic() {
+        let source = "fn malformed( -> i64 { 0";
+        let (_program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    }
 }
 
 fn span_of_expr_parser(expr: &Expr) -> Span {

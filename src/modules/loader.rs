@@ -50,7 +50,9 @@ pub(super) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
             lambda_captures: HashMap::new(),
         },
     };
-    loader.visit(&root, String::new())?;
+    if let Err(error) = loader.visit(&root, String::new()) {
+        loader.diagnostics.push(error);
+    }
     if !loader.diagnostics.is_empty() {
         return Err(DiagnosticSet::new(loader.diagnostics));
     }
@@ -86,14 +88,23 @@ impl Loader {
         self.active.insert(path.clone());
         self.loaded.insert(path.clone(), module.clone());
 
-        let source = std::fs::read_to_string(&path).map_err(|error| {
-            Diagnostic::new(format!("cannot read source file: {error}"))
-                .with_file(path.display().to_string())
-        })?;
+        let source = match std::fs::read_to_string(&path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.active.remove(&path);
+                return Err(Diagnostic::new(format!("cannot read source file: {error}"))
+                    .with_file(path.display().to_string()));
+            }
+        };
         let source_id = self.program.source_files.len();
         let filename = path.display().to_string();
-        let tokens = lexer::lex_named(&source, Some(source_id))
-            .map_err(|error| error.with_source_id(source_id, filename.clone(), &source))?;
+        let tokens = match lexer::lex_named(&source, Some(source_id)) {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                self.active.remove(&path);
+                return Err(error.with_source_id(source_id, filename, &source));
+            }
+        };
         let (mut parsed, diagnostics) =
             parser::Parser::new_in_module(tokens, module.clone()).parse_program();
         self.diagnostics.extend(
@@ -114,10 +125,11 @@ impl Loader {
             .append(&mut parsed.extern_functions);
         for declaration in declarations {
             if declaration.name == "" || declaration.name.contains("::") {
-                return Err(Diagnostic::at(
+                self.diagnostics.push(Diagnostic::at(
                     declaration.span.into(),
                     "module name must be a single identifier",
                 ));
+                continue;
             }
             let child_module = if module.is_empty() {
                 declaration.name.clone()
@@ -125,7 +137,9 @@ impl Loader {
                 format!("{module}::{}", declaration.name)
             };
             let child = module_file_path(&path, &module, &declaration.name);
-            self.visit(&child, child_module)?;
+            if let Err(error) = self.visit(&child, child_module) {
+                self.diagnostics.push(error);
+            }
         }
         self.active.remove(&path);
         Ok(())
