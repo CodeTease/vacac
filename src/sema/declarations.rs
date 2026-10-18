@@ -619,6 +619,8 @@ impl Checker {
         self.scopes.clear();
         self.immutable_scopes.clear();
         self.mutable_borrows.clear();
+        self.shared_borrows.clear();
+        self.shared_borrows.clear();
         self.mutable_reference_origins.clear();
         self.loop_scopes.clear();
         self.loop_contexts.clear();
@@ -626,6 +628,7 @@ impl Checker {
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
         self.mutable_borrows.push(Vec::new());
+        self.shared_borrows.push(Vec::new());
         self.mutable_reference_origins.push(HashMap::new());
         for param in &function.params {
             let ty = self.resolve_type(&param.ty, param.span)?;

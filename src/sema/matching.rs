@@ -52,12 +52,14 @@ impl Checker {
             self.immutable_scopes.push(std::collections::HashSet::new());
             self.loop_scopes.push(std::collections::HashSet::new());
             self.mutable_borrows.push(Vec::new());
+            self.shared_borrows.push(Vec::new());
             self.mutable_reference_origins.push(HashMap::new());
             let result = self.check_block_result(&arm.body, arm.span);
             self.scopes.pop();
             self.immutable_scopes.pop();
             self.loop_scopes.pop();
             self.mutable_borrows.pop();
+            self.shared_borrows.pop();
             self.mutable_reference_origins.pop();
             let result = result?;
             if result == ValueType::Unit {
@@ -136,12 +138,14 @@ impl Checker {
                     self.immutable_scopes.push(std::collections::HashSet::new());
                     self.loop_scopes.push(std::collections::HashSet::new());
                     self.mutable_borrows.push(Vec::new());
+                    self.shared_borrows.push(Vec::new());
                     self.mutable_reference_origins.push(HashMap::new());
                     let result = self.check_block_result(&arm.body, arm.span);
                     self.scopes.pop();
                     self.immutable_scopes.pop();
                     self.loop_scopes.pop();
                     self.mutable_borrows.pop();
+                    self.shared_borrows.pop();
                     self.mutable_reference_origins.pop();
                     let actual = result?;
                     if actual == ValueType::Unit {
@@ -423,6 +427,7 @@ impl Checker {
             self.immutable_scopes.push(std::collections::HashSet::new());
             self.loop_scopes.push(std::collections::HashSet::new());
             self.mutable_borrows.push(Vec::new());
+            self.shared_borrows.push(Vec::new());
             self.mutable_reference_origins.push(HashMap::new());
             for (name, ty) in bindings {
                 self.scopes.last_mut().unwrap().insert(name, ty);
@@ -432,6 +437,7 @@ impl Checker {
             self.immutable_scopes.pop();
             self.loop_scopes.pop();
             self.mutable_borrows.pop();
+            self.shared_borrows.pop();
             self.mutable_reference_origins.pop();
             let result = arm_result?;
             if result == ValueType::Unit {

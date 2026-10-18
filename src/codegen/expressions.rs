@@ -269,12 +269,6 @@ impl<'ctx> Codegen<'ctx> {
                     let local = self.lookup_local(name).ok_or_else(|| {
                         Diagnostic::at(span.into(), format!("only local bindings can be borrowed"))
                     })?;
-                    if !local.immutable {
-                        return Err(Diagnostic::at(
-                            span.into(),
-                            format!("only immutable local bindings can be borrowed"),
-                        ));
-                    }
                     if matches!(
                         local.ty,
                         ValueType::Reference(_) | ValueType::MutableReference(_)

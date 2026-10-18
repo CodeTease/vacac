@@ -509,6 +509,7 @@ impl Checker {
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
         self.mutable_borrows.push(Vec::new());
+        self.shared_borrows.push(Vec::new());
         self.mutable_reference_origins.push(HashMap::new());
         let result = (|| {
             for statement in &block.statements {
@@ -539,6 +540,7 @@ impl Checker {
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
         self.mutable_borrows.pop();
+        self.shared_borrows.pop();
         self.mutable_reference_origins.pop();
         result
     }
@@ -749,21 +751,99 @@ impl Checker {
             .any(|borrow| borrow.overlaps(&place)))
     }
 
+    pub(super) fn is_place_borrowed(&self, expr: &Expr, span: Span) -> Result<bool, Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        Ok(self
+            .mutable_borrows
+            .iter()
+            .flatten()
+            .chain(self.shared_borrows.iter().flatten())
+            .any(|borrow| borrow.overlaps(&place)))
+    }
+
+    pub(super) fn record_shared_borrow(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        if self.is_place_mutably_borrowed(expr, span)? {
+            return Err(at(
+                span,
+                "cannot immutably borrow an already mutably borrowed place",
+            ));
+        }
+        self.shared_borrows
+            .last_mut()
+            .expect("block borrow scope exists")
+            .push(place);
+        Ok(())
+    }
+
+    pub(super) fn reject_borrowed_place(&self, expr: &Expr, span: Span) -> Result<(), Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        if self
+            .mutable_borrows
+            .iter()
+            .flatten()
+            .chain(self.shared_borrows.iter().flatten())
+            .any(|borrow| borrow.overlaps(&place))
+        {
+            Err(at(
+                span,
+                format!("cannot modify `{}` while it is borrowed", place.root.name),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn reject_borrowed(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
+        let Some((scope_index, _)) = self.lookup_local_with_scope(name) else {
+            return Ok(());
+        };
+        let place = BorrowPlace {
+            root: BorrowRoot {
+                scope_index,
+                name: name.to_owned(),
+            },
+            projections: Vec::new(),
+        };
+        let is_mutably_borrowed = self
+            .mutable_borrows
+            .iter()
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place));
+        if is_mutably_borrowed {
+            Err(at(
+                span,
+                format!("cannot access `{name}` while it is mutably borrowed"),
+            ))
+        } else if self
+            .shared_borrows
+            .iter()
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place))
+        {
+            Err(at(
+                span,
+                format!("cannot modify `{name}` while it is borrowed"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub(super) fn record_mutable_borrow(
         &mut self,
         expr: &Expr,
         span: Span,
     ) -> Result<(), Diagnostic> {
         let place = self.borrow_place(expr, span)?;
-        if self
-            .mutable_borrows
-            .iter()
-            .flatten()
-            .any(|borrow| borrow.overlaps(&place))
-        {
+        if self.is_place_borrowed(expr, span)? {
             return Err(at(
                 span,
-                format!("`{}` is already mutably borrowed", place.root.name),
+                format!("`{}` is already borrowed", place.root.name),
             ));
         }
         self.mutable_borrows

@@ -230,8 +230,8 @@ impl Checker {
                     else {
                         return Err(at(*span, "only local bindings can be borrowed"));
                     };
-                    if !self.is_immutable_binding(name) {
-                        return Err(at(*span, "only immutable local bindings can be borrowed"));
+                    if !self.is_immutable_binding(name) && !self.allow_shared_borrow {
+                        return Err(at(*span, "only local bindings can be borrowed"));
                     }
                     if self
                         .lambda_scope_boundaries
@@ -239,6 +239,12 @@ impl Checker {
                         .is_some_and(|boundary| scope_index < *boundary)
                     {
                         return Err(at(*span, "closures cannot capture references"));
+                    }
+                    if self.is_place_mutably_borrowed(value, *span)? {
+                        return Err(at(
+                            *span,
+                            "cannot immutably borrow an already mutably borrowed place",
+                        ));
                     }
                     if matches!(
                         target_type,
@@ -255,7 +261,9 @@ impl Checker {
                             "references to values containing vectors are not supported",
                         ));
                     }
-                    self.record_lambda_capture(name, scope_index);
+                    if self.is_immutable_binding(name) {
+                        self.record_lambda_capture(name, scope_index);
+                    }
                     return Ok(self.reference_type(target_type));
                 }
                 if matches!(op, UnaryOp::BorrowMut) {
@@ -281,7 +289,7 @@ impl Checker {
                             "mutable borrowing requires a mutable local binding",
                         ));
                     }
-                    if self.is_place_mutably_borrowed(value, *span)? {
+                    if self.is_place_borrowed(value, *span)? {
                         return Err(at(*span, format!("`{name}` is already mutably borrowed")));
                     }
                     if self
@@ -599,6 +607,7 @@ impl Checker {
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
                 self.mutable_borrows.push(Vec::new());
+                self.shared_borrows.push(Vec::new());
                 self.mutable_reference_origins.push(HashMap::new());
                 for (param, ty) in params.iter().zip(param_types.iter()) {
                     self.scopes
@@ -628,6 +637,7 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.mutable_borrows.pop();
+                self.shared_borrows.pop();
                 self.mutable_reference_origins.pop();
                 self.lambda_scope_boundaries.pop();
                 let captures = self.lambda_capture_scopes.pop().unwrap_or_default();

@@ -174,7 +174,7 @@ name.
 
 ## References and raw pointers
 
-Shared references use `&T`; `&value` borrows an eligible immutable local, and
+Shared references use `&T`; `&value` borrows an eligible local, including a mutable `let` binding, and
 `*reference` reads through it. Mutable references use `&mut T` and `&mut value`:
 
 ```vaca
@@ -203,11 +203,13 @@ local reference variable, which can then be passed to functions and written
 through with `*reference`. Mutable references cannot be copied into another
 local binding, and one call cannot receive overlapping mutable-reference
 origins in multiple `&mut` parameters. These call borrows are temporary: a
-reference may be passed in one call and used again afterward. A mutable
-reference cannot be returned, captured by a closure, stored in
-aggregates/globals, or escape through expressions. Shared references remain
-read-only and keep the same local-only restrictions.
-
+reference may be passed in one call and used again afterward. Shared references
+can borrow either `let` or `const` locals; overlapping shared loans are allowed,
+but prevent writes and mutable borrows until the lexical block ends. In this
+stage, safe references are limited to whole local bindings; field and
+fixed-array-element borrowing, last-use loan ending, and reference propagation
+are deferred. References cannot be returned, captured by a closure, stored in
+aggregates/globals, or escape through expressions.
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
 their target and mutability in Vaca's type checker, are not implicitly

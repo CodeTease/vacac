@@ -11,6 +11,7 @@ impl Checker {
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
         self.mutable_borrows.push(Vec::new());
+        self.shared_borrows.push(Vec::new());
         self.mutable_reference_origins.push(HashMap::new());
         let mut returns = false;
         for statement in &block.statements {
@@ -41,6 +42,7 @@ impl Checker {
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
         self.mutable_borrows.pop();
+        self.shared_borrows.pop();
         self.mutable_reference_origins.pop();
         Ok(returns)
     }
@@ -63,6 +65,14 @@ impl Checker {
                     return Err(at(*span, "reference bindings must be immutable"));
                 }
                 let previous_mutable_borrow_permission = self.allow_mutable_borrow_initializer;
+                let previous_shared_borrow_permission = self.allow_shared_borrow;
+                self.allow_shared_borrow = matches!(
+                    value,
+                    Expr::Unary {
+                        op: UnaryOp::Borrow,
+                        ..
+                    }
+                );
                 self.allow_mutable_borrow_initializer = matches!(
                     value,
                     Expr::Unary {
@@ -87,6 +97,7 @@ impl Checker {
                     }
                 })();
                 self.allow_mutable_borrow_initializer = previous_mutable_borrow_permission;
+                self.allow_shared_borrow = previous_shared_borrow_permission;
                 let value_type = checked_value_type?;
                 if matches!(value_type, ValueType::MutableReference(_))
                     && !matches!(
@@ -201,16 +212,20 @@ impl Checker {
                     ));
                 }
                 if let Expr::Unary {
-                    op: UnaryOp::BorrowMut,
+                    op,
                     value: borrowed,
                     ..
                 } = value
-                    && let Expr::Variable(_, _) = borrowed.as_ref()
                 {
-                    // Resolve the source before inserting this declaration: a
-                    // `let value = &mut value` shadowing an outer `value` must
-                    // record the outer binding as the loan root.
-                    self.record_mutable_borrow(borrowed, span_of_expr(borrowed))?;
+                    match op {
+                        UnaryOp::Borrow => {
+                            self.record_shared_borrow(borrowed, span_of_expr(borrowed))?
+                        }
+                        UnaryOp::BorrowMut => {
+                            self.record_mutable_borrow(borrowed, span_of_expr(borrowed))?
+                        }
+                        _ => {}
+                    }
                 }
                 let immutable_scope = self
                     .immutable_scopes
@@ -240,7 +255,7 @@ impl Checker {
                 Ok(false)
             }
             Stmt::Assign { name, value, span } => {
-                self.reject_mutably_borrowed(name, *span)?;
+                self.reject_borrowed(name, *span)?;
                 self.reject_lambda_capture(name, *span)?;
                 let binding_type = if let Some(ty) = self.lookup_local(name) {
                     ty
@@ -277,7 +292,7 @@ impl Checker {
                 ) {
                     return Err(at(*span, "reference bindings cannot be reassigned"));
                 }
-                self.reject_mutably_borrowed(name, *span)?;
+                self.reject_borrowed(name, *span)?;
                 let value_type = self.check_expr_expected(value, binding_type)?;
                 self.expect_type(
                     value_type,
@@ -296,9 +311,6 @@ impl Checker {
                     .ok_or_else(|| at(*span, "assignment target must start with a variable"))?;
                 self.reject_lambda_capture(root, *span)?;
                 let through_pointer = place_contains_dereference(target);
-                if !through_pointer {
-                    self.reject_mutably_borrowed(root, *span)?;
-                }
                 let binding_type = if let Some(ty) = self.lookup_local(root) {
                     ty
                 } else if let Some(global) = self.find_global_name(root) {
@@ -317,6 +329,9 @@ impl Checker {
                     return Err(at(*span, format!("undefined variable `{root}`")));
                 };
                 let target_type = self.check_place(target, binding_type)?;
+                if !through_pointer && self.lookup_local(root).is_some() {
+                    self.reject_borrowed_place(target, *span)?;
+                }
                 if matches!(
                     target_type,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
@@ -429,6 +444,7 @@ impl Checker {
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.mutable_borrows.push(Vec::new());
+                self.shared_borrows.push(Vec::new());
                 self.mutable_reference_origins.push(HashMap::new());
                 self.loop_contexts.push(LoopContext {
                     value_loop: false,
@@ -441,6 +457,7 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.mutable_borrows.pop();
+                self.shared_borrows.pop();
                 self.mutable_reference_origins.pop();
                 Ok(false)
             }
@@ -463,6 +480,7 @@ impl Checker {
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.mutable_borrows.push(Vec::new());
+                self.shared_borrows.push(Vec::new());
                 self.mutable_reference_origins.push(HashMap::new());
                 self.loop_contexts.push(LoopContext {
                     value_loop: false,
@@ -475,6 +493,7 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.mutable_borrows.pop();
+                self.shared_borrows.pop();
                 self.mutable_reference_origins.pop();
                 Ok(false)
             }

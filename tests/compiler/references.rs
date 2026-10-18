@@ -34,12 +34,46 @@ fn immutable_aggregate_values_can_be_borrowed() {
 }
 
 #[test]
+fn shared_references_borrow_mutable_local_bindings() {
+    let result = compile_and_run(
+        r#"
+        fn read(value: &i64) -> i64 { *value }
+        fn main() -> i64 {
+            let answer = 42;
+            const first: &i64 = &answer;
+            const second: &i64 = &answer;
+            read(first) + read(second) - 84
+        }
+        "#,
+        "shared-reference-mutable-local",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        "fn main() -> i64 { let answer = 42; if true { const reference: &i64 = &answer; *reference - 42 } else { 0 }; answer = 43; answer - 43 }",
+        "shared-reference-lexical-release",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "fn main() -> i64 { let answer = 1; const reference: &i64 = &answer; answer = 2; 0 }",
+        "shared-reference-blocks-write",
+        "cannot modify `answer` while it is borrowed",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { let answer = 1; const reference: &i64 = &answer; const mutable: &mut i64 = &mut answer; 0 }",
+        "shared-reference-blocks-mutable-borrow",
+        "`answer` is already mutably borrowed",
+    );
+}
+
+#[test]
 fn references_reject_unsafe_or_unsupported_uses() {
     for (source, name, diagnostic) in [
         (
-            "fn main() -> i64 { let value = 1; let reference = &value; 0 }",
-            "references-mutable-local",
-            "only immutable local bindings can be borrowed",
+            "fn main() -> i64 { let value = 1; const reference: &i64 = &value; value = 2; 0 }",
+            "references-shared-loan-write",
+            "cannot modify `value` while it is borrowed",
         ),
         (
             "fn main() -> i64 { const value = 1; let reference = &(value + 1); 0 }",
