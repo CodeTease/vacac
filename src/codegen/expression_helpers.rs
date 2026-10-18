@@ -119,7 +119,7 @@ impl<'ctx> Codegen<'ctx> {
         self.scopes
             .iter()
             .rev()
-            .find_map(|scope| scope.get(name).copied())
+            .find_map(|scope| scope.get(name).cloned())
     }
 
     pub(super) fn resolve_function_name(&self, name: &str) -> Option<String> {

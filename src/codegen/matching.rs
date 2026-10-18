@@ -178,7 +178,7 @@ impl<'ctx> Codegen<'ctx> {
                                 value.ty,
                                 ValueType::MutableReference(_)
                             )
-                            .then_some(binding_id),
+                            .then_some(MutableReferenceOrigin::Unknown),
                         },
                     );
                 }
@@ -489,7 +489,7 @@ impl<'ctx> Codegen<'ctx> {
                             value.ty,
                             ValueType::MutableReference(_)
                         )
-                        .then_some(binding_id),
+                        .then_some(MutableReferenceOrigin::Unknown),
                     },
                 );
             }

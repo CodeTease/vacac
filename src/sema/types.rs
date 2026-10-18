@@ -738,6 +738,15 @@ impl Checker {
         })
     }
 
+    pub(super) fn direct_local_place_root(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Variable(name, _) => Some(name),
+            Expr::Field { value, .. } => Self::direct_local_place_root(value),
+            Expr::Index { array, .. } => Self::direct_local_place_root(array),
+            _ => None,
+        }
+    }
+
     pub(super) fn is_place_mutably_borrowed(
         &self,
         expr: &Expr,
@@ -759,6 +768,30 @@ impl Checker {
             .flatten()
             .chain(self.shared_borrows.iter().flatten())
             .any(|borrow| borrow.overlaps(&place)))
+    }
+
+    pub(super) fn reject_mutably_borrowed_place(
+        &self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        if self
+            .mutable_borrows
+            .iter()
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place))
+        {
+            Err(at(
+                span,
+                format!(
+                    "cannot access `{}` while it is mutably borrowed",
+                    place.root.name
+                ),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     pub(super) fn record_shared_borrow(

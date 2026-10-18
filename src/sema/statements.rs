@@ -119,10 +119,10 @@ impl Checker {
                     ..
                 } = value
                 {
-                    let Expr::Variable(source, _) = borrowed.as_ref() else {
+                    let Some(source) = Self::direct_local_place_root(borrowed) else {
                         return Err(at(
                             span_of_expr(borrowed),
-                            "mutable borrowing currently requires a named local binding",
+                            "borrowed place must start with a local binding",
                         ));
                     };
                     if self.is_immutable_binding(source) || self.is_loop_variable(source) {
@@ -180,7 +180,7 @@ impl Checker {
                     ..
                 } = value
                 {
-                    let Expr::Variable(source, source_span) = borrowed.as_ref() else {
+                    let Some(source) = Self::direct_local_place_root(borrowed) else {
                         return Err(at(
                             span_of_expr(borrowed),
                             "mutable borrowing currently requires a named local binding",
@@ -188,13 +188,13 @@ impl Checker {
                     };
                     if self.is_immutable_binding(source) || self.is_loop_variable(source) {
                         return Err(at(
-                            *source_span,
+                            span_of_expr(borrowed),
                             "mutable borrowing requires a mutable local binding",
                         ));
                     }
-                    if self.is_place_mutably_borrowed(borrowed, *source_span)? {
+                    if self.is_place_mutably_borrowed(borrowed, span_of_expr(borrowed))? {
                         return Err(at(
-                            *source_span,
+                            span_of_expr(borrowed),
                             format!("`{source}` is already mutably borrowed"),
                         ));
                     }

@@ -1,5 +1,78 @@
 use super::*;
 
+pub(super) fn codegen_borrow_root(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Variable(name, _) => Some(name),
+        Expr::Field { value, .. } => codegen_borrow_root(value),
+        Expr::Index { array, .. } => codegen_borrow_root(array),
+        _ => None,
+    }
+}
+
+pub(super) fn codegen_mutable_borrow_origin(
+    expr: &Expr,
+    root_binding_id: usize,
+) -> Option<MutableReferenceOrigin> {
+    fn collect(expr: &Expr, projections: &mut Vec<MutableReferenceProjection>) -> bool {
+        match expr {
+            Expr::Variable(_, _) => true,
+            Expr::Field { value, name, .. } => {
+                if !collect(value, projections) {
+                    return false;
+                }
+                projections.push(MutableReferenceProjection::Field(name.clone()));
+                true
+            }
+            Expr::Index { array, index, .. } => {
+                if !collect(array, projections) {
+                    return false;
+                }
+                projections.push(MutableReferenceProjection::Index(codegen_constant_i64(
+                    index,
+                )));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn codegen_constant_i64(expr: &Expr) -> Option<i64> {
+        match expr {
+            Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(*value as i64),
+            Expr::Unary {
+                op: UnaryOp::Negate,
+                value,
+                ..
+            } => match value.as_ref() {
+                Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(-(*value as i64)),
+                Expr::Integer(value, _) if *value == (i64::MAX as u64) + 1 => Some(i64::MIN),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn codegen_borrow_place_is_fixed(expr: &Expr) -> bool {
+        match expr {
+            Expr::Variable(_, _) => true,
+            Expr::Field { value, .. } => codegen_borrow_place_is_fixed(value),
+            Expr::Index { array, index, .. } => {
+                codegen_constant_i64(index).is_some() && codegen_borrow_place_is_fixed(array)
+            }
+            _ => false,
+        }
+    }
+
+    let mut projections = Vec::new();
+    if !codegen_borrow_place_is_fixed(expr) {
+        return Some(MutableReferenceOrigin::Unknown);
+    }
+    collect(expr, &mut projections).then_some(MutableReferenceOrigin::Place {
+        binding_id: root_binding_id,
+        projections,
+    })
+}
+
 impl<'ctx> Codegen<'ctx> {
     pub(super) fn emit_expression(&mut self, expr: &Expr) -> Result<TypedValue<'ctx>, Diagnostic> {
         match expr {
@@ -101,6 +174,24 @@ impl<'ctx> Codegen<'ctx> {
                 })
             }
             Expr::Index { array, index, span } => {
+                if let Some(name) = codegen_borrow_root(expr)
+                    && let Some(local) = self.lookup_local(name)
+                {
+                    let (pointer, ty) =
+                        self.emit_place_pointer(expr, name, local.pointer, local.ty)?;
+                    let value = self
+                        .builder
+                        .build_load(
+                            self.llvm_type(ty).ok_or("indexed place has no LLVM type")?,
+                            pointer,
+                            "array.place",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    return Ok(TypedValue {
+                        value: Some(value),
+                        ty,
+                    });
+                }
                 let array_value = self.emit_expression(array)?;
                 let index = self.emit_expression(index)?;
                 let index = self.expect_i64(index, "array index", *span)?;
@@ -204,6 +295,24 @@ impl<'ctx> Codegen<'ctx> {
                 })
             }
             Expr::Field { value, name, span } => {
+                if let Some(root) = codegen_borrow_root(expr)
+                    && let Some(local) = self.lookup_local(root)
+                {
+                    let (pointer, ty) =
+                        self.emit_place_pointer(expr, root, local.pointer, local.ty)?;
+                    let value = self
+                        .builder
+                        .build_load(
+                            self.llvm_type(ty).ok_or("field place has no LLVM type")?,
+                            pointer,
+                            "struct.field.value",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    return Ok(TypedValue {
+                        value: Some(value),
+                        ty,
+                    });
+                }
                 let value = self.emit_expression(value)?;
                 let ValueType::Struct(struct_id) = value.ty else {
                     return Err(Diagnostic::at(
@@ -260,17 +369,25 @@ impl<'ctx> Codegen<'ctx> {
             } => self.emit_struct_literal(name, fields, *span),
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
-                    let Expr::Variable(name, _) = value.as_ref() else {
+                    let Some(name) = codegen_borrow_root(value) else {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("borrowing currently requires a named local binding"),
+                            "borrowed place must start with a local binding",
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
                         Diagnostic::at(span.into(), format!("only local bindings can be borrowed"))
                     })?;
+                    if self.place_mutates_vector(value, name, local.ty)? {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "references to values containing vectors are not supported",
+                        ));
+                    }
+                    let (pointer, target_type) =
+                        self.emit_place_pointer(value, name, local.pointer, local.ty)?;
                     if matches!(
-                        local.ty,
+                        target_type,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
                         return Err(Diagnostic::at(
@@ -279,7 +396,7 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                     if !self.reference_target_is_supported(
-                        local.ty,
+                        target_type,
                         &mut std::collections::HashSet::new(),
                     )? {
                         return Err(Diagnostic::at(
@@ -287,17 +404,17 @@ impl<'ctx> Codegen<'ctx> {
                             format!("references to values containing vectors are not supported"),
                         ));
                     }
-                    let reference_type = self.reference_type(local.ty);
+                    let reference_type = self.reference_type(target_type);
                     return Ok(TypedValue {
-                        value: Some(local.pointer.into()),
+                        value: Some(pointer.into()),
                         ty: reference_type,
                     });
                 }
                 if matches!(op, UnaryOp::BorrowMut) {
-                    let Expr::Variable(name, _) = value.as_ref() else {
+                    let Some(name) = codegen_borrow_root(value) else {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("mutable borrowing currently requires a named local binding"),
+                            "borrowed place must start with a local binding",
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
@@ -309,8 +426,16 @@ impl<'ctx> Codegen<'ctx> {
                             format!("mutable borrowing requires a mutable local binding"),
                         ));
                     }
+                    if self.place_mutates_vector(value, name, local.ty)? {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "references to values containing vectors are not supported",
+                        ));
+                    }
+                    let (pointer, target_type) =
+                        self.emit_place_pointer(value, name, local.pointer, local.ty)?;
                     if !self.reference_target_is_supported(
-                        local.ty,
+                        target_type,
                         &mut std::collections::HashSet::new(),
                     )? {
                         return Err(Diagnostic::at(
@@ -319,7 +444,7 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                     if matches!(
-                        local.ty,
+                        target_type,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
                         return Err(Diagnostic::at(
@@ -327,9 +452,9 @@ impl<'ctx> Codegen<'ctx> {
                             format!("references to references are not supported"),
                         ));
                     }
-                    let ty = self.mutable_reference_type(local.ty);
+                    let ty = self.mutable_reference_type(target_type);
                     return Ok(TypedValue {
-                        value: Some(local.pointer.into()),
+                        value: Some(pointer.into()),
                         ty,
                     });
                 }

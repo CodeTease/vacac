@@ -55,14 +55,69 @@ struct VectorShape {
     element: ArrayElementType,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, PartialEq, Eq)]
+enum MutableReferenceOrigin {
+    Place {
+        binding_id: usize,
+        projections: Vec<MutableReferenceProjection>,
+    },
+    Unknown,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum MutableReferenceProjection {
+    Field(String),
+    Index(Option<i64>),
+}
+
+impl MutableReferenceOrigin {
+    fn overlaps(&self, other: &Self) -> bool {
+        let (
+            Self::Place {
+                binding_id: left_id,
+                projections: left,
+            },
+            Self::Place {
+                binding_id: right_id,
+                projections: right,
+            },
+        ) = (self, other)
+        else {
+            return true;
+        };
+        if left_id != right_id {
+            return false;
+        }
+        for (left, right) in left.iter().zip(right) {
+            match (left, right) {
+                (
+                    MutableReferenceProjection::Field(left),
+                    MutableReferenceProjection::Field(right),
+                ) if left == right => {}
+                (
+                    MutableReferenceProjection::Index(Some(left)),
+                    MutableReferenceProjection::Index(Some(right)),
+                ) if left == right => {}
+                (MutableReferenceProjection::Field(_), MutableReferenceProjection::Field(_))
+                | (
+                    MutableReferenceProjection::Index(Some(_)),
+                    MutableReferenceProjection::Index(Some(_)),
+                ) => return false,
+                _ => return true,
+            }
+        }
+        true
+    }
+}
+
+#[derive(Clone)]
 struct Local<'ctx> {
     pointer: PointerValue<'ctx>,
     ty: ValueType,
     immutable: bool,
     loop_variable: bool,
     binding_id: usize,
-    mutable_reference_origin: Option<usize>,
+    mutable_reference_origin: Option<MutableReferenceOrigin>,
 }
 
 struct TypedValue<'ctx> {

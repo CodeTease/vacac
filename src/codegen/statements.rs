@@ -1,3 +1,4 @@
+use super::expressions::{codegen_borrow_root, codegen_mutable_borrow_origin};
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
@@ -255,12 +256,12 @@ impl<'ctx> Codegen<'ctx> {
                             op: UnaryOp::BorrowMut,
                             value: borrowed,
                             ..
-                        } => match borrowed.as_ref() {
-                            Expr::Variable(source, _) => self.lookup_local(source).map(|local| {
-                                local.mutable_reference_origin.unwrap_or(local.binding_id)
-                            }),
-                            _ => None,
-                        },
+                        } => codegen_borrow_root(borrowed)
+                            .and_then(|source| self.lookup_local(source))
+                            .and_then(|local| {
+                                codegen_mutable_borrow_origin(borrowed, local.binding_id)
+                            })
+                            .or(Some(MutableReferenceOrigin::Unknown)),
                         _ => None,
                     }
                 } else {
@@ -292,7 +293,7 @@ impl<'ctx> Codegen<'ctx> {
                         .and_then(|scope| scope.get_mut(&name))
                         && matches!(local.ty, ValueType::MutableReference(_))
                     {
-                        local.mutable_reference_origin = binding_origin;
+                        local.mutable_reference_origin = binding_origin.clone();
                     }
                 }
                 Ok(false)

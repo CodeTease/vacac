@@ -101,14 +101,22 @@ impl<'ctx> Codegen<'ctx> {
         id
     }
 
-    pub(super) fn argument_origin(&self, expression: &Expr) -> Option<usize> {
+    pub(super) fn argument_origin(&self, expression: &Expr) -> Option<MutableReferenceOrigin> {
         let Expr::Variable(name, _) = expression else {
             return None;
         };
-        let local = self.lookup_local(name)?;
-        matches!(local.ty, ValueType::MutableReference(_))
-            .then_some(local.mutable_reference_origin)
-            .flatten()
+        let Some(local) = self.lookup_local(name) else {
+            return None;
+        };
+        if !matches!(local.ty, ValueType::MutableReference(_)) {
+            return None;
+        }
+        Some(
+            local
+                .mutable_reference_origin
+                .clone()
+                .unwrap_or(MutableReferenceOrigin::Unknown),
+        )
     }
 
     pub(super) fn reject_overlapping_mutable_arguments(
@@ -121,25 +129,38 @@ impl<'ctx> Codegen<'ctx> {
             .zip(params)
             .filter(|(_, parameter)| matches!(parameter, ValueType::MutableReference(_)))
             .count();
-        let mut origins = std::collections::HashSet::new();
+        if mutable_count > 1
+            && args.iter().zip(params).any(|(argument, parameter)| {
+                matches!(parameter, ValueType::MutableReference(_))
+                    && self.argument_origin(argument).is_none()
+            })
+        {
+            return Err(Diagnostic::at(
+                args.iter()
+                    .zip(params)
+                    .find(|(argument, parameter)| {
+                        matches!(parameter, ValueType::MutableReference(_))
+                            && self.argument_origin(argument).is_none()
+                    })
+                    .map(|(argument, _)| codegen_span_of_expr(argument))
+                    .unwrap_or_else(|| codegen_span_of_expr(&args[0]))
+                    .into(),
+                "overlapping mutable references cannot be passed to the same call",
+            ));
+        }
+        let mut origins: Vec<MutableReferenceOrigin> = Vec::new();
         for (argument, parameter) in args.iter().zip(params) {
             if matches!(parameter, ValueType::MutableReference(_)) {
-                match self.argument_origin(argument) {
-                    Some(origin) if !origins.insert(origin) => {
-                        return Err(Diagnostic::at(
-                            codegen_span_of_expr(argument).into(),
-                            "overlapping mutable references cannot be passed to the same call",
-                        ));
-                    }
-                    Some(_) => {}
-                    None if mutable_count > 1 => {
-                        return Err(Diagnostic::at(
-                            codegen_span_of_expr(argument).into(),
-                            "overlapping mutable references cannot be passed to the same call",
-                        ));
-                    }
-                    None => {}
+                let Some(origin) = self.argument_origin(argument) else {
+                    continue;
+                };
+                if origins.iter().any(|prior| prior.overlaps(&origin)) {
+                    return Err(Diagnostic::at(
+                        codegen_span_of_expr(argument).into(),
+                        "overlapping mutable references cannot be passed to the same call",
+                    ));
                 }
+                origins.push(origin);
             }
         }
         Ok(())

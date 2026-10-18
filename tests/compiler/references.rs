@@ -68,6 +68,127 @@ fn shared_references_borrow_mutable_local_bindings() {
 }
 
 #[test]
+fn references_borrow_struct_fields_and_track_projection_overlap() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64, y: i64 }
+
+        fn main() -> i64 {
+            let point = Point { x: 19, y: 20 };
+            const first: &i64 = &point.x;
+            const second: &i64 = &point.x;
+            const other: &mut i64 = &mut point.y;
+            *other = 23;
+            *first + *second + *other - 61
+        }
+        "#,
+        "shared-reference-struct-field-projections",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64, y: i64 }
+
+        fn set_both(first: &mut i64, second: &mut i64) -> unit {
+            *first = 20;
+            *second = 22;
+        }
+
+        fn main() -> i64 {
+            let point = Point { x: 20, y: 21 };
+            const field: &mut i64 = &mut point.x;
+            const other: &mut i64 = &mut point.y;
+            set_both(field, other);
+            *field + *other - 42
+        }
+        "#,
+        "mutable-reference-struct-field-projections",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (source, name, diagnostic) in [
+        (
+            "struct Point { x: i64, y: i64 } fn main() -> i64 { let point = Point { x: 1, y: 2 }; const field: &i64 = &point.x; point.x = 3; 0 }",
+            "shared-reference-struct-field-blocks-write",
+            "cannot modify `point` while it is borrowed",
+        ),
+        (
+            "struct Point { x: i64, y: i64 } fn main() -> i64 { let point = Point { x: 1, y: 2 }; const field: &i64 = &point.x; point = Point { x: 3, y: 4 }; 0 }",
+            "shared-reference-struct-field-blocks-whole-write",
+            "cannot modify `point` while it is borrowed",
+        ),
+        (
+            "struct Point { x: i64, y: i64 } fn main() -> i64 { let point = Point { x: 1, y: 2 }; const field: &mut i64 = &mut point.x; const other: &mut i64 = &mut point.x; 0 }",
+            "mutable-reference-same-struct-field-overlap",
+            "`point` is already mutably borrowed",
+        ),
+        (
+            "struct Point { x: i64, y: i64 } fn main() -> i64 { let point = Point { x: 1, y: 2 }; const field: &mut i64 = &mut point.x; point.x; 0 }",
+            "mutable-reference-struct-field-blocks-read",
+            "cannot access `point` while it is mutably borrowed",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn references_borrow_fixed_array_elements_and_track_index_overlap() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let values = [10, 20];
+            const first: &i64 = &values[0];
+            values[1] = 21;
+            *first + values[1] - 31
+        }
+        "#,
+        "shared-reference-array-element-projections",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        fn set_both(first: &mut i64, second: &mut i64) -> unit {
+            *first = 11;
+            *second = 21;
+        }
+
+        fn main() -> i64 {
+            let values = [10, 20];
+            const first: &mut i64 = &mut values[0];
+            const second: &mut i64 = &mut values[1];
+            set_both(first, second);
+            *first + *second - 32
+        }
+        "#,
+        "mutable-reference-array-element-projections",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (source, name, diagnostic) in [
+        (
+            "fn main() -> i64 { let values = [1, 2]; const first: &i64 = &values[0]; values[0] = 3; 0 }",
+            "shared-reference-array-element-blocks-write",
+            "cannot modify `values` while it is borrowed",
+        ),
+        (
+            "fn main() -> i64 { let values = [1, 2]; const first: &i64 = &values[0]; values = [3, 4]; 0 }",
+            "shared-reference-array-element-blocks-whole-write",
+            "cannot modify `values` while it is borrowed",
+        ),
+        (
+            "fn main() -> i64 { let values = [1, 2]; let index = 0; const first: &mut i64 = &mut values[index]; const other: &mut i64 = &mut values[1]; 0 }",
+            "mutable-reference-unknown-array-index-overlap",
+            "`values` is already mutably borrowed",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
 fn references_reject_unsafe_or_unsupported_uses() {
     for (source, name, diagnostic) in [
         (
@@ -113,6 +234,11 @@ fn references_reject_unsafe_or_unsupported_uses() {
         (
             "fn main() -> i64 { const values: Vec<i64> = vec_new(); let reference = &values; 0 }",
             "references-vector-alias",
+            "references to values containing vectors are not supported",
+        ),
+        (
+            "struct Buffer { values: Vec<i64> } fn main() -> i64 { let buffer = Buffer { values: vec_new() }; let reference = &buffer.values; 0 }",
+            "references-vector-field-alias",
             "references to values containing vectors are not supported",
         ),
         (

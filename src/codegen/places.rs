@@ -382,7 +382,7 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
-    fn place_mutates_vector(
+    pub(super) fn place_mutates_vector(
         &mut self,
         expr: &Expr,
         root_name: &str,

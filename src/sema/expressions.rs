@@ -122,6 +122,9 @@ impl Checker {
                 }
             }
             Expr::Index { array, index, span } => {
+                if let Some(place_type) = self.check_local_place_read(expr)? {
+                    return Ok(place_type);
+                }
                 let array_type = self.check_expr(array, false)?;
                 let index_type = self.check_expr(index, false)?;
                 self.expect_type(
@@ -141,6 +144,9 @@ impl Checker {
                 }
             }
             Expr::Field { value, name, span } => {
+                if let Some(value_type) = self.check_local_place_read(expr)? {
+                    return Ok(value_type);
+                }
                 let value_type = self.check_expr(value, false)?;
                 let ValueType::Struct(struct_id) = value_type else {
                     return Err(at(*span, "field access requires a struct value"));
@@ -220,14 +226,13 @@ impl Checker {
             }
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
-                    let Expr::Variable(name, _) = value.as_ref() else {
+                    let Some(name) = Self::direct_local_place_root(value) else {
                         return Err(at(
                             *span,
                             "borrowing currently requires a named local binding",
                         ));
                     };
-                    let Some((scope_index, target_type)) = self.lookup_local_with_scope(name)
-                    else {
+                    let Some((scope_index, root_type)) = self.lookup_local_with_scope(name) else {
                         return Err(at(*span, "only local bindings can be borrowed"));
                     };
                     if !self.is_immutable_binding(name) && !self.allow_shared_borrow {
@@ -239,6 +244,13 @@ impl Checker {
                         .is_some_and(|boundary| scope_index < *boundary)
                     {
                         return Err(at(*span, "closures cannot capture references"));
+                    }
+                    let target_type = self.check_place(value, root_type)?;
+                    if self.place_crosses_vector(value, root_type)? {
+                        return Err(at(
+                            *span,
+                            "references to values containing vectors are not supported",
+                        ));
                     }
                     if self.is_place_mutably_borrowed(value, *span)? {
                         return Err(at(
@@ -273,20 +285,26 @@ impl Checker {
                             "mutable borrows must initialize a local reference binding",
                         ));
                     }
-                    let Expr::Variable(name, _) = value.as_ref() else {
+                    let Some(name) = Self::direct_local_place_root(value) else {
                         return Err(at(
                             *span,
                             "mutable borrowing currently requires a named local binding",
                         ));
                     };
-                    let Some((scope_index, target_type)) = self.lookup_local_with_scope(name)
-                    else {
+                    let Some((scope_index, root_type)) = self.lookup_local_with_scope(name) else {
                         return Err(at(*span, "only local bindings can be borrowed"));
                     };
                     if self.is_immutable_binding(name) || self.is_loop_variable(name) {
                         return Err(at(
                             *span,
                             "mutable borrowing requires a mutable local binding",
+                        ));
+                    }
+                    let target_type = self.check_place(value, root_type)?;
+                    if self.place_crosses_vector(value, root_type)? {
+                        return Err(at(
+                            *span,
+                            "references to values containing vectors are not supported",
                         ));
                     }
                     if self.is_place_borrowed(value, *span)? {

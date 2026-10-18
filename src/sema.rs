@@ -47,9 +47,9 @@ struct Signature {
     return_type: ValueType,
 }
 
-/// A place currently held by a mutable safe reference. The root identifies a
-/// particular lexical binding, not just its spelling, and projections retain
-/// enough structure to support precise overlap checks as borrowing expands.
+/// A place borrowed by a safe reference. The root identifies a particular
+/// lexical binding, not just its spelling, and projections retain enough
+/// structure for precise overlap checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BorrowPlace {
     root: BorrowRoot,

@@ -1,6 +1,32 @@
 use super::*;
 
 impl Checker {
+    pub(super) fn check_local_place_read(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<Option<ValueType>, Diagnostic> {
+        let Some(root) = Self::direct_local_place_root(expr) else {
+            return Ok(None);
+        };
+        let Some((scope_index, root_type)) = self.lookup_local_with_scope(root) else {
+            return Ok(None);
+        };
+        if matches!(
+            root_type,
+            ValueType::Reference(_) | ValueType::MutableReference(_)
+        ) && self
+            .lambda_scope_boundaries
+            .last()
+            .is_some_and(|boundary| scope_index < *boundary)
+        {
+            return Err(at(span_of_expr(expr), "closures cannot capture references"));
+        }
+        let ty = self.check_place(expr, root_type)?;
+        self.reject_mutably_borrowed_place(expr, span_of_expr(expr))?;
+        self.record_lambda_capture(root, scope_index);
+        Ok(Some(ty))
+    }
+
     pub(super) fn check_expr_expected(
         &mut self,
         expr: &Expr,

@@ -195,21 +195,22 @@ fn main() -> i64 {
 }
 ```
 
-Mutable references are restricted to named mutable local bindings (`let`, never
-`const` or loop variables). A mutable reference must be held in a `const` local;
-while that borrow's lexical block is active, direct reads/writes or another
-mutable borrow of the source are rejected. The borrow must first be bound to a
-local reference variable, which can then be passed to functions and written
-through with `*reference`. Mutable references cannot be copied into another
-local binding, and one call cannot receive overlapping mutable-reference
-origins in multiple `&mut` parameters. These call borrows are temporary: a
-reference may be passed in one call and used again afterward. Shared references
-can borrow either `let` or `const` locals; overlapping shared loans are allowed,
-but prevent writes and mutable borrows until the lexical block ends. In this
-stage, safe references are limited to whole local bindings; field and
-fixed-array-element borrowing, last-use loan ending, and reference propagation
-are deferred. References cannot be returned, captured by a closure, stored in
-aggregates/globals, or escape through expressions.
+Mutable references may borrow a place rooted at a named mutable local binding
+(`let`, never `const` or loop variables), including a struct field or fixed-array
+element. They must be held in a `const` local; while a borrow's lexical block is
+active, overlapping reads, writes, or borrows are rejected. The borrow must
+first be bound to a local reference variable, which can then be passed to
+functions and written through with `*reference`. Mutable references cannot be
+copied into another local binding, and one call cannot receive overlapping
+mutable-reference origins in multiple `&mut` parameters. These call borrows are
+temporary. Shared references can borrow either `let` or `const` locals, including struct
+fields and fixed-array elements. Overlapping shared loans are allowed, but
+prevent overlapping writes and mutable borrows until the lexical block ends.
+Constant field names and constant array indices are tracked precisely; unknown
+indices conservatively overlap. Vector elements remain ineligible. Last-use loan
+ending and reference propagation are deferred. References cannot be returned,
+captured by a closure, stored in aggregates/globals, or escape through
+expressions.
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
 their target and mutability in Vaca's type checker, are not implicitly
