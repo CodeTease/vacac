@@ -24,6 +24,7 @@ impl<'ctx> Codegen<'ctx> {
                 ),
             ));
         }
+        self.reject_overlapping_mutable_arguments(args, &shape.params)?;
         let closure = callee
             .value
             .ok_or("function value has no closure")?
@@ -234,6 +235,7 @@ impl<'ctx> Codegen<'ctx> {
                 ),
             ));
         }
+        self.reject_overlapping_mutable_arguments(args, &params)?;
         let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len());
         for (index, (arg, expected)) in args.iter().zip(params.iter()).enumerate() {
             let value = self.emit_expression_expected(arg, *expected)?;

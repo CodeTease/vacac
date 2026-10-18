@@ -162,6 +162,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 MatchPattern::Binding(name) => {
                     let alloca = self.create_entry_alloca(value.ty, name)?;
+                    let binding_id = self.next_binding_id();
                     self.builder
                         .build_store(alloca, value.value.ok_or("match value has no LLVM value")?)
                         .map_err(|error| error.to_string())?;
@@ -172,6 +173,12 @@ impl<'ctx> Codegen<'ctx> {
                             ty: value.ty,
                             immutable: false,
                             loop_variable: false,
+                            binding_id,
+                            mutable_reference_origin: matches!(
+                                value.ty,
+                                ValueType::MutableReference(_)
+                            )
+                            .then_some(binding_id),
                         },
                     );
                 }
@@ -466,6 +473,7 @@ impl<'ctx> Codegen<'ctx> {
             self.scopes.push(HashMap::new());
             if let MatchPattern::Binding(name) = &arm.pattern {
                 let alloca = self.create_entry_alloca(value.ty, name)?;
+                let binding_id = self.next_binding_id();
                 self.builder
                     .build_store(alloca, scalar_value)
                     .map_err(|error| error.to_string())?;
@@ -476,6 +484,12 @@ impl<'ctx> Codegen<'ctx> {
                         ty: value.ty,
                         immutable: false,
                         loop_variable: false,
+                        binding_id,
+                        mutable_reference_origin: matches!(
+                            value.ty,
+                            ValueType::MutableReference(_)
+                        )
+                        .then_some(binding_id),
                     },
                 );
             }

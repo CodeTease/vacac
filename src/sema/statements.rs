@@ -10,7 +10,8 @@ impl Checker {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(std::collections::HashSet::new());
+        self.mutable_borrows.push(Vec::new());
+        self.mutable_reference_origins.push(HashMap::new());
         let mut returns = false;
         for statement in &block.statements {
             let statement_returns = self.check_statement(statement, return_type)?;
@@ -40,6 +41,7 @@ impl Checker {
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
         self.mutable_borrows.pop();
+        self.mutable_reference_origins.pop();
         Ok(returns)
     }
 
@@ -86,6 +88,20 @@ impl Checker {
                 })();
                 self.allow_mutable_borrow_initializer = previous_mutable_borrow_permission;
                 let value_type = checked_value_type?;
+                if matches!(value_type, ValueType::MutableReference(_))
+                    && !matches!(
+                        value,
+                        Expr::Unary {
+                            op: UnaryOp::BorrowMut,
+                            ..
+                        }
+                    )
+                {
+                    return Err(at(
+                        span_of_expr(value),
+                        "mutable references cannot be copied into another binding",
+                    ));
+                }
                 if let Expr::Unary {
                     op: UnaryOp::BorrowMut,
                     value: borrowed,
@@ -104,7 +120,7 @@ impl Checker {
                             "mutable borrowing requires a mutable local binding",
                         ));
                     }
-                    if self.is_mutably_borrowed(source) {
+                    if self.is_place_mutably_borrowed(borrowed, span_of_expr(borrowed))? {
                         return Err(at(
                             span_of_expr(borrowed),
                             format!("`{source}` is already mutably borrowed"),
@@ -137,6 +153,16 @@ impl Checker {
                     _ => "binding initializer".to_owned(),
                 };
                 self.expect_type(value_type, binding_type, span_of_expr(value), &context)?;
+                let mutable_reference_origin = if let Expr::Unary {
+                    op: UnaryOp::BorrowMut,
+                    value: borrowed,
+                    ..
+                } = value
+                {
+                    Some(self.borrow_place(borrowed, span_of_expr(borrowed))?)
+                } else {
+                    None
+                };
                 if let Expr::Unary {
                     op: UnaryOp::BorrowMut,
                     value: borrowed,
@@ -155,7 +181,7 @@ impl Checker {
                             "mutable borrowing requires a mutable local binding",
                         ));
                     }
-                    if self.is_mutably_borrowed(source) {
+                    if self.is_place_mutably_borrowed(borrowed, *source_span)? {
                         return Err(at(
                             *source_span,
                             format!("`{source}` is already mutably borrowed"),
@@ -165,35 +191,51 @@ impl Checker {
                 let mut bindings = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 self.check_pattern(pattern, binding_type, *span, &mut bindings, &mut seen)?;
-                let scope = self.scopes.last_mut().expect("block scope exists");
-                if let Some((name, _)) = bindings.iter().find(|(name, _)| scope.contains_key(name))
+                if let Some((name, _)) = bindings
+                    .iter()
+                    .find(|(name, _)| self.scopes.last().unwrap().contains_key(name))
                 {
                     return Err(at(
                         *span,
                         format!("`{name}` is already declared in this scope"),
                     ));
                 }
-                let immutable_scope = self
-                    .immutable_scopes
-                    .last_mut()
-                    .expect("block scope exists");
-                for (name, binding_type) in bindings {
-                    scope.insert(name.clone(), binding_type);
-                    if *immutable {
-                        immutable_scope.insert(name);
-                    }
-                }
                 if let Expr::Unary {
                     op: UnaryOp::BorrowMut,
                     value: borrowed,
                     ..
                 } = value
-                    && let Expr::Variable(source, _) = borrowed.as_ref()
+                    && let Expr::Variable(_, _) = borrowed.as_ref()
                 {
-                    self.mutable_borrows
+                    // Resolve the source before inserting this declaration: a
+                    // `let value = &mut value` shadowing an outer `value` must
+                    // record the outer binding as the loan root.
+                    self.record_mutable_borrow(borrowed, span_of_expr(borrowed))?;
+                }
+                let immutable_scope = self
+                    .immutable_scopes
+                    .last_mut()
+                    .expect("block scope exists");
+                for (name, binding_type) in bindings {
+                    self.scopes
                         .last_mut()
-                        .expect("block borrow scope exists")
-                        .insert(source.clone());
+                        .expect("block scope exists")
+                        .insert(name.clone(), binding_type);
+                    if matches!(binding_type, ValueType::MutableReference(_)) {
+                        let Some(origin) = mutable_reference_origin.clone() else {
+                            return Err(at(
+                                *span,
+                                "mutable references must be initialized by a new mutable borrow",
+                            ));
+                        };
+                        self.mutable_reference_origins
+                            .last_mut()
+                            .expect("reference-origin scope exists")
+                            .insert(name.clone(), MutableReferenceOrigin::Place(origin));
+                    }
+                    if *immutable {
+                        immutable_scope.insert(name);
+                    }
                 }
                 Ok(false)
             }
@@ -386,7 +428,8 @@ impl Checker {
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
-                self.mutable_borrows.push(std::collections::HashSet::new());
+                self.mutable_borrows.push(Vec::new());
+                self.mutable_reference_origins.push(HashMap::new());
                 self.loop_contexts.push(LoopContext {
                     value_loop: false,
                     result_type: None,
@@ -398,6 +441,7 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.mutable_borrows.pop();
+                self.mutable_reference_origins.pop();
                 Ok(false)
             }
             Stmt::ForArray {
@@ -418,7 +462,8 @@ impl Checker {
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
-                self.mutable_borrows.push(std::collections::HashSet::new());
+                self.mutable_borrows.push(Vec::new());
+                self.mutable_reference_origins.push(HashMap::new());
                 self.loop_contexts.push(LoopContext {
                     value_loop: false,
                     result_type: None,
@@ -430,6 +475,7 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.mutable_borrows.pop();
+                self.mutable_reference_origins.pop();
                 Ok(false)
             }
             Stmt::Break { value, span } => {
@@ -454,7 +500,7 @@ impl Checker {
                     } = value
                     {
                         if let Expr::Variable(source, source_span) = borrowed.as_ref() {
-                            if self.is_mutably_borrowed(source) {
+                            if self.is_place_mutably_borrowed(borrowed, *source_span)? {
                                 return Err(at(
                                     *source_span,
                                     format!("`{source}` is already mutably borrowed"),

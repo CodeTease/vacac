@@ -61,6 +61,8 @@ struct Local<'ctx> {
     ty: ValueType,
     immutable: bool,
     loop_variable: bool,
+    binding_id: usize,
+    mutable_reference_origin: Option<usize>,
 }
 
 struct TypedValue<'ctx> {
@@ -118,6 +120,7 @@ struct Codegen<'ctx> {
     global_constant_values: HashMap<String, ConstantValue>,
     global_states: HashMap<String, u8>,
     next_lambda_id: usize,
+    next_binding_id: usize,
     lambda_captures: HashMap<(Option<usize>, usize, usize), Vec<String>>,
     lambda_capture_types: HashMap<String, Vec<(String, ValueType)>>,
     function_adapters: HashMap<String, FunctionValue<'ctx>>,

@@ -26,6 +26,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder
                     .build_store(alloca, value)
                     .map_err(|error| error.to_string())?;
+                let binding_id = self.next_binding_id();
                 self.scopes
                     .last_mut()
                     .ok_or("pattern binding outside scope")?
@@ -36,6 +37,8 @@ impl<'ctx> Codegen<'ctx> {
                             ty,
                             immutable,
                             loop_variable: false,
+                            binding_id,
+                            mutable_reference_origin: None,
                         },
                     );
                 Ok(())

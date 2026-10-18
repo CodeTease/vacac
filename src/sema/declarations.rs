@@ -619,17 +619,23 @@ impl Checker {
         self.scopes.clear();
         self.immutable_scopes.clear();
         self.mutable_borrows.clear();
+        self.mutable_reference_origins.clear();
         self.loop_scopes.clear();
         self.loop_contexts.clear();
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(std::collections::HashSet::new());
+        self.mutable_borrows.push(Vec::new());
+        self.mutable_reference_origins.push(HashMap::new());
         for param in &function.params {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
             if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                 self.immutable_scopes[0].insert(param.name.clone());
+            }
+            if matches!(ty, ValueType::MutableReference(_)) {
+                self.mutable_reference_origins[0]
+                    .insert(param.name.clone(), MutableReferenceOrigin::Unknown);
             }
         }
         let return_type = self.resolve_type(&function.return_type, function.span)?;

@@ -200,9 +200,13 @@ Mutable references are restricted to named mutable local bindings (`let`, never
 while that borrow's lexical block is active, direct reads/writes or another
 mutable borrow of the source are rejected. The borrow must first be bound to a
 local reference variable, which can then be passed to functions and written
-through with `*reference`. It cannot be returned, captured by a
-closure, stored in aggregates/globals, or escape through expressions. Shared
-references remain read-only and keep the same local-only restrictions.
+through with `*reference`. Mutable references cannot be copied into another
+local binding, and one call cannot receive overlapping mutable-reference
+origins in multiple `&mut` parameters. These call borrows are temporary: a
+reference may be passed in one call and used again afterward. A mutable
+reference cannot be returned, captured by a closure, stored in
+aggregates/globals, or escape through expressions. Shared references remain
+read-only and keep the same local-only restrictions.
 
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain

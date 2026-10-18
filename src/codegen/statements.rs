@@ -60,6 +60,7 @@ impl<'ctx> Codegen<'ctx> {
                     self.builder
                         .build_store(alloca, value)
                         .map_err(|error| error.to_string())?;
+                    let binding_id = self.next_binding_id();
                     self.scopes[0].insert(
                         name.clone(),
                         Local {
@@ -67,6 +68,8 @@ impl<'ctx> Codegen<'ctx> {
                             ty: *ty,
                             immutable: true,
                             loop_variable: false,
+                            binding_id,
+                            mutable_reference_origin: None,
                         },
                     );
                 }
@@ -84,6 +87,7 @@ impl<'ctx> Codegen<'ctx> {
             self.builder
                 .build_store(alloca, param_value)
                 .map_err(|e| e.to_string())?;
+            let binding_id = self.next_binding_id();
             self.scopes[0].insert(
                 param.name.clone(),
                 Local {
@@ -94,6 +98,9 @@ impl<'ctx> Codegen<'ctx> {
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ),
                     loop_variable: false,
+                    binding_id,
+                    // A function parameter's caller-side origin is unknown.
+                    mutable_reference_origin: None,
                 },
             );
         }
@@ -187,20 +194,34 @@ impl<'ctx> Codegen<'ctx> {
                 immutable,
                 span,
             } => {
-                let value = if let Some(ty) = ty.as_ref() {
+                let emitted_value = if let Some(ty) = ty.as_ref() {
                     let array_type = self.resolve_type(ty, *span)?;
                     self.emit_expression_expected(value, array_type)?
                 } else {
                     self.emit_expression(value)?
                 };
-                if value.ty == ValueType::Unit {
+                if matches!(emitted_value.ty, ValueType::MutableReference(_))
+                    && !matches!(
+                        value,
+                        Expr::Unary {
+                            op: UnaryOp::BorrowMut,
+                            ..
+                        }
+                    )
+                {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        "mutable references cannot be copied into another binding",
+                    ));
+                }
+                if emitted_value.ty == ValueType::Unit {
                     return Err(Diagnostic::at(
                         span.into(),
                         format!("cannot bind a value of type `unit`"),
                     ));
                 }
                 if matches!(
-                    value.ty,
+                    emitted_value.ty,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) && !*immutable
                 {
@@ -211,9 +232,9 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 let ty = match ty {
                     Some(ty) => self.resolve_type(ty, *span)?,
-                    None => value.ty,
+                    None => emitted_value.ty,
                 };
-                if ty != value.ty {
+                if ty != emitted_value.ty {
                     let context = match pattern {
                         MatchPattern::Binding(name) => format!("initializer for `{name}`"),
                         _ => "binding initializer".to_owned(),
@@ -222,13 +243,58 @@ impl<'ctx> Codegen<'ctx> {
                         span.into(),
                         format!(
                             "{context} has type {}, expected {}",
-                            self.type_name(value.ty),
+                            self.type_name(emitted_value.ty),
                             self.type_name(ty)
                         ),
                     ));
                 }
-                let aggregate = value.value.ok_or("missing initializer value")?;
+                let aggregate = emitted_value.value.ok_or("missing initializer value")?;
+                let binding_origin = if matches!(ty, ValueType::MutableReference(_)) {
+                    match value {
+                        Expr::Unary {
+                            op: UnaryOp::BorrowMut,
+                            value: borrowed,
+                            ..
+                        } => match borrowed.as_ref() {
+                            Expr::Variable(source, _) => self.lookup_local(source).map(|local| {
+                                local.mutable_reference_origin.unwrap_or(local.binding_id)
+                            }),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let mut bound_names = Vec::new();
+                fn collect_names(pattern: &MatchPattern, names: &mut Vec<String>) {
+                    match pattern {
+                        MatchPattern::Binding(name) => names.push(name.clone()),
+                        MatchPattern::Tuple(patterns) | MatchPattern::Array(patterns) => {
+                            for pattern in patterns {
+                                collect_names(pattern, names);
+                            }
+                        }
+                        MatchPattern::Struct { fields, .. } => {
+                            for (_, pattern, _) in fields {
+                                collect_names(pattern, names);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                collect_names(pattern, &mut bound_names);
                 self.emit_pattern_bindings(pattern, ty, aggregate, *immutable, *span)?;
+                for name in bound_names {
+                    if let Some(local) = self
+                        .scopes
+                        .last_mut()
+                        .and_then(|scope| scope.get_mut(&name))
+                        && matches!(local.ty, ValueType::MutableReference(_))
+                    {
+                        local.mutable_reference_origin = binding_origin;
+                    }
+                }
                 Ok(false)
             }
             Stmt::Assign { .. } | Stmt::AssignPlace { .. } => {

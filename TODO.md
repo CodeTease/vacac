@@ -12,7 +12,7 @@
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [x] Typed raw pointers (`*const T` / `*mut T`) with explicit raw address-taking and dereference; restricted lexical `&mut T` borrows.
-* [ ] Lifetimes and broader safe-reference borrowing (current safe references are local-only, non-escaping, and mutable borrows use a conservative lexical scope rule).
+* [ ] Lifetimes and broader safe-reference borrowing (current safe references are local-only, non-escaping, and mutable borrows use conservative lexical place tracking).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [ ] Interfaces / traits / protocols.
 * [ ] Object-oriented features such as methods, classes, inheritance, and polymorphism.

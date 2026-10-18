@@ -88,10 +88,61 @@ impl<'ctx> Codegen<'ctx> {
             global_constant_values: HashMap::new(),
             global_states: HashMap::new(),
             next_lambda_id: 0,
+            next_binding_id: 0,
             lambda_captures: HashMap::new(),
             lambda_capture_types: HashMap::new(),
             function_adapters: HashMap::new(),
         }
+    }
+
+    pub(super) fn next_binding_id(&mut self) -> usize {
+        let id = self.next_binding_id;
+        self.next_binding_id += 1;
+        id
+    }
+
+    pub(super) fn argument_origin(&self, expression: &Expr) -> Option<usize> {
+        let Expr::Variable(name, _) = expression else {
+            return None;
+        };
+        let local = self.lookup_local(name)?;
+        matches!(local.ty, ValueType::MutableReference(_))
+            .then_some(local.mutable_reference_origin)
+            .flatten()
+    }
+
+    pub(super) fn reject_overlapping_mutable_arguments(
+        &self,
+        args: &[Expr],
+        params: &[ValueType],
+    ) -> Result<(), Diagnostic> {
+        let mutable_count = args
+            .iter()
+            .zip(params)
+            .filter(|(_, parameter)| matches!(parameter, ValueType::MutableReference(_)))
+            .count();
+        let mut origins = std::collections::HashSet::new();
+        for (argument, parameter) in args.iter().zip(params) {
+            if matches!(parameter, ValueType::MutableReference(_)) {
+                match self.argument_origin(argument) {
+                    Some(origin) if !origins.insert(origin) => {
+                        return Err(Diagnostic::at(
+                            codegen_span_of_expr(argument).into(),
+                            "overlapping mutable references cannot be passed to the same call",
+                        ));
+                    }
+                    Some(_) => {}
+                    None if mutable_count > 1 => {
+                        return Err(Diagnostic::at(
+                            codegen_span_of_expr(argument).into(),
+                            "overlapping mutable references cannot be passed to the same call",
+                        ));
+                    }
+                    None => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn i64_type(&self) -> inkwell::types::IntType<'ctx> {

@@ -508,7 +508,8 @@ impl Checker {
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(std::collections::HashSet::new());
+        self.mutable_borrows.push(Vec::new());
+        self.mutable_reference_origins.push(HashMap::new());
         let result = (|| {
             for statement in &block.statements {
                 match statement {
@@ -538,6 +539,7 @@ impl Checker {
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
         self.mutable_borrows.pop();
+        self.mutable_reference_origins.pop();
         result
     }
 
@@ -575,6 +577,58 @@ impl Checker {
             .enumerate()
             .rev()
             .find_map(|(index, scope)| scope.get(name).copied().map(|ty| (index, ty)))
+    }
+
+    pub(super) fn mutable_reference_argument_origin(
+        &self,
+        expression: &Expr,
+    ) -> Option<MutableReferenceOrigin> {
+        let Expr::Variable(name, _) = expression else {
+            return None;
+        };
+        let (scope_index, ty) = self.lookup_local_with_scope(name)?;
+        if !matches!(ty, ValueType::MutableReference(_)) {
+            return None;
+        }
+        Some(
+            self.mutable_reference_origins
+                .get(scope_index)
+                .and_then(|scope| scope.get(name))
+                .cloned()
+                .unwrap_or(MutableReferenceOrigin::Unknown),
+        )
+    }
+
+    pub(super) fn reject_overlapping_mutable_reference_arguments(
+        &self,
+        args: &[Expr],
+        params: &[ValueType],
+    ) -> Result<(), Diagnostic> {
+        let origins = args
+            .iter()
+            .zip(params)
+            .map(|(argument, parameter)| {
+                matches!(parameter, ValueType::MutableReference(_))
+                    .then(|| self.mutable_reference_argument_origin(argument))
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+        for later in 0..origins.len() {
+            let Some(later_origin) = &origins[later] else {
+                continue;
+            };
+            if origins[..later]
+                .iter()
+                .flatten()
+                .any(|earlier_origin| earlier_origin.overlaps(later_origin))
+            {
+                return Err(at(
+                    span_of_expr(&args[later]),
+                    "overlapping mutable references cannot be passed to the same call",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn reject_lambda_capture(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
@@ -632,14 +686,110 @@ impl Checker {
             .unwrap_or(false)
     }
 
-    pub(super) fn is_mutably_borrowed(&self, name: &str) -> bool {
-        self.mutable_borrows
+    pub(super) fn borrow_place(&self, expr: &Expr, span: Span) -> Result<BorrowPlace, Diagnostic> {
+        fn collect_projections(
+            expr: &Expr,
+            projections: &mut Vec<BorrowProjection>,
+        ) -> Option<String> {
+            match expr {
+                Expr::Variable(name, _) => Some(name.clone()),
+                Expr::Field { value, name, .. } => {
+                    let root = collect_projections(value, projections)?;
+                    projections.push(BorrowProjection::Field(name.clone()));
+                    Some(root)
+                }
+                Expr::Index { array, index, .. } => {
+                    let root = collect_projections(array, projections)?;
+                    projections.push(BorrowProjection::Index(constant_i64(index)));
+                    Some(root)
+                }
+                _ => None,
+            }
+        }
+
+        fn constant_i64(expr: &Expr) -> Option<i64> {
+            match expr {
+                Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(*value as i64),
+                Expr::Unary {
+                    op: UnaryOp::Negate,
+                    value,
+                    ..
+                } => match value.as_ref() {
+                    Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(-(*value as i64)),
+                    Expr::Integer(value, _) if *value == (i64::MAX as u64) + 1 => Some(i64::MIN),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        let mut projections = Vec::new();
+        let Some(name) = collect_projections(expr, &mut projections) else {
+            return Err(at(span, "borrowed place must start with a local binding"));
+        };
+        let Some((scope_index, _)) = self.lookup_local_with_scope(&name) else {
+            return Err(at(span, "only local bindings can be borrowed"));
+        };
+        Ok(BorrowPlace {
+            root: BorrowRoot { scope_index, name },
+            projections,
+        })
+    }
+
+    pub(super) fn is_place_mutably_borrowed(
+        &self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<bool, Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        Ok(self
+            .mutable_borrows
             .iter()
-            .any(|scope| scope.contains(name))
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place)))
+    }
+
+    pub(super) fn record_mutable_borrow(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        if self
+            .mutable_borrows
+            .iter()
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place))
+        {
+            return Err(at(
+                span,
+                format!("`{}` is already mutably borrowed", place.root.name),
+            ));
+        }
+        self.mutable_borrows
+            .last_mut()
+            .expect("block borrow scope exists")
+            .push(place);
+        Ok(())
     }
 
     pub(super) fn reject_mutably_borrowed(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
-        if self.is_mutably_borrowed(name) {
+        let borrowed = if let Some((scope_index, _)) = self.lookup_local_with_scope(name) {
+            let place = BorrowPlace {
+                root: BorrowRoot {
+                    scope_index,
+                    name: name.to_owned(),
+                },
+                projections: Vec::new(),
+            };
+            self.mutable_borrows
+                .iter()
+                .flatten()
+                .any(|borrow| borrow.overlaps(&place))
+        } else {
+            false
+        };
+        if borrowed {
             Err(at(
                 span,
                 format!("cannot access `{name}` while it is mutably borrowed"),

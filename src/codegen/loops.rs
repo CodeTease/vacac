@@ -134,6 +134,7 @@ impl<'ctx> Codegen<'ctx> {
             .build_store(counter, start)
             .map_err(|e| e.to_string())?;
 
+        let binding_id = self.next_binding_id();
         self.scopes.push(HashMap::new());
         self.scopes.last_mut().unwrap().insert(
             name.to_owned(),
@@ -142,6 +143,8 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ValueType::I64,
                 immutable: true,
                 loop_variable: true,
+                binding_id,
+                mutable_reference_origin: None,
             },
         );
 
@@ -267,6 +270,7 @@ impl<'ctx> Codegen<'ctx> {
         let element_type = ValueType::from(shape.element);
         let value_slot = self.create_entry_alloca(element_type, name)?;
 
+        let binding_id = self.next_binding_id();
         self.scopes.push(HashMap::from([(
             name.to_owned(),
             Local {
@@ -274,6 +278,8 @@ impl<'ctx> Codegen<'ctx> {
                 ty: element_type,
                 immutable: true,
                 loop_variable: true,
+                binding_id,
+                mutable_reference_origin: None,
             },
         )]));
 
@@ -401,6 +407,7 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|error| error.to_string())?;
         let element_type = ValueType::from(element);
         let value_slot = self.create_entry_alloca(element_type, name)?;
+        let binding_id = self.next_binding_id();
         self.scopes.push(HashMap::from([(
             name.to_owned(),
             Local {
@@ -408,6 +415,8 @@ impl<'ctx> Codegen<'ctx> {
                 ty: element_type,
                 immutable: true,
                 loop_variable: true,
+                binding_id,
+                mutable_reference_origin: None,
             },
         )]));
         let cond = self.context.append_basic_block(function, "vec.iter.cond");

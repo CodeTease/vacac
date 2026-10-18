@@ -281,7 +281,7 @@ impl Checker {
                             "mutable borrowing requires a mutable local binding",
                         ));
                     }
-                    if self.is_mutably_borrowed(name) {
+                    if self.is_place_mutably_borrowed(value, *span)? {
                         return Err(at(*span, format!("`{name}` is already mutably borrowed")));
                     }
                     if self
@@ -531,6 +531,7 @@ impl Checker {
                 }
                 let params = signature.params;
                 let return_type = signature.return_type;
+                self.reject_overlapping_mutable_reference_arguments(args, &params)?;
                 for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
                     if let Expr::Unary {
                         op: UnaryOp::BorrowMut,
@@ -539,7 +540,7 @@ impl Checker {
                     } = arg
                         && let Expr::Variable(source, source_span) = value.as_ref()
                     {
-                        if self.is_mutably_borrowed(source) {
+                        if self.is_place_mutably_borrowed(value, *source_span)? {
                             return Err(at(
                                 *source_span,
                                 format!("`{source}` is already mutably borrowed"),
@@ -597,7 +598,8 @@ impl Checker {
                 self.scopes.push(HashMap::new());
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
-                self.mutable_borrows.push(std::collections::HashSet::new());
+                self.mutable_borrows.push(Vec::new());
+                self.mutable_reference_origins.push(HashMap::new());
                 for (param, ty) in params.iter().zip(param_types.iter()) {
                     self.scopes
                         .last_mut()
@@ -608,6 +610,12 @@ impl Checker {
                             .last_mut()
                             .unwrap()
                             .insert(param.name.clone());
+                    }
+                    if matches!(ty, ValueType::MutableReference(_)) {
+                        self.mutable_reference_origins
+                            .last_mut()
+                            .unwrap()
+                            .insert(param.name.clone(), MutableReferenceOrigin::Unknown);
                     }
                 }
                 let previous_return_type = self.current_return_type;
@@ -620,6 +628,7 @@ impl Checker {
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
                 self.mutable_borrows.pop();
+                self.mutable_reference_origins.pop();
                 self.lambda_scope_boundaries.pop();
                 let captures = self.lambda_capture_scopes.pop().unwrap_or_default();
                 self.lambda_captures
@@ -829,6 +838,7 @@ impl Checker {
                 ),
             ));
         }
+        self.reject_overlapping_mutable_reference_arguments(args, &shape.params)?;
         for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
             let actual = self.check_expr_expected(arg, expected)?;
             self.expect_type(

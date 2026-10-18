@@ -125,6 +125,91 @@ fn mutable_references_write_through_and_reserve_the_source_to_scope_end() {
         "mutable-reference-blocks-read",
         "cannot access `value` while it is mutably borrowed",
     );
+    assert_compile_error(
+        "fn main() -> i64 { let value = 1; if true { const first: &mut i64 = &mut value; const second: &mut i64 = &mut value; } else {} 0 }",
+        "mutable-reference-double-borrow",
+        "`value` is already mutably borrowed",
+    );
+}
+
+#[test]
+fn mutable_references_reject_alias_copies_and_overlapping_call_arguments() {
+    for (source, name, diagnostic) in [
+        (
+            "fn main() -> i64 { let value = 1; const reference: &mut i64 = &mut value; const alias = reference; 0 }",
+            "mutable-reference-copy-alias",
+            "mutable references cannot be copied into another binding",
+        ),
+        (
+            "fn update(first: &mut i64, second: &mut i64) -> unit { *first = 1; *second = 2; } fn main() -> i64 { let value = 0; const reference: &mut i64 = &mut value; update(reference, reference); 0 }",
+            "mutable-reference-duplicate-call-argument",
+            "overlapping mutable references cannot be passed to the same call",
+        ),
+        (
+            "fn main() -> i64 { let update: fn(&mut i64, &mut i64) -> unit = fn(first: &mut i64, second: &mut i64) -> unit { *first = 1; *second = 2; }; let value = 0; const reference: &mut i64 = &mut value; update(reference, reference); 0 }",
+            "mutable-reference-duplicate-indirect-call-argument",
+            "overlapping mutable references cannot be passed to the same call",
+        ),
+        (
+            "fn update(first: &mut i64, second: &mut i64) -> unit { *first = 1; *second = 2; } fn forward(value: &mut i64) -> unit { update(value, value); } fn main() -> i64 { let value = 0; const reference: &mut i64 = &mut value; forward(reference); 0 }",
+            "mutable-reference-forwarded-duplicate-arguments",
+            "overlapping mutable references cannot be passed to the same call",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn mutable_reference_calls_allow_disjoint_origins_and_reuse_afterward() {
+    let result = compile_and_run(
+        r#"
+        fn update_both(first: &mut i64, second: &mut i64) -> unit {
+            *first = 20;
+            *second = 22;
+        }
+
+        fn main() -> i64 {
+            let first = 0;
+            let second = 0;
+            const first_ref: &mut i64 = &mut first;
+            const second_ref: &mut i64 = &mut second;
+            update_both(first_ref, second_ref);
+            *first_ref = *first_ref + 1;
+            *second_ref = *second_ref + 1;
+            *first_ref + *second_ref - 44
+        }
+        "#,
+        "mutable-reference-disjoint-call-and-reuse",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn mutable_borrows_are_attached_to_lexical_bindings_not_shadowed_names() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let value = 40;
+            if true {
+                const reference: &mut i64 = &mut value;
+                if true {
+                    let value = 1;
+                    value - 1
+                } else {
+                    0
+                };
+                *reference = 42;
+                0
+            } else {
+                0
+            };
+            value - 42
+        }
+        "#,
+        "mutable-reference-shadowed-binding",
+    );
+    assert_eq!(result.status.code(), Some(0));
 }
 
 #[test]

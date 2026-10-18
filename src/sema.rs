@@ -47,11 +47,78 @@ struct Signature {
     return_type: ValueType,
 }
 
+/// A place currently held by a mutable safe reference. The root identifies a
+/// particular lexical binding, not just its spelling, and projections retain
+/// enough structure to support precise overlap checks as borrowing expands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BorrowPlace {
+    root: BorrowRoot,
+    projections: Vec<BorrowProjection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MutableReferenceOrigin {
+    Place(BorrowPlace),
+    Unknown,
+}
+
+impl MutableReferenceOrigin {
+    fn overlaps(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Place(left), Self::Place(right)) => left.overlaps(right),
+            // Function parameters may alias caller-provided places. Keep those
+            // origins conservative even when their parameter names differ.
+            _ => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BorrowRoot {
+    scope_index: usize,
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BorrowProjection {
+    Field(String),
+    Index(Option<i64>),
+}
+
+impl BorrowPlace {
+    fn overlaps(&self, other: &Self) -> bool {
+        if self.root != other.root {
+            return false;
+        }
+
+        for (left, right) in self.projections.iter().zip(&other.projections) {
+            match (left, right) {
+                (BorrowProjection::Field(left), BorrowProjection::Field(right))
+                    if left == right => {}
+                (BorrowProjection::Index(Some(left)), BorrowProjection::Index(Some(right)))
+                    if left == right => {}
+                (BorrowProjection::Field(_), BorrowProjection::Field(_))
+                | (BorrowProjection::Index(Some(_)), BorrowProjection::Index(Some(_))) => {
+                    return false;
+                }
+                // An unknown index, or different projection kinds, may refer to
+                // the same memory. Remain conservative in those cases.
+                _ => return true,
+            }
+        }
+
+        // A place overlaps any of its descendants (for example `point` and
+        // `point.x`).
+        true
+    }
+}
+
 struct Checker {
     signatures: HashMap<String, Signature>,
     scopes: Vec<HashMap<String, ValueType>>,
     immutable_scopes: Vec<std::collections::HashSet<String>>,
-    mutable_borrows: Vec<std::collections::HashSet<String>>,
+    mutable_borrows: Vec<Vec<BorrowPlace>>,
+    mutable_reference_origins: Vec<HashMap<String, MutableReferenceOrigin>>,
     loop_scopes: Vec<std::collections::HashSet<String>>,
     loop_contexts: Vec<LoopContext>,
     current_return_type: ValueType,
@@ -95,6 +162,7 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         scopes: Vec::new(),
         immutable_scopes: Vec::new(),
         mutable_borrows: Vec::new(),
+        mutable_reference_origins: Vec::new(),
         loop_scopes: Vec::new(),
         loop_contexts: Vec::new(),
         current_return_type: ValueType::Unit,
@@ -152,3 +220,56 @@ mod statements;
 mod types;
 
 use types::{assignment_root, at, span_of_expr};
+
+#[cfg(test)]
+mod borrow_place_tests {
+    use super::{BorrowPlace, BorrowProjection, BorrowRoot};
+
+    fn place(name: &str, projections: Vec<BorrowProjection>) -> BorrowPlace {
+        BorrowPlace {
+            root: BorrowRoot {
+                scope_index: 0,
+                name: name.to_owned(),
+            },
+            projections,
+        }
+    }
+
+    #[test]
+    fn place_overlap_distinguishes_disjoint_fields_and_constant_indices() {
+        assert!(
+            !place("point", vec![BorrowProjection::Field("x".into())])
+                .overlaps(&place("point", vec![BorrowProjection::Field("y".into())]))
+        );
+        assert!(
+            !place("values", vec![BorrowProjection::Index(Some(0))])
+                .overlaps(&place("values", vec![BorrowProjection::Index(Some(1))]))
+        );
+    }
+
+    #[test]
+    fn place_overlap_is_conservative_for_unknown_or_parent_projections() {
+        assert!(
+            place("values", vec![BorrowProjection::Index(None)])
+                .overlaps(&place("values", vec![BorrowProjection::Index(Some(1))]))
+        );
+        assert!(
+            place("point", Vec::new())
+                .overlaps(&place("point", vec![BorrowProjection::Field("x".into())]))
+        );
+        assert!(!place("point", Vec::new()).overlaps(&place("other", Vec::new())));
+    }
+
+    #[test]
+    fn shadowed_names_have_distinct_borrow_roots() {
+        let outer = place("value", Vec::new());
+        let inner = BorrowPlace {
+            root: BorrowRoot {
+                scope_index: 1,
+                name: "value".into(),
+            },
+            projections: Vec::new(),
+        };
+        assert!(!outer.overlaps(&inner));
+    }
+}
