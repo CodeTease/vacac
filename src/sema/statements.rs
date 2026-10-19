@@ -8,6 +8,7 @@ impl Checker {
         function_body: bool,
     ) -> Result<bool, Diagnostic> {
         self.scopes.push(HashMap::new());
+        let exited_scope = self.scopes.len() - 1;
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
         self.mutable_borrows.push(Vec::new());
@@ -26,6 +27,12 @@ impl Checker {
                 self.check_expr(tail, false)?
             };
             if function_body {
+                if matches!(
+                    tail_type,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
+                    self.validate_return_provenance(tail, span_of_expr(tail))?;
+                }
                 self.expect_type(
                     tail_type,
                     return_type,
@@ -44,6 +51,8 @@ impl Checker {
         self.mutable_borrows.pop();
         self.shared_borrows.pop();
         self.mutable_reference_origins.pop();
+        self.reference_origins
+            .retain(|(index, _), _| *index < exited_scope);
         Ok(returns)
     }
 
@@ -60,7 +69,11 @@ impl Checker {
                 immutable,
                 span,
             } => {
-                if matches!(ty, Some(Type::Reference(_) | Type::MutableReference(_))) && !*immutable
+                let current_scope_index = self.scopes.len() - 1;
+                if matches!(
+                    ty,
+                    Some(Type::Reference(_, _) | Type::MutableReference(_, _))
+                ) && !*immutable
                 {
                     return Err(at(*span, "reference bindings must be immutable"));
                 }
@@ -202,6 +215,33 @@ impl Checker {
                 let mut bindings = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 self.check_pattern(pattern, binding_type, *span, &mut bindings, &mut seen)?;
+                if matches!(
+                    binding_type,
+                    ValueType::Reference(_) | ValueType::MutableReference(_)
+                ) {
+                    let origin = self.reference_origin(value).unwrap_or_else(|| {
+                        if let Expr::Call { name, args, .. } = value
+                            && let Some(signature) = self
+                                .find_function_name(name)
+                                .and_then(|name| self.signatures.get(&name))
+                            && let Some(lifetime) = signature.return_lifetime.as_ref()
+                            && let Some(index) = signature
+                                .param_lifetimes
+                                .iter()
+                                .position(|parameter| parameter.as_ref() == Some(lifetime))
+                            && let Some(argument) = args.get(index)
+                        {
+                            self.reference_origin(argument)
+                                .unwrap_or(ReferenceProvenance::Local)
+                        } else {
+                            ReferenceProvenance::Local
+                        }
+                    });
+                    for (name, _) in &bindings {
+                        self.reference_origins
+                            .insert((current_scope_index, name.clone()), origin.clone());
+                    }
+                }
                 if let Some((name, _)) = bindings
                     .iter()
                     .find(|(name, _)| self.scopes.last().unwrap().contains_key(name))
@@ -567,7 +607,9 @@ impl Checker {
                         value_type,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
                     ) {
-                        return Err(at(*span, "references cannot escape through returns"));
+                        if self.return_lifetime.is_some() {
+                            self.validate_return_provenance(value, *span)?;
+                        }
                     }
                     self.expect_type(value_type, return_type, span_of_expr(value), "return value")?;
                 } else if return_type != ValueType::Unit {

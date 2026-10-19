@@ -198,17 +198,50 @@ impl Checker {
                 .map(|param| self.resolve_type(&param.ty, param.span))
                 .collect::<Result<_, _>>()?;
             let return_type = self.resolve_type(&function.return_type, function.span)?;
+            let return_lifetime = declared_reference_lifetime(&function.return_type);
+            let param_lifetimes = function
+                .params
+                .iter()
+                .map(|param| declared_reference_lifetime(&param.ty))
+                .collect::<Vec<_>>();
             if matches!(
                 return_type,
                 ValueType::Reference(_) | ValueType::MutableReference(_)
             ) {
-                return Err(at(function.span, "functions cannot return references"));
+                if matches!(return_type, ValueType::MutableReference(_)) {
+                    return Err(at(function.span, "functions cannot return references"));
+                }
+                let Some(lifetime) = return_lifetime.as_ref() else {
+                    return Err(at(
+                        function.span,
+                        "functions returning references must specify a named return lifetime",
+                    ));
+                };
+                if !function.lifetime_params.contains(lifetime) {
+                    return Err(at(
+                        function.span,
+                        format!("undeclared return lifetime `'{lifetime}`"),
+                    ));
+                }
+                if !param_lifetimes
+                    .iter()
+                    .any(|param| param.as_ref() == Some(lifetime))
+                {
+                    return Err(at(
+                        function.span,
+                        format!(
+                            "return lifetime `'{lifetime}` must appear on a reference parameter"
+                        ),
+                    ));
+                }
             }
             self.signatures.insert(
                 function.name.clone(),
                 Signature {
                     params,
                     return_type,
+                    param_lifetimes,
+                    return_lifetime,
                 },
             );
             visibility.insert(
@@ -338,6 +371,8 @@ impl Checker {
                 Signature {
                     params,
                     return_type,
+                    param_lifetimes: vec![None; function.params.len()],
+                    return_lifetime: None,
                 },
             );
             visibility.insert(
@@ -373,6 +408,8 @@ impl Checker {
             Signature {
                 params: vec![ValueType::I64],
                 return_type: ValueType::Unit,
+                param_lifetimes: vec![None],
+                return_lifetime: None,
             },
         );
         self.signatures.insert(
@@ -380,6 +417,8 @@ impl Checker {
             Signature {
                 params: vec![ValueType::F64],
                 return_type: ValueType::Unit,
+                param_lifetimes: vec![None],
+                return_lifetime: None,
             },
         );
         self.signatures.insert(
@@ -387,6 +426,8 @@ impl Checker {
             Signature {
                 params: vec![ValueType::F32],
                 return_type: ValueType::Unit,
+                param_lifetimes: vec![None],
+                return_lifetime: None,
             },
         );
         for name in ["print", "println"] {
@@ -395,6 +436,8 @@ impl Checker {
                 Signature {
                     params: vec![ValueType::Str],
                     return_type: ValueType::Unit,
+                    param_lifetimes: vec![None],
+                    return_lifetime: None,
                 },
             );
         }
@@ -403,6 +446,8 @@ impl Checker {
             Signature {
                 params: vec![],
                 return_type: ValueType::I64,
+                param_lifetimes: Vec::new(),
+                return_lifetime: None,
             },
         );
         Ok(())
@@ -620,7 +665,7 @@ impl Checker {
         self.immutable_scopes.clear();
         self.mutable_borrows.clear();
         self.shared_borrows.clear();
-        self.shared_borrows.clear();
+        self.reference_origins.clear();
         self.mutable_reference_origins.clear();
         self.loop_scopes.clear();
         self.loop_contexts.clear();
@@ -630,9 +675,16 @@ impl Checker {
         self.mutable_borrows.push(Vec::new());
         self.shared_borrows.push(Vec::new());
         self.mutable_reference_origins.push(HashMap::new());
+        let declared_signature = self.signatures.get(&function.name).cloned();
         for param in &function.params {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
+            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
+                self.reference_origins.insert(
+                    (0, param.name.clone()),
+                    ReferenceProvenance::Parameter(declared_reference_lifetime(&param.ty)),
+                );
+            }
             if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                 self.immutable_scopes[0].insert(param.name.clone());
             }
@@ -642,6 +694,7 @@ impl Checker {
             }
         }
         let return_type = self.resolve_type(&function.return_type, function.span)?;
+        self.return_lifetime = declared_signature.and_then(|signature| signature.return_lifetime);
         self.current_return_type = return_type;
         let returns = self.check_block(&function.body, return_type, true)?;
         if return_type != ValueType::Unit && !returns {
@@ -657,4 +710,11 @@ impl Checker {
     }
 
     // Returns true if every path through this block returns from the function.
+}
+
+fn declared_reference_lifetime(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Reference(_, lifetime) | Type::MutableReference(_, lifetime) => lifetime.clone(),
+        _ => None,
+    }
 }

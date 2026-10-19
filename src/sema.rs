@@ -45,6 +45,14 @@ struct VectorShape {
 struct Signature {
     params: Vec<ValueType>,
     return_type: ValueType,
+    param_lifetimes: Vec<Option<String>>,
+    return_lifetime: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReferenceProvenance {
+    Parameter(Option<String>),
+    Local,
 }
 
 /// A place borrowed by a safe reference. The root identifies a particular
@@ -119,10 +127,12 @@ struct Checker {
     immutable_scopes: Vec<std::collections::HashSet<String>>,
     mutable_borrows: Vec<Vec<BorrowPlace>>,
     shared_borrows: Vec<Vec<BorrowPlace>>,
+    reference_origins: HashMap<(usize, String), ReferenceProvenance>,
     mutable_reference_origins: Vec<HashMap<String, MutableReferenceOrigin>>,
     loop_scopes: Vec<std::collections::HashSet<String>>,
     loop_contexts: Vec<LoopContext>,
     current_return_type: ValueType,
+    return_lifetime: Option<String>,
     enum_ids: HashMap<String, usize>,
     enums: Vec<EnumDecl>,
     struct_ids: HashMap<String, usize>,
@@ -165,10 +175,12 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         immutable_scopes: Vec::new(),
         mutable_borrows: Vec::new(),
         shared_borrows: Vec::new(),
+        reference_origins: HashMap::new(),
         mutable_reference_origins: Vec::new(),
         loop_scopes: Vec::new(),
         loop_contexts: Vec::new(),
         current_return_type: ValueType::Unit,
+        return_lifetime: None,
         enum_ids: HashMap::new(),
         enums: Vec::new(),
         struct_ids: HashMap::new(),

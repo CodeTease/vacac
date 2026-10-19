@@ -29,6 +29,7 @@ pub struct Parser {
     parsing_match_value: bool,
     type_close_debt: usize,
     type_parameters: HashSet<String>,
+    lifetime_parameters: HashSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -63,6 +64,7 @@ impl Parser {
             parsing_match_value: false,
             type_close_debt: 0,
             type_parameters: HashSet::new(),
+            lifetime_parameters: HashSet::new(),
             diagnostics: Vec::new(),
         }
     }
@@ -218,6 +220,7 @@ impl Parser {
             if is_candidate {
                 self.current = index;
                 self.type_parameters.clear();
+                self.lifetime_parameters.clear();
                 self.type_close_debt = 0;
                 return;
             }
@@ -235,6 +238,7 @@ impl Parser {
 
         self.current = self.tokens.len().saturating_sub(1);
         self.type_parameters.clear();
+        self.lifetime_parameters.clear();
         self.type_close_debt = 0;
     }
 

@@ -29,8 +29,8 @@ pub(crate) fn validate_aggregate_cycles(
             // A vector stores its elements behind a heap allocation, so it breaks
             // any otherwise by-value aggregate cycle.
             Type::Vector(_)
-            | Type::Reference(_)
-            | Type::MutableReference(_)
+            | Type::Reference(_, _)
+            | Type::MutableReference(_, _)
             | Type::RawPointer(_, _)
             | Type::Function(_, _)
             | Type::I64

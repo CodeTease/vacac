@@ -238,7 +238,7 @@ impl<'ctx> Codegen<'ctx> {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
-            Type::Reference(element) => {
+            Type::Reference(element, _) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
                     return Err(Diagnostic::at(
@@ -265,7 +265,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 self.reference_type(element)
             }
-            Type::MutableReference(element) => {
+            Type::MutableReference(element, _) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit
                     || matches!(
@@ -797,7 +797,7 @@ impl<'ctx> Codegen<'ctx> {
                             format!("struct fields cannot have type `unit`"),
                         ));
                     }
-                    Type::Reference(_) | Type::MutableReference(_) => {
+                    Type::Reference(_, _) | Type::MutableReference(_, _) => {
                         return Err(Diagnostic::at(
                             field.span.into(),
                             format!("references cannot be stored in structs"),
@@ -912,10 +912,29 @@ impl<'ctx> Codegen<'ctx> {
                 ret,
                 ValueType::Reference(_) | ValueType::MutableReference(_)
             ) {
-                return Err(Diagnostic::at(
-                    function.span.into(),
-                    format!("functions cannot return references"),
-                ));
+                if matches!(ret, ValueType::MutableReference(_)) {
+                    return Err(Diagnostic::at(
+                        function.span.into(),
+                        "functions cannot return references",
+                    ));
+                }
+                let lifetime =
+                    codegen_reference_lifetime(&function.return_type).ok_or_else(|| {
+                        Diagnostic::at(
+                            function.span.into(),
+                            "functions returning references must specify a named return lifetime",
+                        )
+                    })?;
+                if !function.lifetime_params.contains(&lifetime)
+                    || !function.params.iter().any(|param| {
+                        codegen_reference_lifetime(&param.ty).as_deref() == Some(&lifetime)
+                    })
+                {
+                    return Err(Diagnostic::at(
+                        function.span.into(),
+                        "returned reference lifetime must be declared and appear on a reference parameter",
+                    ));
+                }
             }
             let llvm_name = if function.name == "main" {
                 "vaca_main"
@@ -1056,5 +1075,12 @@ impl<'ctx> Codegen<'ctx> {
         self.signatures
             .insert("read_i64".into(), (vec![], ValueType::I64));
         Ok(())
+    }
+}
+
+fn codegen_reference_lifetime(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Reference(_, lifetime) | Type::MutableReference(_, lifetime) => lifetime.clone(),
+        _ => None,
     }
 }

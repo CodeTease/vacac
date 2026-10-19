@@ -10,8 +10,8 @@ pub enum Type {
     Function(Vec<Type>, Box<Type>),
     Array(Box<Type>, u32),
     Vector(Box<Type>),
-    Reference(Box<Type>),
-    MutableReference(Box<Type>),
+    Reference(Box<Type>, Option<String>),
+    MutableReference(Box<Type>, Option<String>),
     RawPointer(Box<Type>, bool),
     Named(String),
     Applied(String, Vec<Type>),
@@ -112,6 +112,7 @@ pub struct EnumVariant {
 pub struct Function {
     pub name: String,
     pub generic_params: Vec<String>,
+    pub lifetime_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Block,

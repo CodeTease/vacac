@@ -1,6 +1,63 @@
 use super::*;
 
 impl Checker {
+    pub(super) fn reference_origin(&self, expr: &Expr) -> Option<ReferenceProvenance> {
+        match expr {
+            Expr::Variable(name, _) => self
+                .lookup_local_with_scope(name)
+                .and_then(|(scope, _)| self.reference_origins.get(&(scope, name.clone())).cloned()),
+            Expr::Unary {
+                op: UnaryOp::Borrow | UnaryOp::BorrowMut,
+                ..
+            } => Some(ReferenceProvenance::Local),
+            Expr::Call { name, args, .. } => {
+                let name = self.find_function_name(name)?;
+                let signature = self.signatures.get(&name)?;
+                let return_lifetime = signature.return_lifetime.as_ref()?;
+                let argument_index = signature
+                    .param_lifetimes
+                    .iter()
+                    .position(|lifetime| lifetime.as_ref() == Some(return_lifetime))?;
+                self.reference_origin(args.get(argument_index)?)
+                    .or_else(|| Some(ReferenceProvenance::Local))
+            }
+            Expr::Unary {
+                op: UnaryOp::Dereference,
+                value,
+                ..
+            } => self.reference_origin(value),
+            _ => None,
+        }
+    }
+
+    pub(super) fn validate_return_provenance(
+        &self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let expected = self.return_lifetime.as_ref().ok_or_else(|| {
+            at(
+                span,
+                "functions cannot return references without a named lifetime",
+            )
+        })?;
+        match self.reference_origin(expr) {
+            Some(ReferenceProvenance::Parameter(Some(actual))) if &actual == expected => Ok(()),
+            Some(ReferenceProvenance::Parameter(Some(actual))) => Err(at(
+                span,
+                format!("returned reference has lifetime `'{actual}`, expected `'{expected}`"),
+            )),
+            Some(ReferenceProvenance::Parameter(None)) => Err(at(
+                span,
+                "returned reference parameter must declare a lifetime",
+            )),
+            Some(ReferenceProvenance::Local) | None => Err(at(
+                span,
+                "cannot return a reference that does not originate from a parameter with the declared lifetime",
+            )),
+        }
+    }
+
     pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, Diagnostic> {
         Ok(match ty {
             Type::I64 => ValueType::I64,
@@ -9,7 +66,7 @@ impl Checker {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
-            Type::Reference(element) => {
+            Type::Reference(element, _) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
                     return Err(at(span, "references cannot target `unit`"));
@@ -30,7 +87,7 @@ impl Checker {
                 }
                 self.reference_type(element)
             }
-            Type::MutableReference(element) => {
+            Type::MutableReference(element, _) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
                     return Err(at(span, "references cannot target `unit`"));
@@ -330,10 +387,10 @@ impl Checker {
                 }
                 ArrayElementType::Tuple(self.tuple_shape(types))
             }
-            Type::Reference(_) => {
+            Type::Reference(_, _) => {
                 return Err(at(span, "references cannot be stored in arrays or vectors"));
             }
-            Type::MutableReference(_) => {
+            Type::MutableReference(_, _) => {
                 return Err(at(span, "references cannot be stored in arrays or vectors"));
             }
             Type::RawPointer(element, mutable) => {
@@ -1008,12 +1065,14 @@ impl Checker {
             ValueType::Vector(index) => Type::Vector(Box::new(
                 self.type_from_element(self.vector_shapes[index].element),
             )),
-            ValueType::Reference(index) => {
-                Type::Reference(Box::new(self.type_from_value(self.reference_types[index])))
-            }
-            ValueType::MutableReference(index) => Type::MutableReference(Box::new(
-                self.type_from_value(self.mutable_reference_types[index]),
-            )),
+            ValueType::Reference(index) => Type::Reference(
+                Box::new(self.type_from_value(self.reference_types[index])),
+                None,
+            ),
+            ValueType::MutableReference(index) => Type::MutableReference(
+                Box::new(self.type_from_value(self.mutable_reference_types[index])),
+                None,
+            ),
             ValueType::RawPointer(index) => {
                 let (target, mutable) = self.raw_pointer_types[index];
                 Type::RawPointer(Box::new(self.type_from_value(target)), mutable)

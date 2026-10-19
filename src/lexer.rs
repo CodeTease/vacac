@@ -67,6 +67,7 @@ pub enum TokenKind {
     ShiftRight,
     AndAnd,
     OrOr,
+    Lifetime(String),
     Eof,
 }
 
@@ -87,6 +88,7 @@ impl Token {
             TokenKind::Float32(n) => format!("f32 floating-point literal `{n}`"),
             TokenKind::Float(n) => format!("floating-point literal `{n}`"),
             TokenKind::StringLit(s) => format!("string literal {s:?}"),
+            TokenKind::Lifetime(name) => format!("lifetime `'{name}`"),
             kind => format!("`{}`", token_name(kind)),
         }
     }
@@ -154,6 +156,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
         TokenKind::ShiftRight => ">>",
         TokenKind::AndAnd => "&&",
         TokenKind::OrOr => "||",
+        TokenKind::Lifetime(_) => "lifetime",
         TokenKind::Eof => "end of file",
         TokenKind::Ident(_) => "identifier",
         TokenKind::Integer(_) => "integer",
@@ -232,7 +235,27 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
 
         let start_line = line;
         let start_column = column;
-        let token = if b.is_ascii_alphabetic() || b == b'_' {
+        let token = if b == b'\'' {
+            i += 1;
+            column += 1;
+            let start = i;
+            if i >= bytes.len() || !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+                return Err(Diagnostic::at(
+                    SourceSpan {
+                        line: start_line,
+                        column: start_column,
+                        end_column: column,
+                        file: source_id,
+                    },
+                    "expected a lifetime name after `'`",
+                ));
+            }
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+                column += 1;
+            }
+            TokenKind::Lifetime(input[start..i].to_owned())
+        } else if b.is_ascii_alphabetic() || b == b'_' {
             let start = i;
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                 i += 1;

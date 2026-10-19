@@ -29,10 +29,16 @@ impl Specializer {
             (Type::Vector(pattern), Type::Vector(actual)) => {
                 self.unify(pattern, actual, substitutions, span)
             }
-            (Type::Reference(pattern), Type::Reference(actual)) => {
+            (
+                Type::Reference(pattern, pattern_lifetime),
+                Type::Reference(actual, actual_lifetime),
+            ) if pattern_lifetime == actual_lifetime => {
                 self.unify(pattern, actual, substitutions, span)
             }
-            (Type::MutableReference(pattern), Type::MutableReference(actual)) => {
+            (
+                Type::MutableReference(pattern, pattern_lifetime),
+                Type::MutableReference(actual, actual_lifetime),
+            ) if pattern_lifetime == actual_lifetime => {
                 self.unify(pattern, actual, substitutions, span)
             }
             (Type::RawPointer(pattern, pattern_mut), Type::RawPointer(actual, actual_mut))
@@ -248,14 +254,14 @@ impl Specializer {
                 }
             }
             Expr::Unary { op, value, .. } => match op {
-                UnaryOp::Borrow => Some(Type::Reference(Box::new(self.infer_expr_type_inner(
-                    value,
-                    variables,
-                    visiting_globals,
-                )?))),
-                UnaryOp::BorrowMut => Some(Type::MutableReference(Box::new(
-                    self.infer_expr_type_inner(value, variables, visiting_globals)?,
-                ))),
+                UnaryOp::Borrow => Some(Type::Reference(
+                    Box::new(self.infer_expr_type_inner(value, variables, visiting_globals)?),
+                    None,
+                )),
+                UnaryOp::BorrowMut => Some(Type::MutableReference(
+                    Box::new(self.infer_expr_type_inner(value, variables, visiting_globals)?),
+                    None,
+                )),
                 UnaryOp::RawBorrowConst => Some(Type::RawPointer(
                     Box::new(self.infer_expr_type_inner(value, variables, visiting_globals)?),
                     false,
@@ -266,8 +272,8 @@ impl Specializer {
                 )),
                 UnaryOp::Dereference => {
                     match self.infer_expr_type_inner(value, variables, visiting_globals)? {
-                        Type::Reference(element) => Some(*element),
-                        Type::MutableReference(element) | Type::RawPointer(element, _) => {
+                        Type::Reference(element, _) => Some(*element),
+                        Type::MutableReference(element, _) | Type::RawPointer(element, _) => {
                             Some(*element)
                         }
                         _ => None,
@@ -375,8 +381,8 @@ pub(super) fn type_key(ty: &Type) -> String {
             type_key(result)
         ),
         Type::Vector(element) => format!("Vec<{}>", type_key(element)),
-        Type::Reference(element) => format!("&{}", type_key(element)),
-        Type::MutableReference(element) => format!("&mut {}", type_key(element)),
+        Type::Reference(element, _) => format!("&{}", type_key(element)),
+        Type::MutableReference(element, _) => format!("&mut {}", type_key(element)),
         Type::RawPointer(element, mutable) => format!(
             "*{} {}",
             if *mutable { "mut" } else { "const" },

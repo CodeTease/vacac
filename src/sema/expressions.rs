@@ -555,7 +555,7 @@ impl Checker {
                         ),
                     ));
                 }
-                let params = signature.params;
+                let params = signature.params.clone();
                 let return_type = signature.return_type;
                 self.reject_overlapping_mutable_reference_arguments(args, &params)?;
                 for (index, (arg, expected)) in args.iter().zip(params).enumerate() {

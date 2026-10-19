@@ -382,11 +382,11 @@ impl<'ctx> Codegen<'ctx> {
                 span.into(),
                 format!("array elements cannot have type `unit`"),
             )),
-            Type::Reference(_) => Err(Diagnostic::at(
+            Type::Reference(_, _) => Err(Diagnostic::at(
                 span.into(),
                 format!("references cannot be stored in arrays or vectors"),
             )),
-            Type::MutableReference(_) => Err(Diagnostic::at(
+            Type::MutableReference(_, _) => Err(Diagnostic::at(
                 span.into(),
                 format!("references cannot be stored in arrays or vectors"),
             )),

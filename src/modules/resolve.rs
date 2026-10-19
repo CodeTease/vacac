@@ -280,8 +280,8 @@ fn resolve_type(
         crate::ast::Type::Array(element, _) | crate::ast::Type::Vector(element) => {
             resolve_type(element, module, span, symbols)?
         }
-        crate::ast::Type::Reference(element)
-        | crate::ast::Type::MutableReference(element)
+        crate::ast::Type::Reference(element, _)
+        | crate::ast::Type::MutableReference(element, _)
         | crate::ast::Type::RawPointer(element, _) => resolve_type(element, module, span, symbols)?,
         crate::ast::Type::Tuple(elements) => {
             for element in elements {

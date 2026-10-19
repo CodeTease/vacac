@@ -645,6 +645,7 @@ impl<'ctx> Codegen<'ctx> {
                 let synthetic = Function {
                     name: name.clone(),
                     generic_params: Vec::new(),
+                    lifetime_params: Vec::new(),
                     params: params.clone(),
                     return_type: return_type.clone(),
                     body: (**body).clone(),
@@ -658,15 +659,6 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|param| self.resolve_type(&param.ty, param.span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.resolve_type(&synthetic.return_type, synthetic.span)?;
-                if matches!(
-                    ret,
-                    ValueType::Reference(_) | ValueType::MutableReference(_)
-                ) {
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        format!("lambdas cannot return references"),
-                    ));
-                }
                 let capture_names = self
                     .lambda_captures
                     .get(&(span.file, span.line, span.column))

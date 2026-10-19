@@ -207,10 +207,15 @@ temporary. Shared references can borrow either `let` or `const` locals, includin
 fields and fixed-array elements. Overlapping shared loans are allowed, but
 prevent overlapping writes and mutable borrows until the lexical block ends.
 Constant field names and constant array indices are tracked precisely; unknown
-indices conservatively overlap. Vector elements remain ineligible. Last-use loan
-ending and reference propagation are deferred. References cannot be returned,
-captured by a closure, stored in aggregates/globals, or escape through
-expressions.
+indices conservatively overlap. Vector elements remain ineligible. Named
+lifetimes can be declared on function signatures (`fn identity<'a>(value:
+&'a i64) -> &'a i64`) to return a reference with the same lifetime as an
+input parameter. Reference returns are accepted only when every returned path
+can be traced back to a parameter with the declared lifetime; returning a local
+borrow is rejected. References still cannot be captured by a closure, stored in
+aggregates/globals, or escape through expressions. Last-use loan ending (NLL)
+and broader reference propagation are deferred; loans remain conservatively
+lexical.
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
 their target and mutability in Vaca's type checker, are not implicitly

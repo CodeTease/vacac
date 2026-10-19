@@ -124,11 +124,24 @@ impl Parser {
     pub(super) fn parse_function(&mut self, is_public: bool) -> Result<Function, Diagnostic> {
         let start = self.consume(&TokenKind::Fn, "`fn`")?;
         let name = self.take_ident("function name")?;
-        let generic_params = self.parse_generic_parameters()?;
-        let previous_type_parameters = std::mem::replace(
-            &mut self.type_parameters,
-            generic_params.iter().cloned().collect(),
-        );
+        let (generic_params, lifetime_params) = self.parse_function_generics()?;
+        let type_parameter_names: HashSet<String> = generic_params.iter().cloned().collect();
+        if let Some(duplicate) = lifetime_params
+            .iter()
+            .find(|name| type_parameter_names.contains(*name))
+        {
+            return Err(Diagnostic::at(
+                Span::from(&start).into(),
+                format!("`{duplicate}` cannot be both a type and lifetime parameter"),
+            ));
+        }
+        let mut all_type_parameters = self.type_parameters.clone();
+        all_type_parameters.extend(type_parameter_names);
+        let previous_type_parameters =
+            std::mem::replace(&mut self.type_parameters, all_type_parameters);
+        let declared_lifetimes: HashSet<String> = lifetime_params.iter().cloned().collect();
+        let previous_lifetimes =
+            std::mem::replace(&mut self.lifetime_parameters, declared_lifetimes.clone());
         self.consume(&TokenKind::LParen, "`(`")?;
         let mut params = Vec::new();
         if !self.at(&TokenKind::RParen) {
@@ -137,6 +150,7 @@ impl Parser {
                 let param_span = Span::from(self.previous());
                 self.consume(&TokenKind::Colon, "`:`")?;
                 let ty = self.parse_type()?;
+                self.validate_lifetime_use(&ty, &declared_lifetimes, param_span)?;
                 params.push(Param {
                     name: param_name,
                     ty,
@@ -153,11 +167,14 @@ impl Parser {
         self.consume(&TokenKind::RParen, "`)`")?;
         self.consume(&TokenKind::Arrow, "`->`")?;
         let return_type = self.parse_type()?;
+        self.validate_lifetime_use(&return_type, &declared_lifetimes, Span::from(&start))?;
         let body = self.parse_block()?;
         self.type_parameters = previous_type_parameters;
+        self.lifetime_parameters = previous_lifetimes;
         Ok(Function {
             name,
             generic_params,
+            lifetime_params,
             params,
             return_type,
             body,
@@ -217,11 +234,27 @@ impl Parser {
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
         if self.take(&TokenKind::Amp) {
+            let lifetime = if let TokenKind::Lifetime(name) = &self.peek().kind {
+                if !self.lifetime_parameters.contains(name) {
+                    return Err(Diagnostic::at(
+                        Span::from(self.peek()).into(),
+                        format!("undeclared lifetime `'{name}`"),
+                    ));
+                }
+                let name = name.clone();
+                self.advance();
+                Some(name)
+            } else {
+                None
+            };
             if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "mut") {
                 self.advance();
-                Ok(Type::MutableReference(Box::new(self.parse_type()?)))
+                Ok(Type::MutableReference(
+                    Box::new(self.parse_type()?),
+                    lifetime,
+                ))
             } else {
-                Ok(Type::Reference(Box::new(self.parse_type()?)))
+                Ok(Type::Reference(Box::new(self.parse_type()?), lifetime))
             }
         } else if self.take(&TokenKind::Star) {
             let mutable = if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "mut") {
@@ -346,6 +379,51 @@ impl Parser {
         }
     }
 
+    fn validate_lifetime_use(
+        &self,
+        ty: &Type,
+        declared: &HashSet<String>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        fn visit(ty: &Type, declared: &HashSet<String>, span: Span) -> Result<(), Diagnostic> {
+            match ty {
+                Type::Reference(element, lifetime) | Type::MutableReference(element, lifetime) => {
+                    if let Some(lifetime) = lifetime {
+                        if !declared.contains(lifetime) {
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                format!("undeclared lifetime `'{lifetime}`"),
+                            ));
+                        }
+                    } else if !declared.is_empty() {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "references in lifetime-generic function signatures must name a lifetime",
+                        ));
+                    }
+                    visit(element, declared, span)
+                }
+                Type::Array(element, _) | Type::Vector(element) | Type::RawPointer(element, _) => {
+                    visit(element, declared, span)
+                }
+                Type::Tuple(elements) | Type::Applied(_, elements) => {
+                    for element in elements {
+                        visit(element, declared, span)?;
+                    }
+                    Ok(())
+                }
+                Type::Function(params, result) => {
+                    for param in params {
+                        visit(param, declared, span)?;
+                    }
+                    visit(result, declared, span)
+                }
+                _ => Ok(()),
+            }
+        }
+        visit(ty, declared, span)
+    }
+
     fn parse_generic_parameters(&mut self) -> Result<Vec<String>, Diagnostic> {
         if !self.take(&TokenKind::Less) {
             return Ok(Vec::new());
@@ -370,5 +448,66 @@ impl Parser {
         }
         self.consume_type_greater()?;
         Ok(parameters)
+    }
+
+    fn parse_function_generics(&mut self) -> Result<(Vec<String>, Vec<String>), Diagnostic> {
+        if !self.take(&TokenKind::Less) {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut type_parameters = Vec::new();
+        let mut lifetime_parameters = Vec::new();
+        loop {
+            match self.peek().kind.clone() {
+                TokenKind::Lifetime(parameter) => {
+                    let token = self.advance().clone();
+                    if lifetime_parameters.contains(&parameter) {
+                        return Err(Diagnostic::at(
+                            Span::from(&token).into(),
+                            format!("lifetime parameter `'{parameter}` is defined more than once"),
+                        ));
+                    }
+                    lifetime_parameters.push(parameter);
+                }
+                TokenKind::Ident(parameter) => {
+                    let token = self.advance().clone();
+                    if type_parameters.contains(&parameter) {
+                        return Err(Diagnostic::at(
+                            Span::from(&token).into(),
+                            format!("generic parameter `{parameter}` is defined more than once"),
+                        ));
+                    }
+                    if lifetime_parameters.contains(&parameter) {
+                        return Err(Diagnostic::at(
+                            Span::from(&token).into(),
+                            format!("`{parameter}` cannot be both a type and lifetime parameter"),
+                        ));
+                    }
+                    type_parameters.push(parameter);
+                }
+                TokenKind::Less => {
+                    return Err(unexpected(
+                        self.peek(),
+                        "generic type parameter or named lifetime parameter such as `'a`",
+                    ));
+                }
+                _ => {
+                    return Err(unexpected(
+                        self.peek(),
+                        "generic type parameter or named lifetime parameter such as `'a`",
+                    ));
+                }
+            }
+            if !self.take(&TokenKind::Comma) {
+                break;
+            }
+            if self.at(&TokenKind::Greater) {
+                return Err(unexpected(
+                    self.peek(),
+                    "generic or lifetime parameter after `,`",
+                ));
+            }
+        }
+        self.consume_type_greater()?;
+        Ok((type_parameters, lifetime_parameters))
     }
 }

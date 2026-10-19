@@ -12,15 +12,6 @@ impl<'ctx> Codegen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(function_value);
         self.return_type = self.resolve_type(&function.return_type, function.span)?;
-        if matches!(
-            self.return_type,
-            ValueType::Reference(_) | ValueType::MutableReference(_)
-        ) {
-            return Err(Diagnostic::at(
-                function.span.into(),
-                format!("functions cannot return references"),
-            ));
-        }
         self.scopes.clear();
         self.loop_targets.clear();
         self.scopes.push(HashMap::new());

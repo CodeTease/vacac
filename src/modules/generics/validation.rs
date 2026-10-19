@@ -98,7 +98,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 known_types,
                 span,
             ),
-            Type::Reference(element) => check_type(
+            Type::Reference(element, _) => check_type(
                 element,
                 parameters,
                 generic_structs,
@@ -106,7 +106,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 known_types,
                 span,
             ),
-            Type::MutableReference(element) | Type::RawPointer(element, _) => check_type(
+            Type::MutableReference(element, _) | Type::RawPointer(element, _) => check_type(
                 element,
                 parameters,
                 generic_structs,
@@ -150,7 +150,10 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                         span,
                     )?;
                 }
-                if matches!(result.as_ref(), Type::Reference(_)) {
+                if matches!(
+                    result.as_ref(),
+                    Type::Reference(_, _) | Type::MutableReference(_, _)
+                ) {
                     return Err(Diagnostic::at(
                         span.into(),
                         "function types cannot return references",

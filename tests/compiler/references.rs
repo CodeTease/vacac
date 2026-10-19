@@ -18,6 +18,60 @@ fn immutable_local_references_can_be_passed_and_dereferenced() {
 }
 
 #[test]
+fn named_lifetimes_allow_parameter_derived_reference_returns() {
+    let result = compile_and_run(
+        r#"
+        fn identity<'a, T>(value: &'a T) -> &'a T { return value; }
+        fn forward<'a>(value: &'a i64) -> &'a i64 { return identity(value); }
+
+        fn main() -> i64 {
+            const answer: i64 = 42;
+            const reference: &i64 = forward(&answer);
+            *reference - 42
+        }
+        "#,
+        "references-named-lifetime-return",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (source, name, diagnostic) in [
+        (
+            "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; &local } fn main() -> i64 { 0 }",
+            "references-named-lifetime-local-escape",
+            "cannot return a reference that does not originate from a parameter",
+        ),
+        (
+            "fn choose<'a, 'b>(first: &'a i64, second: &'b i64) -> &'a i64 { second } fn main() -> i64 { 0 }",
+            "references-named-lifetime-wrong-origin",
+            "returned reference has lifetime `'b`, expected `'a`",
+        ),
+        (
+            "fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; &local } fn main() -> i64 { 0 }",
+            "references-named-lifetime-local-shadow-return",
+            "cannot return a reference that does not originate from a parameter",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+
+    assert_compile_error(
+        "fn choose<'a, 'b>(first: &'a i64, second: &'b i64) -> &'a i64 { const alias = second; alias } fn main() -> i64 { 0 }",
+        "references-named-lifetime-local-alias-origin",
+        "returned reference has lifetime `'b`, expected `'a`",
+    );
+    assert_compile_error(
+        "fn invalid<'a>(value: &'b i64) -> i64 { 0 } fn main() -> i64 { 0 }",
+        "references-named-lifetime-undeclared",
+        "undeclared lifetime `'b`",
+    );
+    assert_compile_error(
+        "fn missing_origin<'a>(value: &'a i64, unused: i64) -> &'a i64 { const local = 1; &local } fn main() -> i64 { 0 }",
+        "references-named-lifetime-missing-origin",
+        "cannot return a reference that does not originate from a parameter",
+    );
+}
+
+#[test]
 fn immutable_aggregate_values_can_be_borrowed() {
     let result = compile_and_run(
         r#"
@@ -209,7 +263,7 @@ fn references_reject_unsafe_or_unsupported_uses() {
         (
             "fn escape() -> &i64 { const value = 1; &value } fn main() -> i64 { 0 }",
             "references-return",
-            "functions cannot return references",
+            "functions returning references must specify a named return lifetime",
         ),
         (
             "fn main() -> i64 { const value = 1; ( &value, 2 ); 0 }",
