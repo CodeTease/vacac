@@ -782,17 +782,8 @@ impl<'ctx> Codegen<'ctx> {
                 condition,
                 then_block,
                 else_block,
-                span,
-            } => {
-                let value = self.emit_if_expression(condition, then_block, else_block)?;
-                if matches!(value.ty, ValueType::Reference(_)) {
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        format!("references cannot escape through `if` expressions"),
-                    ));
-                }
-                Ok(value)
-            }
+                span: _,
+            } => self.emit_if_expression(condition, then_block, else_block),
             Expr::Variant {
                 enum_name,
                 variant_name,
@@ -803,10 +794,10 @@ impl<'ctx> Codegen<'ctx> {
             Expr::Try { value, span } => self.emit_try(value, *span),
             Expr::Match { value, arms, span } => {
                 let value = self.emit_match(value, arms, *span)?;
-                if matches!(value.ty, ValueType::Reference(_)) {
+                if matches!(value.ty, ValueType::MutableReference(_)) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references cannot escape through match expressions"),
+                        "mutable references cannot escape through match expressions",
                     ));
                 }
                 Ok(value)

@@ -34,6 +34,24 @@ fn named_lifetimes_allow_parameter_derived_reference_returns() {
     );
     assert_eq!(result.status.code(), Some(0));
 
+    let result = compile_and_run(
+        r#"
+        fn select_if<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+            if condition { first } else { second }
+        }
+        fn select_match<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+            match condition { true => { first }, false => { second } }
+        }
+        fn main() -> i64 {
+            const first = 40;
+            const second = 42;
+            *select_if(false, &first, &second) + *select_match(true, &first, &second) - 82
+        }
+        "#,
+        "references-named-lifetime-control-flow-joins",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
     for (source, name, diagnostic) in [
         (
             "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; &local } fn main() -> i64 { 0 }",
@@ -44,6 +62,16 @@ fn named_lifetimes_allow_parameter_derived_reference_returns() {
             "fn choose<'a, 'b>(first: &'a i64, second: &'b i64) -> &'a i64 { second } fn main() -> i64 { 0 }",
             "references-named-lifetime-wrong-origin",
             "returned reference has lifetime `'b`, expected `'a`",
+        ),
+        (
+            "fn choose<'a, 'b>(condition: bool, first: &'a i64, second: &'b i64) -> &'a i64 { if condition { first } else { second } } fn main() -> i64 { 0 }",
+            "references-named-lifetime-mixed-if-origins",
+            "not all returned reference paths originate from lifetime `'a`",
+        ),
+        (
+            "fn choose<'a, 'b>(condition: bool, first: &'a i64, second: &'b i64) -> &'a i64 { match condition { true => { first }, false => { second } } } fn main() -> i64 { 0 }",
+            "references-named-lifetime-mixed-match-origins",
+            "not all returned reference paths originate from lifetime `'a`",
         ),
         (
             "fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; &local } fn main() -> i64 { 0 }",
@@ -284,6 +312,11 @@ fn references_reject_unsafe_or_unsupported_uses() {
             "fn main() -> i64 { const value = 1; if true { &value } else { &value }; 0 }",
             "references-if-escape",
             "references cannot escape through `if` expressions",
+        ),
+        (
+            "fn main() -> i64 { const value = 1; match true { true => { &value }, false => { &value } }; 0 }",
+            "references-match-escape",
+            "references cannot escape through `match` expressions",
         ),
         (
             "fn main() -> i64 { const values: Vec<i64> = vec_new(); let reference = &values; 0 }",

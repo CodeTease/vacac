@@ -53,6 +53,7 @@ struct Signature {
 enum ReferenceProvenance {
     Parameter(Option<String>),
     Local,
+    Mixed,
 }
 
 /// A place borrowed by a safe reference. The root identifies a particular
@@ -128,6 +129,7 @@ struct Checker {
     mutable_borrows: Vec<Vec<BorrowPlace>>,
     shared_borrows: Vec<Vec<BorrowPlace>>,
     reference_origins: HashMap<(usize, String), ReferenceProvenance>,
+    expression_reference_origins: HashMap<(Option<usize>, usize, usize), ReferenceProvenance>,
     mutable_reference_origins: Vec<HashMap<String, MutableReferenceOrigin>>,
     loop_scopes: Vec<std::collections::HashSet<String>>,
     loop_contexts: Vec<LoopContext>,
@@ -176,6 +178,7 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         mutable_borrows: Vec::new(),
         shared_borrows: Vec::new(),
         reference_origins: HashMap::new(),
+        expression_reference_origins: HashMap::new(),
         mutable_reference_origins: Vec::new(),
         loop_scopes: Vec::new(),
         loop_contexts: Vec::new(),

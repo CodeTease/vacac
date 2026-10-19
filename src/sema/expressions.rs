@@ -683,8 +683,8 @@ impl Checker {
                     span_of_expr(condition),
                     "if condition",
                 )?;
-                let then_type = self.check_block_result(then_block, *span)?;
-                let else_type = self.check_block_result(else_block, *span)?;
+                let (then_type, then_origin) = self.check_block_result(then_block, *span)?;
+                let (else_type, else_origin) = self.check_block_result(else_block, *span)?;
                 if then_type != else_type {
                     return Err(at(
                         *span,
@@ -698,15 +698,18 @@ impl Checker {
                 if then_type == ValueType::Unit {
                     return Err(at(*span, "`if` expression branches must produce a value"));
                 }
-                if matches!(
-                    then_type,
-                    ValueType::Reference(_) | ValueType::MutableReference(_)
-                ) {
+                if matches!(then_type, ValueType::MutableReference(_)) {
                     return Err(at(
                         *span,
-                        "references cannot escape through `if` expressions",
+                        "mutable references cannot escape through `if` expressions",
                     ));
                 }
+                self.record_reference_join(
+                    *span,
+                    then_type,
+                    vec![then_origin, else_origin],
+                    "`if`",
+                )?;
                 Ok(then_type)
             }
             Expr::Variant {

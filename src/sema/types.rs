@@ -1,6 +1,36 @@
 use super::*;
 
 impl Checker {
+    pub(super) fn record_reference_join(
+        &mut self,
+        span: Span,
+        ty: ValueType,
+        origins: Vec<ReferenceProvenance>,
+        construct: &str,
+    ) -> Result<(), Diagnostic> {
+        if !matches!(ty, ValueType::Reference(_)) {
+            return Ok(());
+        }
+        let mut origins = origins.into_iter();
+        let Some(first) = origins.next() else {
+            return Ok(());
+        };
+        let origin = if origins.all(|other| other == first) {
+            first
+        } else {
+            ReferenceProvenance::Mixed
+        };
+        if matches!(origin, ReferenceProvenance::Local) {
+            return Err(at(
+                span,
+                format!("references cannot escape through {construct} expressions"),
+            ));
+        }
+        self.expression_reference_origins
+            .insert((span.file, span.line, span.column), origin);
+        Ok(())
+    }
+
     pub(super) fn reference_origin(&self, expr: &Expr) -> Option<ReferenceProvenance> {
         match expr {
             Expr::Variable(name, _) => self
@@ -21,6 +51,10 @@ impl Checker {
                 self.reference_origin(args.get(argument_index)?)
                     .or_else(|| Some(ReferenceProvenance::Local))
             }
+            Expr::If { span, .. } | Expr::Match { span, .. } => self
+                .expression_reference_origins
+                .get(&(span.file, span.line, span.column))
+                .cloned(),
             Expr::Unary {
                 op: UnaryOp::Dereference,
                 value,
@@ -50,6 +84,10 @@ impl Checker {
             Some(ReferenceProvenance::Parameter(None)) => Err(at(
                 span,
                 "returned reference parameter must declare a lifetime",
+            )),
+            Some(ReferenceProvenance::Mixed) => Err(at(
+                span,
+                format!("not all returned reference paths originate from lifetime `'{expected}`"),
             )),
             Some(ReferenceProvenance::Local) | None => Err(at(
                 span,
@@ -561,8 +599,9 @@ impl Checker {
         &mut self,
         block: &Block,
         span: Span,
-    ) -> Result<ValueType, Diagnostic> {
+    ) -> Result<(ValueType, ReferenceProvenance), Diagnostic> {
         self.scopes.push(HashMap::new());
+        let exited_scope = self.scopes.len() - 1;
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
         self.mutable_borrows.push(Vec::new());
@@ -591,7 +630,11 @@ impl Checker {
                     "`if` expression branches must end with a value expression",
                 ));
             };
-            self.check_expr(tail, false)
+            let ty = self.check_expr(tail, false)?;
+            let origin = self
+                .reference_origin(tail)
+                .unwrap_or(ReferenceProvenance::Local);
+            Ok((ty, origin))
         })();
         self.scopes.pop();
         self.immutable_scopes.pop();
@@ -599,6 +642,8 @@ impl Checker {
         self.mutable_borrows.pop();
         self.shared_borrows.pop();
         self.mutable_reference_origins.pop();
+        self.reference_origins
+            .retain(|(index, _), _| *index < exited_scope);
         result
     }
 

@@ -212,10 +212,12 @@ lifetimes can be declared on function signatures (`fn identity<'a>(value:
 &'a i64) -> &'a i64`) to return a reference with the same lifetime as an
 input parameter. Reference returns are accepted only when every returned path
 can be traced back to a parameter with the declared lifetime; returning a local
-borrow is rejected. References still cannot be captured by a closure, stored in
-aggregates/globals, or escape through expressions. Last-use loan ending (NLL)
-and broader reference propagation are deferred; loans remain conservatively
-lexical.
+borrow is rejected. `if` and `match` results can be returned when all branches
+trace to the function's declared lifetime; mixed-origin results cannot escape.
+References still cannot be captured by a closure or stored in
+aggregates/globals, and propagation through other expression forms remains
+unsupported. Last-use loan ending (NLL) and broader reference propagation are
+deferred; loans remain conservatively lexical.
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
 their target and mutability in Vaca's type checker, are not implicitly

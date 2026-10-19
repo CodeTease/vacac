@@ -12,16 +12,14 @@ impl Checker {
             value_type,
             ValueType::Bool | ValueType::I64 | ValueType::F32 | ValueType::F64
         ) {
-            let result = self.check_scalar_match(value_type, arms, span)?;
-            if matches!(
-                result,
-                ValueType::Reference(_) | ValueType::MutableReference(_)
-            ) {
+            let (result, origins) = self.check_scalar_match(value_type, arms, span)?;
+            if matches!(result, ValueType::MutableReference(_)) {
                 return Err(at(
                     span,
-                    "references cannot escape through match expressions",
+                    "mutable references cannot escape through match expressions",
                 ));
             }
+            self.record_reference_join(span, result, origins, "`match`")?;
             return Ok(result);
         }
         if matches!(
@@ -61,19 +59,11 @@ impl Checker {
             self.mutable_borrows.pop();
             self.shared_borrows.pop();
             self.mutable_reference_origins.pop();
-            let result = result?;
+            let (result, origin) = result?;
             if result == ValueType::Unit {
                 return Err(at(arm.span, "match arms must produce a value"));
             }
-            if matches!(
-                result,
-                ValueType::Reference(_) | ValueType::MutableReference(_)
-            ) {
-                return Err(at(
-                    span,
-                    "references cannot escape through match expressions",
-                ));
-            }
+            self.record_reference_join(span, result, vec![origin], "`match`")?;
             return Ok(result);
         }
         if !matches!(value_type, ValueType::Enum(_)) {
@@ -85,16 +75,14 @@ impl Checker {
                 ),
             ));
         }
-        let result = self.check_destructuring_match(value_type, arms, span)?;
-        if matches!(
-            result,
-            ValueType::Reference(_) | ValueType::MutableReference(_)
-        ) {
+        let (result, origins) = self.check_destructuring_match(value_type, arms, span)?;
+        if matches!(result, ValueType::MutableReference(_)) {
             return Err(at(
                 span,
-                "references cannot escape through match expressions",
+                "mutable references cannot escape through match expressions",
             ));
         }
+        self.record_reference_join(span, result, origins, "`match`")?;
         Ok(result)
     }
 
@@ -103,13 +91,14 @@ impl Checker {
         value_type: ValueType,
         arms: &[MatchArm],
         span: Span,
-    ) -> Result<ValueType, Diagnostic> {
+    ) -> Result<(ValueType, Vec<ReferenceProvenance>), Diagnostic> {
         let mut seen_bool = std::collections::HashSet::new();
         let mut seen_i64 = std::collections::HashSet::new();
         let mut seen_f32 = Vec::new();
         let mut seen_f64 = Vec::new();
         let mut wildcard_seen = false;
         let mut result_type = None;
+        let mut result_origins = Vec::new();
         for arm in arms {
             match &arm.pattern {
                 MatchPattern::Wildcard => {
@@ -147,7 +136,8 @@ impl Checker {
                     self.mutable_borrows.pop();
                     self.shared_borrows.pop();
                     self.mutable_reference_origins.pop();
-                    let actual = result?;
+                    let (actual, origin) = result?;
+                    result_origins.push(origin);
                     if actual == ValueType::Unit {
                         return Err(at(arm.span, "match arms must produce a value"));
                     }
@@ -211,7 +201,8 @@ impl Checker {
                     ));
                 }
             }
-            let actual = self.check_block_result(&arm.body, arm.span)?;
+            let (actual, origin) = self.check_block_result(&arm.body, arm.span)?;
+            result_origins.push(origin);
             if actual == ValueType::Unit {
                 return Err(at(arm.span, "match arms must produce a value"));
             }
@@ -249,7 +240,10 @@ impl Checker {
                 ));
             }
         }
-        result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))
+        Ok((
+            result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))?,
+            result_origins,
+        ))
     }
 
     fn check_destructuring_match(
@@ -257,10 +251,11 @@ impl Checker {
         value_type: ValueType,
         arms: &[MatchArm],
         span: Span,
-    ) -> Result<ValueType, Diagnostic> {
+    ) -> Result<(ValueType, Vec<ReferenceProvenance>), Diagnostic> {
         let mut wildcard_seen = false;
         let mut seen_variants = std::collections::HashSet::new();
         let mut result_type = None;
+        let mut result_origins = Vec::new();
         for arm in arms {
             if wildcard_seen {
                 return Err(at(
@@ -439,7 +434,8 @@ impl Checker {
             self.mutable_borrows.pop();
             self.shared_borrows.pop();
             self.mutable_reference_origins.pop();
-            let result = arm_result?;
+            let (result, origin) = arm_result?;
+            result_origins.push(origin);
             if result == ValueType::Unit {
                 return Err(at(arm.span, "match arms must produce a value"));
             }
@@ -477,7 +473,10 @@ impl Checker {
                 ),
             ));
         }
-        result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))
+        Ok((
+            result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))?,
+            result_origins,
+        ))
     }
 
     pub(super) fn check_pattern(
