@@ -97,6 +97,65 @@ fn named_lifetimes_allow_parameter_derived_reference_returns() {
         "references-named-lifetime-missing-origin",
         "cannot return a reference that does not originate from a parameter",
     );
+    assert_compile_error(
+        "fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; const alias = &local; alias } fn main() -> i64 { 0 }",
+        "references-named-lifetime-local-alias-escape",
+        "cannot return a reference that does not originate from a parameter",
+    );
+}
+
+#[test]
+fn named_lifetime_provenance_unions_same_lifetime_parameters() {
+    let result = compile_and_run(
+        r#"
+        fn choose<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+            if condition { first } else { second }
+        }
+        fn forward<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+            const alias = choose(condition, first, second);
+            alias
+        }
+        fn main() -> i64 {
+            const first = 10;
+            const second = 32;
+            *forward(false, &first, &second) - 32
+        }
+        "#,
+        "references-named-lifetime-same-lifetime-origins",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (place, name) in [("first", "first"), ("second", "second")] {
+        let source = format!(
+            "fn choose<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {{ if condition {{ first }} else {{ second }} }} fn main() -> i64 {{ let first = 10; let second = 32; const selected = choose(true, &first, &second); {place} = 42; *selected }}"
+        );
+        assert_compile_error(
+            &source,
+            &format!("references-call-return-loans-{name}"),
+            &format!("cannot modify `{name}` while it is borrowed"),
+        );
+    }
+}
+
+#[test]
+fn returned_reference_calls_propagate_shared_loans_through_aliases() {
+    let source = "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn relay<'a>(value: &'a i64) -> &'a i64 { const alias = identity(value); alias } fn main() -> i64 { let answer = 42; const reference = relay(&answer); answer = 43; *reference }";
+    assert_compile_error(
+        source,
+        "references-call-return-loan-through-alias",
+        "cannot modify `answer` while it is borrowed",
+    );
+    assert_compile_error(
+        "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn main() -> i64 { let answer = 42; const reference = identity(&answer); const mutable: &mut i64 = &mut answer; *reference }",
+        "references-call-return-loan-blocks-mutable-borrow",
+        "`answer` is already mutably borrowed",
+    );
+
+    let result = compile_and_run(
+        "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn main() -> i64 { let answer = 42; const reference = identity(&answer); *reference - 42 }",
+        "references-call-return-loan-readable",
+    );
+    assert_eq!(result.status.code(), Some(0));
 }
 
 #[test]

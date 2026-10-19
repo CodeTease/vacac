@@ -573,7 +573,13 @@ impl Checker {
                             ));
                         }
                     }
-                    let actual = self.check_expr_expected(arg, expected)?;
+                    let previous_shared_borrow_permission = self.allow_shared_borrow;
+                    if matches!(expected, ValueType::Reference(_)) {
+                        self.allow_shared_borrow = true;
+                    }
+                    let checked_argument = self.check_expr_expected(arg, expected);
+                    self.allow_shared_borrow = previous_shared_borrow_permission;
+                    let actual = checked_argument?;
                     self.expect_type(
                         actual,
                         expected,
@@ -871,7 +877,13 @@ impl Checker {
         }
         self.reject_overlapping_mutable_reference_arguments(args, &shape.params)?;
         for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
-            let actual = self.check_expr_expected(arg, expected)?;
+            let previous_shared_borrow_permission = self.allow_shared_borrow;
+            if matches!(expected, ValueType::Reference(_)) {
+                self.allow_shared_borrow = true;
+            }
+            let checked_argument = self.check_expr_expected(arg, expected);
+            self.allow_shared_borrow = previous_shared_borrow_permission;
+            let actual = checked_argument?;
             self.expect_type(
                 actual,
                 expected,

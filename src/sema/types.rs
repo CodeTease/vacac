@@ -12,15 +12,17 @@ impl Checker {
             return Ok(());
         }
         let mut origins = origins.into_iter();
-        let Some(first) = origins.next() else {
+        let Some(mut origin) = origins.next() else {
             return Ok(());
         };
-        let origin = if origins.all(|other| other == first) {
-            first
-        } else {
-            ReferenceProvenance::Mixed
-        };
-        if matches!(origin, ReferenceProvenance::Local) {
+        for other in origins {
+            origin.extend(other);
+        }
+        if origin
+            .sources
+            .iter()
+            .any(|source| !matches!(source, ReferenceSource::Parameter { .. }))
+        {
             return Err(at(
                 span,
                 format!("references cannot escape through {construct} expressions"),
@@ -37,19 +39,38 @@ impl Checker {
                 .lookup_local_with_scope(name)
                 .and_then(|(scope, _)| self.reference_origins.get(&(scope, name.clone())).cloned()),
             Expr::Unary {
-                op: UnaryOp::Borrow | UnaryOp::BorrowMut,
+                op: UnaryOp::Borrow,
+                value,
                 ..
-            } => Some(ReferenceProvenance::Local),
+            } => self
+                .borrow_place(value, span_of_expr(value))
+                .ok()
+                .map(ReferenceProvenance::borrowed)
+                .or_else(|| Some(ReferenceProvenance::local())),
+            Expr::Unary {
+                op: UnaryOp::BorrowMut,
+                ..
+            } => Some(ReferenceProvenance::local()),
             Expr::Call { name, args, .. } => {
                 let name = self.find_function_name(name)?;
                 let signature = self.signatures.get(&name)?;
                 let return_lifetime = signature.return_lifetime.as_ref()?;
-                let argument_index = signature
-                    .param_lifetimes
-                    .iter()
-                    .position(|lifetime| lifetime.as_ref() == Some(return_lifetime))?;
-                self.reference_origin(args.get(argument_index)?)
-                    .or_else(|| Some(ReferenceProvenance::Local))
+                let mut origin: Option<ReferenceProvenance> = None;
+                for (argument_index, lifetime) in signature.param_lifetimes.iter().enumerate() {
+                    if lifetime.as_ref() != Some(return_lifetime) {
+                        continue;
+                    }
+                    let argument_origin = args
+                        .get(argument_index)
+                        .and_then(|argument| self.reference_origin(argument))
+                        .unwrap_or_else(ReferenceProvenance::local);
+                    if let Some(origin) = &mut origin {
+                        origin.extend(argument_origin);
+                    } else {
+                        origin = Some(argument_origin);
+                    }
+                }
+                origin.or_else(|| Some(ReferenceProvenance::local()))
             }
             Expr::If { span, .. } | Expr::Match { span, .. } => self
                 .expression_reference_origins
@@ -75,25 +96,58 @@ impl Checker {
                 "functions cannot return references without a named lifetime",
             )
         })?;
-        match self.reference_origin(expr) {
-            Some(ReferenceProvenance::Parameter(Some(actual))) if &actual == expected => Ok(()),
-            Some(ReferenceProvenance::Parameter(Some(actual))) => Err(at(
-                span,
-                format!("returned reference has lifetime `'{actual}`, expected `'{expected}`"),
-            )),
-            Some(ReferenceProvenance::Parameter(None)) => Err(at(
-                span,
-                "returned reference parameter must declare a lifetime",
-            )),
-            Some(ReferenceProvenance::Mixed) => Err(at(
-                span,
-                format!("not all returned reference paths originate from lifetime `'{expected}`"),
-            )),
-            Some(ReferenceProvenance::Local) | None => Err(at(
+        let Some(origin) = self.reference_origin(expr) else {
+            return Err(at(
                 span,
                 "cannot return a reference that does not originate from a parameter with the declared lifetime",
-            )),
+            ));
+        };
+        let mut parameter_indices = std::collections::HashSet::new();
+        let mut parameter_lifetimes = Vec::new();
+        let mut saw_non_parameter = false;
+        for source in &origin.sources {
+            match source {
+                ReferenceSource::Parameter { index, lifetime } => {
+                    parameter_indices.insert(*index);
+                    parameter_lifetimes.push(lifetime.as_deref());
+                }
+                ReferenceSource::Borrowed(_) | ReferenceSource::Local => {
+                    saw_non_parameter = true;
+                }
+            }
         }
+        if parameter_indices.is_empty() && saw_non_parameter {
+            return Err(at(
+                span,
+                "cannot return a reference that does not originate from a parameter with the declared lifetime",
+            ));
+        }
+        if saw_non_parameter
+            || parameter_lifetimes
+                .iter()
+                .any(|lifetime| *lifetime != parameter_lifetimes.first().copied().flatten())
+        {
+            return Err(at(
+                span,
+                format!("not all returned reference paths originate from lifetime `'{expected}`"),
+            ));
+        }
+        match parameter_lifetimes.first().copied().flatten() {
+            Some(actual) if actual == expected => {}
+            Some(actual) => {
+                return Err(at(
+                    span,
+                    format!("returned reference has lifetime `'{actual}`, expected `'{expected}`"),
+                ));
+            }
+            None => {
+                return Err(at(
+                    span,
+                    "returned reference parameter must declare a lifetime",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn resolve_type(&mut self, ty: &Type, span: Span) -> Result<ValueType, Diagnostic> {
@@ -633,7 +687,15 @@ impl Checker {
             let ty = self.check_expr(tail, false)?;
             let origin = self
                 .reference_origin(tail)
-                .unwrap_or(ReferenceProvenance::Local);
+                .unwrap_or_else(ReferenceProvenance::local);
+            if origin.sources.iter().any(|source| {
+                matches!(source, ReferenceSource::Borrowed(place) if place.root.scope_index == exited_scope)
+            }) {
+                return Err(at(
+                    span_of_expr(tail),
+                    "a reference to a block-local binding cannot escape its scope",
+                ));
+            }
             Ok((ty, origin))
         })();
         self.scopes.pop();
@@ -896,13 +958,17 @@ impl Checker {
         }
     }
 
-    pub(super) fn record_shared_borrow(
+    pub(super) fn record_shared_borrow_place(
         &mut self,
-        expr: &Expr,
+        place: BorrowPlace,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let place = self.borrow_place(expr, span)?;
-        if self.is_place_mutably_borrowed(expr, span)? {
+        if self
+            .mutable_borrows
+            .iter()
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place))
+        {
             return Err(at(
                 span,
                 "cannot immutably borrow an already mutably borrowed place",

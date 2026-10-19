@@ -676,13 +676,16 @@ impl Checker {
         self.shared_borrows.push(Vec::new());
         self.mutable_reference_origins.push(HashMap::new());
         let declared_signature = self.signatures.get(&function.name).cloned();
-        for param in &function.params {
+        for (parameter_index, param) in function.params.iter().enumerate() {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
             if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                 self.reference_origins.insert(
                     (0, param.name.clone()),
-                    ReferenceProvenance::Parameter(declared_reference_lifetime(&param.ty)),
+                    ReferenceProvenance::parameter(
+                        parameter_index,
+                        declared_reference_lifetime(&param.ty),
+                    ),
                 );
             }
             if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {

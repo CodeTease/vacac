@@ -79,13 +79,14 @@ impl Checker {
                 }
                 let previous_mutable_borrow_permission = self.allow_mutable_borrow_initializer;
                 let previous_shared_borrow_permission = self.allow_shared_borrow;
-                self.allow_shared_borrow = matches!(
-                    value,
-                    Expr::Unary {
-                        op: UnaryOp::Borrow,
-                        ..
-                    }
-                );
+                self.allow_shared_borrow = matches!(ty, Some(Type::Reference(_, _)))
+                    || matches!(
+                        value,
+                        Expr::Unary {
+                            op: UnaryOp::Borrow,
+                            ..
+                        }
+                    );
                 self.allow_mutable_borrow_initializer = matches!(
                     value,
                     Expr::Unary {
@@ -219,27 +220,17 @@ impl Checker {
                     binding_type,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
                 ) {
-                    let origin = self.reference_origin(value).unwrap_or_else(|| {
-                        if let Expr::Call { name, args, .. } = value
-                            && let Some(signature) = self
-                                .find_function_name(name)
-                                .and_then(|name| self.signatures.get(&name))
-                            && let Some(lifetime) = signature.return_lifetime.as_ref()
-                            && let Some(index) = signature
-                                .param_lifetimes
-                                .iter()
-                                .position(|parameter| parameter.as_ref() == Some(lifetime))
-                            && let Some(argument) = args.get(index)
-                        {
-                            self.reference_origin(argument)
-                                .unwrap_or(ReferenceProvenance::Local)
-                        } else {
-                            ReferenceProvenance::Local
-                        }
-                    });
+                    let origin = self
+                        .reference_origin(value)
+                        .unwrap_or_else(ReferenceProvenance::local);
                     for (name, _) in &bindings {
                         self.reference_origins
                             .insert((current_scope_index, name.clone()), origin.clone());
+                    }
+                    for source in &origin.sources {
+                        if let ReferenceSource::Borrowed(place) = source {
+                            self.record_shared_borrow_place(place.clone(), *span)?;
+                        }
                     }
                 }
                 if let Some((name, _)) = bindings
@@ -258,9 +249,7 @@ impl Checker {
                 } = value
                 {
                     match op {
-                        UnaryOp::Borrow => {
-                            self.record_shared_borrow(borrowed, span_of_expr(borrowed))?
-                        }
+                        UnaryOp::Borrow => {}
                         UnaryOp::BorrowMut => {
                             self.record_mutable_borrow(borrowed, span_of_expr(borrowed))?
                         }

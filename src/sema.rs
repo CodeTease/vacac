@@ -50,10 +50,46 @@ struct Signature {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum ReferenceProvenance {
-    Parameter(Option<String>),
+struct ReferenceProvenance {
+    sources: Vec<ReferenceSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReferenceSource {
+    Parameter {
+        index: usize,
+        lifetime: Option<String>,
+    },
+    Borrowed(BorrowPlace),
     Local,
-    Mixed,
+}
+
+impl ReferenceProvenance {
+    fn local() -> Self {
+        Self {
+            sources: vec![ReferenceSource::Local],
+        }
+    }
+
+    fn parameter(index: usize, lifetime: Option<String>) -> Self {
+        Self {
+            sources: vec![ReferenceSource::Parameter { index, lifetime }],
+        }
+    }
+
+    fn borrowed(place: BorrowPlace) -> Self {
+        Self {
+            sources: vec![ReferenceSource::Borrowed(place)],
+        }
+    }
+
+    fn extend(&mut self, other: Self) {
+        for source in other.sources {
+            if !self.sources.contains(&source) {
+                self.sources.push(source);
+            }
+        }
+    }
 }
 
 /// A place borrowed by a safe reference. The root identifies a particular
