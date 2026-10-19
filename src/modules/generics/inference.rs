@@ -29,16 +29,16 @@ impl Specializer {
             (Type::Vector(pattern), Type::Vector(actual)) => {
                 self.unify(pattern, actual, substitutions, span)
             }
-            (
-                Type::Reference(pattern, pattern_lifetime),
-                Type::Reference(actual, actual_lifetime),
-            ) if pattern_lifetime == actual_lifetime => {
+            (Type::Reference(pattern, _), Type::Reference(actual, _)) => {
+                // Lifetimes are checked on the original function signature by
+                // sema. Generic specialization only needs to infer the
+                // referenced type; call-site borrows do not carry a named
+                // lifetime to unify against.
                 self.unify(pattern, actual, substitutions, span)
             }
-            (
-                Type::MutableReference(pattern, pattern_lifetime),
-                Type::MutableReference(actual, actual_lifetime),
-            ) if pattern_lifetime == actual_lifetime => {
+            (Type::MutableReference(pattern, _), Type::MutableReference(actual, _)) => {
+                // Preserve reference mutability while inferring the target;
+                // named lifetimes remain a semantic signature contract.
                 self.unify(pattern, actual, substitutions, span)
             }
             (Type::RawPointer(pattern, pattern_mut), Type::RawPointer(actual, actual_mut))

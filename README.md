@@ -213,6 +213,9 @@ lifetimes can be declared on function signatures (`fn identity<'a>(value:
 &'a i64) -> &'a i64`) to return a reference tied to an input lifetime. A return
 may originate from more than one parameter when every possible parameter origin
 has the declared lifetime, for example when choosing between two `&'a` inputs.
+Generic type parameters can appear behind named references (for example,
+`fn identity<'a, T>(value: &'a T) -> &'a T`); specialization infers the
+referenced type while the named lifetime remains a checked signature contract.
 Only shared-reference parameters (`&T`) can be origins for a shared-reference
 return; a matching lifetime on an `&mut T` parameter alone does not authorize
 returning a shared reference. Calls that return references conservatively

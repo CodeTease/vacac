@@ -121,6 +121,84 @@ fn named_lifetimes_allow_parameter_derived_reference_returns() {
 }
 
 #[test]
+fn generic_functions_preserve_named_lifetimes_during_type_specialization() {
+    let result = compile_and_run(
+        r#"
+        fn identity<'a, T>(value: &'a T) -> &'a T { value }
+        fn choose<'a, T>(condition: bool, first: &'a T, second: &'a T) -> &'a T {
+            if condition { first } else { second }
+        }
+        fn main() -> i64 {
+            const first = 10;
+            const second = 32;
+            *identity(&first) + *identity::<i64>(&second)
+                + *choose(false, &first, &second) - 74
+        }
+        "#,
+        "references-generic-named-lifetimes",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "fn choose<'a, 'b, T>(first: &'a T, second: &'b T) -> &'a T { second } fn main() -> i64 { const first = 1; const second = 2; *choose(&first, &second) }",
+        "references-generic-named-lifetime-invalid-return",
+        "returned reference has lifetime `'b`, expected `'a`",
+    );
+
+    assert_compile_error(
+        "fn identity<'a, T>(value: &'a T) -> &'a T { value } fn main() -> i64 { let value = 42; const reference = identity(&value); value = 43; *reference }",
+        "references-generic-return-loan",
+        "cannot modify `value` while it is borrowed",
+    );
+}
+
+#[test]
+fn generic_mutable_references_infer_types_without_weakening_borrow_rules() {
+    let result = compile_and_run(
+        r#"
+        fn set<'a, T>(value: &'a mut T, replacement: T) -> unit {
+            *value = replacement;
+        }
+        fn main() -> i64 {
+            let inferred = 1;
+            let explicit = 2;
+            if true {
+                const reference: &mut i64 = &mut inferred;
+                set(reference, 20);
+                *reference - 20
+            } else { 1 };
+            if true {
+                const reference: &mut i64 = &mut explicit;
+                set::<i64>(reference, 22);
+                *reference - 22
+            } else { 1 };
+            inferred + explicit - 42
+        }
+        "#,
+        "references-generic-mutable-inference",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "fn set<'a, T>(value: &'a mut T, replacement: T) -> unit { *value = replacement; } fn main() -> i64 { let value = 1; const reference: &i64 = &value; set(reference, 2); 0 }",
+        "references-generic-mutable-rejects-shared-reference",
+        "generic argument has type `&i64`, expected `&mut T`",
+    );
+
+    assert_compile_error(
+        "fn invalid<'a, T>(value: &'a mut T) -> &'a T { value } fn main() -> i64 { let value = 1; const reference: &mut i64 = &mut value; *invalid(reference) }",
+        "references-generic-mutable-cannot-authorize-shared-return",
+        "return lifetime `'a` must appear on a shared-reference parameter",
+    );
+
+    assert_compile_error(
+        "fn set<'a, T>(value: &'a mut T, replacement: T) -> unit { *value = replacement; } fn main() -> i64 { let value = 1; if true { const reference: &mut i64 = &mut value; set(reference, 2); value; } else { 0 } 0 }",
+        "references-generic-mutable-loan-blocks-access",
+        "cannot access `value` while it is mutably borrowed",
+    );
+}
+
+#[test]
 fn named_lifetime_provenance_unions_same_lifetime_parameters() {
     let result = compile_and_run(
         r#"
