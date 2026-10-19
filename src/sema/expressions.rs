@@ -226,6 +226,25 @@ impl Checker {
             }
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
+                    if let Expr::Unary {
+                        op: UnaryOp::Dereference,
+                        value: reference,
+                        ..
+                    } = value.as_ref()
+                    {
+                        match self.check_expr(reference, false)? {
+                            ValueType::Reference(index) => {
+                                return Ok(ValueType::Reference(index));
+                            }
+                            ValueType::MutableReference(_) => {
+                                return Err(at(
+                                    *span,
+                                    "mutable reference reborrowing is not supported",
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
                     let Some(name) = Self::direct_local_place_root(value) else {
                         return Err(at(
                             *span,

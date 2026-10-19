@@ -253,6 +253,38 @@ fn returned_reference_calls_propagate_shared_loans_through_aliases() {
 }
 
 #[test]
+fn shared_references_can_be_reborrowed_through_direct_dereferences() {
+    let result = compile_and_run(
+        r#"
+        fn read(value: &i64) -> i64 { *value }
+        fn reborrow<'a>(value: &'a i64) -> &'a i64 {
+            const alias: &'a i64 = &*value;
+            alias
+        }
+        fn main() -> i64 {
+            let answer = 42;
+            const original: &i64 = &answer;
+            const alias: &i64 = &*original;
+            read(alias) + *reborrow(original) - 84
+        }
+        "#,
+        "references-shared-direct-reborrow",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "fn escape<'a>(input: &'a i64) -> &'a i64 { let local = 1; const reference: &i64 = &local; &*reference } fn main() -> i64 { 0 }",
+        "references-reborrow-local-lifetime-escape",
+        "cannot return a reference that does not originate from a parameter",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { let answer = 42; const mutable: &mut i64 = &mut answer; const shared: &i64 = &*mutable; 0 }",
+        "references-mutable-direct-reborrow",
+        "mutable reference reborrowing is not supported",
+    );
+}
+
+#[test]
 fn immutable_aggregate_values_can_be_borrowed() {
     let result = compile_and_run(
         r#"

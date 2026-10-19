@@ -42,11 +42,18 @@ impl Checker {
                 op: UnaryOp::Borrow,
                 value,
                 ..
-            } => self
-                .borrow_place(value, span_of_expr(value))
-                .ok()
-                .map(ReferenceProvenance::borrowed)
-                .or_else(|| Some(ReferenceProvenance::unknown())),
+            } => match value.as_ref() {
+                Expr::Unary {
+                    op: UnaryOp::Dereference,
+                    value: reference,
+                    ..
+                } => self.reference_origin(reference),
+                _ => self
+                    .borrow_place(value, span_of_expr(value))
+                    .ok()
+                    .map(ReferenceProvenance::borrowed)
+                    .or_else(|| Some(ReferenceProvenance::unknown())),
+            },
             Expr::Unary {
                 op: UnaryOp::BorrowMut,
                 ..

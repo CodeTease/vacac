@@ -369,6 +369,23 @@ impl<'ctx> Codegen<'ctx> {
             } => self.emit_struct_literal(name, fields, *span),
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
+                    if let Expr::Unary {
+                        op: UnaryOp::Dereference,
+                        value: reference,
+                        ..
+                    } = value.as_ref()
+                    {
+                        let reference = self.emit_expression(reference)?;
+                        if let ValueType::Reference(_) = reference.ty {
+                            return Ok(reference);
+                        }
+                        if matches!(reference.ty, ValueType::MutableReference(_)) {
+                            return Err(Diagnostic::at(
+                                span.into(),
+                                "mutable reference reborrowing is not supported",
+                            ));
+                        }
+                    }
                     let Some(name) = codegen_borrow_root(value) else {
                         return Err(Diagnostic::at(
                             span.into(),

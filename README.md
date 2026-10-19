@@ -213,6 +213,9 @@ lifetimes can be declared on function signatures (`fn identity<'a>(value:
 &'a i64) -> &'a i64`) to return a reference tied to an input lifetime. A return
 may originate from more than one parameter when every possible parameter origin
 has the declared lifetime, for example when choosing between two `&'a` inputs.
+An existing shared reference can be reborrowed through a direct dereference with
+`&*reference`; the reborrow retains the original loan and named-lifetime
+provenance. Mutable-reference reborrowing is not supported.
 Generic type parameters can appear behind named references (for example,
 `fn identity<'a, T>(value: &'a T) -> &'a T`); specialization infers the
 referenced type while the named lifetime remains a checked signature contract.
