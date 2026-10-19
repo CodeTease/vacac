@@ -174,8 +174,9 @@ name.
 
 ## References and raw pointers
 
-Shared references use `&T`; `&value` borrows an eligible local, including a mutable `let` binding, and
-`*reference` reads through it. Mutable references use `&mut T` and `&mut value`:
+Shared references use `&T`; `&value` borrows an eligible local, including a
+mutable `let` binding, and `*reference` reads through it. Mutable references use
+`&mut T` and `&mut value`:
 
 ```vaca
 fn read(value: &i64) -> i64 { *value }
@@ -209,15 +210,20 @@ prevent overlapping writes and mutable borrows until the lexical block ends.
 Constant field names and constant array indices are tracked precisely; unknown
 indices conservatively overlap. Vector elements remain ineligible. Named
 lifetimes can be declared on function signatures (`fn identity<'a>(value:
-&'a i64) -> &'a i64`) to return a reference with the same lifetime as an
-input parameter. Reference returns are accepted only when every returned path
-can be traced back to a parameter with the declared lifetime; returning a local
-borrow is rejected. `if` and `match` results can be returned when all branches
-trace to the function's declared lifetime; mixed-origin results cannot escape.
-References still cannot be captured by a closure or stored in
-aggregates/globals, and propagation through other expression forms remains
-unsupported. Last-use loan ending (NLL) and broader reference propagation are
-deferred; loans remain conservatively lexical.
+&'a i64) -> &'a i64`) to return a reference tied to an input lifetime. A return
+may originate from more than one parameter when every possible parameter origin
+has the declared lifetime, for example when choosing between two `&'a` inputs.
+Calls that return references propagate the origins of their matching-lifetime
+arguments through local reference aliases, so the caller retains shared loans
+on every possible borrowed place. Returning a local borrow or a reference with
+an origin from another or undeclared lifetime is rejected. `if` and `match`
+results can be returned when every branch has only parameter origins with the
+function's declared lifetime; a branch that can refer to a local cannot escape.
+References still cannot be captured by a closure or stored in aggregates or
+globals. Provenance propagation is limited to direct named-function calls,
+local reference aliases, and `if`/`match` joins; function-value calls and other
+expression forms do not propagate reference origins. Last-use loan ending
+(NLL) is not implemented, so loans remain conservatively lexical.
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
 their target and mutability in Vaca's type checker, are not implicitly
