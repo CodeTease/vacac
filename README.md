@@ -213,10 +213,15 @@ lifetimes can be declared on function signatures (`fn identity<'a>(value:
 &'a i64) -> &'a i64`) to return a reference tied to an input lifetime. A return
 may originate from more than one parameter when every possible parameter origin
 has the declared lifetime, for example when choosing between two `&'a` inputs.
-Calls that return references propagate the origins of their matching-lifetime
-arguments through local reference aliases, so the caller retains shared loans
-on every possible borrowed place. Returning a local borrow or a reference with
-an origin from another or undeclared lifetime is rejected. `if` and `match`
+Only shared-reference parameters (`&T`) can be origins for a shared-reference
+return; a matching lifetime on an `&mut T` parameter alone does not authorize
+returning a shared reference. Calls that return references conservatively
+propagate all arguments corresponding to shared-reference parameters with the
+return lifetime through local reference aliases, so the caller retains shared
+loans on every possible borrowed place. An origin the checker cannot establish
+is rejected rather than treated as a local-safe value. Returning a local borrow
+or a reference with an origin from another or undeclared lifetime is rejected.
+`if` and `match`
 results can be returned when every branch has only parameter origins with the
 function's declared lifetime; a branch that can refer to a local cannot escape.
 References still cannot be captured by a closure or stored in aggregates or

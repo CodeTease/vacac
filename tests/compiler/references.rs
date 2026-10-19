@@ -52,6 +52,12 @@ fn named_lifetimes_allow_parameter_derived_reference_returns() {
     );
     assert_eq!(result.status.code(), Some(0));
 
+    let result = compile_and_run(
+        "fn choose<'a>(shared: &'a i64, mutable: &'a mut i64) -> &'a i64 { shared } fn main() -> i64 { let value = 42; let other = 1; const mutable: &mut i64 = &mut other; *choose(&value, mutable) - 42 }",
+        "references-named-lifetime-shared-origin-with-mutable-parameter",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
     for (source, name, diagnostic) in [
         (
             "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; &local } fn main() -> i64 { 0 }",
@@ -101,6 +107,16 @@ fn named_lifetimes_allow_parameter_derived_reference_returns() {
         "fn escape<'a>(input: &'a i64) -> &'a i64 { const local = 1; const alias = &local; alias } fn main() -> i64 { 0 }",
         "references-named-lifetime-local-alias-escape",
         "cannot return a reference that does not originate from a parameter",
+    );
+    assert_compile_error(
+        "fn invalid<'a>(value: &'a mut i64) -> &'a i64 { value } fn main() -> i64 { 0 }",
+        "references-named-lifetime-mutable-only-origin",
+        "return lifetime `'a` must appear on a shared-reference parameter",
+    );
+    assert_compile_error(
+        "fn wrong_parameter<'a>(shared: &'a i64, mutable: &'a mut i64) -> &'a i64 { mutable } fn main() -> i64 { 0 }",
+        "references-named-lifetime-mutable-parameter-return",
+        "not all returned reference paths originate from lifetime `'a`",
     );
 }
 

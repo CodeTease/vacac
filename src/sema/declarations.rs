@@ -192,7 +192,7 @@ impl Checker {
                 }
             }
 
-            let params = function
+            let params: Vec<ValueType> = function
                 .params
                 .iter()
                 .map(|param| self.resolve_type(&param.ty, param.span))
@@ -223,25 +223,39 @@ impl Checker {
                         format!("undeclared return lifetime `'{lifetime}`"),
                     ));
                 }
-                if !param_lifetimes
-                    .iter()
-                    .any(|param| param.as_ref() == Some(lifetime))
-                {
+                if !param_lifetimes.iter().enumerate().any(|(index, param)| {
+                    param.as_ref() == Some(lifetime)
+                        && matches!(params[index], ValueType::Reference(_))
+                }) {
                     return Err(at(
                         function.span,
                         format!(
-                            "return lifetime `'{lifetime}` must appear on a reference parameter"
+                            "return lifetime `'{lifetime}` must appear on a shared-reference parameter"
                         ),
                     ));
                 }
             }
+            let return_parameter_indices = return_lifetime
+                .as_ref()
+                .map(|lifetime| {
+                    param_lifetimes
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, param_lifetime)| {
+                            (param_lifetime.as_ref() == Some(lifetime)
+                                && matches!(params[index], ValueType::Reference(_)))
+                            .then_some(index)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             self.signatures.insert(
                 function.name.clone(),
                 Signature {
                     params,
                     return_type,
-                    param_lifetimes,
                     return_lifetime,
+                    return_parameter_indices,
                 },
             );
             visibility.insert(
@@ -351,7 +365,7 @@ impl Checker {
                     format!("function `{}` is defined more than once", function.name),
                 ));
             }
-            let params = function
+            let params: Vec<ValueType> = function
                 .params
                 .iter()
                 .map(|param| self.resolve_type(&param.ty, param.span))
@@ -371,8 +385,8 @@ impl Checker {
                 Signature {
                     params,
                     return_type,
-                    param_lifetimes: vec![None; function.params.len()],
                     return_lifetime: None,
+                    return_parameter_indices: Vec::new(),
                 },
             );
             visibility.insert(
@@ -408,8 +422,8 @@ impl Checker {
             Signature {
                 params: vec![ValueType::I64],
                 return_type: ValueType::Unit,
-                param_lifetimes: vec![None],
                 return_lifetime: None,
+                return_parameter_indices: Vec::new(),
             },
         );
         self.signatures.insert(
@@ -417,8 +431,8 @@ impl Checker {
             Signature {
                 params: vec![ValueType::F64],
                 return_type: ValueType::Unit,
-                param_lifetimes: vec![None],
                 return_lifetime: None,
+                return_parameter_indices: Vec::new(),
             },
         );
         self.signatures.insert(
@@ -426,8 +440,8 @@ impl Checker {
             Signature {
                 params: vec![ValueType::F32],
                 return_type: ValueType::Unit,
-                param_lifetimes: vec![None],
                 return_lifetime: None,
+                return_parameter_indices: Vec::new(),
             },
         );
         for name in ["print", "println"] {
@@ -436,8 +450,8 @@ impl Checker {
                 Signature {
                     params: vec![ValueType::Str],
                     return_type: ValueType::Unit,
-                    param_lifetimes: vec![None],
                     return_lifetime: None,
+                    return_parameter_indices: Vec::new(),
                 },
             );
         }
@@ -446,8 +460,8 @@ impl Checker {
             Signature {
                 params: vec![],
                 return_type: ValueType::I64,
-                param_lifetimes: Vec::new(),
                 return_lifetime: None,
+                return_parameter_indices: Vec::new(),
             },
         );
         Ok(())
@@ -676,6 +690,10 @@ impl Checker {
         self.shared_borrows.push(Vec::new());
         self.mutable_reference_origins.push(HashMap::new());
         let declared_signature = self.signatures.get(&function.name).cloned();
+        self.return_parameter_indices = declared_signature
+            .as_ref()
+            .map(|signature| signature.return_parameter_indices.clone())
+            .unwrap_or_default();
         for (parameter_index, param) in function.params.iter().enumerate() {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);

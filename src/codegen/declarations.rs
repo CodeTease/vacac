@@ -927,12 +927,13 @@ impl<'ctx> Codegen<'ctx> {
                     })?;
                 if !function.lifetime_params.contains(&lifetime)
                     || !function.params.iter().any(|param| {
-                        codegen_reference_lifetime(&param.ty).as_deref() == Some(&lifetime)
+                        matches!(param.ty, Type::Reference(_, _))
+                            && codegen_reference_lifetime(&param.ty).as_deref() == Some(&lifetime)
                     })
                 {
                     return Err(Diagnostic::at(
                         function.span.into(),
-                        "returned reference lifetime must be declared and appear on a reference parameter",
+                        "returned reference lifetime must be declared and appear on a shared-reference parameter",
                     ));
                 }
             }

@@ -46,31 +46,28 @@ impl Checker {
                 .borrow_place(value, span_of_expr(value))
                 .ok()
                 .map(ReferenceProvenance::borrowed)
-                .or_else(|| Some(ReferenceProvenance::local())),
+                .or_else(|| Some(ReferenceProvenance::unknown())),
             Expr::Unary {
                 op: UnaryOp::BorrowMut,
                 ..
-            } => Some(ReferenceProvenance::local()),
+            } => Some(ReferenceProvenance::unknown()),
             Expr::Call { name, args, .. } => {
                 let name = self.find_function_name(name)?;
                 let signature = self.signatures.get(&name)?;
-                let return_lifetime = signature.return_lifetime.as_ref()?;
+                signature.return_lifetime.as_ref()?;
                 let mut origin: Option<ReferenceProvenance> = None;
-                for (argument_index, lifetime) in signature.param_lifetimes.iter().enumerate() {
-                    if lifetime.as_ref() != Some(return_lifetime) {
-                        continue;
-                    }
+                for argument_index in &signature.return_parameter_indices {
                     let argument_origin = args
-                        .get(argument_index)
+                        .get(*argument_index)
                         .and_then(|argument| self.reference_origin(argument))
-                        .unwrap_or_else(ReferenceProvenance::local);
+                        .unwrap_or_else(ReferenceProvenance::unknown);
                     if let Some(origin) = &mut origin {
                         origin.extend(argument_origin);
                     } else {
                         origin = Some(argument_origin);
                     }
                 }
-                origin.or_else(|| Some(ReferenceProvenance::local()))
+                origin.or_else(|| Some(ReferenceProvenance::unknown()))
             }
             Expr::If { span, .. } | Expr::Match { span, .. } => self
                 .expression_reference_origins
@@ -111,8 +108,14 @@ impl Checker {
                     parameter_indices.insert(*index);
                     parameter_lifetimes.push(lifetime.as_deref());
                 }
-                ReferenceSource::Borrowed(_) | ReferenceSource::Local => {
+                ReferenceSource::Borrowed(_) => {
                     saw_non_parameter = true;
+                }
+                ReferenceSource::Unknown => {
+                    return Err(at(
+                        span,
+                        "cannot return a reference whose parameter origin is unknown",
+                    ));
                 }
             }
         }
@@ -146,6 +149,15 @@ impl Checker {
                     "returned reference parameter must declare a lifetime",
                 ));
             }
+        }
+        if parameter_indices
+            .iter()
+            .any(|index| !self.return_parameter_indices.contains(index))
+        {
+            return Err(at(
+                span,
+                format!("not all returned reference paths originate from lifetime `'{expected}`"),
+            ));
         }
         Ok(())
     }
@@ -687,9 +699,10 @@ impl Checker {
             let ty = self.check_expr(tail, false)?;
             let origin = self
                 .reference_origin(tail)
-                .unwrap_or_else(ReferenceProvenance::local);
-            if origin.sources.iter().any(|source| {
-                matches!(source, ReferenceSource::Borrowed(place) if place.root.scope_index == exited_scope)
+                .unwrap_or_else(ReferenceProvenance::unknown);
+            if origin.sources.iter().any(|source| match source {
+                ReferenceSource::Borrowed(place) => place.root.scope_index == exited_scope,
+                ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
             }) {
                 return Err(at(
                     span_of_expr(tail),

@@ -45,8 +45,8 @@ struct VectorShape {
 struct Signature {
     params: Vec<ValueType>,
     return_type: ValueType,
-    param_lifetimes: Vec<Option<String>>,
     return_lifetime: Option<String>,
+    return_parameter_indices: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,16 +61,10 @@ enum ReferenceSource {
         lifetime: Option<String>,
     },
     Borrowed(BorrowPlace),
-    Local,
+    Unknown,
 }
 
 impl ReferenceProvenance {
-    fn local() -> Self {
-        Self {
-            sources: vec![ReferenceSource::Local],
-        }
-    }
-
     fn parameter(index: usize, lifetime: Option<String>) -> Self {
         Self {
             sources: vec![ReferenceSource::Parameter { index, lifetime }],
@@ -80,6 +74,12 @@ impl ReferenceProvenance {
     fn borrowed(place: BorrowPlace) -> Self {
         Self {
             sources: vec![ReferenceSource::Borrowed(place)],
+        }
+    }
+
+    fn unknown() -> Self {
+        Self {
+            sources: vec![ReferenceSource::Unknown],
         }
     }
 
@@ -171,6 +171,7 @@ struct Checker {
     loop_contexts: Vec<LoopContext>,
     current_return_type: ValueType,
     return_lifetime: Option<String>,
+    return_parameter_indices: Vec<usize>,
     enum_ids: HashMap<String, usize>,
     enums: Vec<EnumDecl>,
     struct_ids: HashMap<String, usize>,
@@ -220,6 +221,7 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         loop_contexts: Vec::new(),
         current_return_type: ValueType::Unit,
         return_lifetime: None,
+        return_parameter_indices: Vec::new(),
         enum_ids: HashMap::new(),
         enums: Vec::new(),
         struct_ids: HashMap::new(),

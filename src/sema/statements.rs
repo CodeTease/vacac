@@ -222,14 +222,17 @@ impl Checker {
                 ) {
                     let origin = self
                         .reference_origin(value)
-                        .unwrap_or_else(ReferenceProvenance::local);
+                        .unwrap_or_else(ReferenceProvenance::unknown);
                     for (name, _) in &bindings {
                         self.reference_origins
                             .insert((current_scope_index, name.clone()), origin.clone());
                     }
                     for source in &origin.sources {
-                        if let ReferenceSource::Borrowed(place) = source {
-                            self.record_shared_borrow_place(place.clone(), *span)?;
+                        match source {
+                            ReferenceSource::Borrowed(place) => {
+                                self.record_shared_borrow_place(place.clone(), *span)?;
+                            }
+                            ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => {}
                         }
                     }
                 }
