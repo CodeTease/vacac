@@ -1,0 +1,53 @@
+// Named lifetimes tie returned shared references to eligible input references.
+fn identity<'a, T>(value: &'a T) -> &'a T {
+    value
+}
+
+// Every branch can return either input because both carry the same lifetime.
+fn choose<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+    if condition {
+        first
+    } else {
+        second
+    }
+}
+
+fn select_match<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+    match condition {
+        true => { first },
+        false => { second },
+    }
+}
+
+fn main() -> i64 {
+    let first = 40;
+    let second = 42;
+
+    // Each reference result may borrow either argument, and the loan lasts
+    // through this block even after its last apparent use (NLL is deferred).
+    let selected_sum = if true {
+        const selected_if = choose(false, &first, &second);
+        const selected_match = select_match(true, &first, &second);
+        const selected_identity = identity(selected_if);
+
+        print("if selected: ");
+        print_i64(*selected_if);
+        print("match selected: ");
+        print_i64(*selected_match);
+        *selected_identity + *selected_match
+    } else {
+        0
+    };
+
+    // The shared-reference block has now ended, so this mutable borrow is valid.
+    let updated = 1;
+    if true {
+        const mutable: &mut i64 = &mut updated;
+        *mutable = 2;
+        0
+    } else {
+        0
+    };
+
+    (selected_sum + updated) - 84
+}
