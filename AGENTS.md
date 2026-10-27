@@ -3,7 +3,7 @@
 ## Requirements
 
 - Rust + Cargo
-- **LLVM 22** (must provide `llvm-config` or `llvm-config-22`; inkwell uses feature `llvm22-1`)
+- **LLVM 23** (must provide `llvm-config` or `llvm-config-23`; inkwell uses feature `llvm23-1`)
 - C linker as `cc`
 
 ## Commands

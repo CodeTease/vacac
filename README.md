@@ -9,7 +9,7 @@ A **CodeTease** project.
 ## Requirements
 
 - Rust and Cargo
-- LLVM 22 (including `llvm-config`)
+- LLVM 23
 - A C linker available as `cc`
 
 Build with:
