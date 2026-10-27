@@ -166,6 +166,7 @@ fn token_name(kind: &TokenKind) -> &'static str {
     }
 }
 
+#[cfg(test)]
 pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
     lex_named(input, None)
 }

@@ -34,6 +34,7 @@ pub struct Parser {
 }
 
 impl Parser {
+    #[cfg(test)]
     pub fn new(tokens: Vec<Token>) -> Self {
         Self::new_in_module(tokens, String::new())
     }
