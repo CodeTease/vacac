@@ -204,8 +204,8 @@ first be bound to a local reference variable, which can then be passed to
 functions and written through with `*reference`. Mutable references cannot be
 copied into another local binding, and one call cannot receive overlapping
 mutable-reference origins in multiple `&mut` parameters. These call borrows are
-temporary. Shared references can borrow either `let` or `const` locals, including struct
-fields and fixed-array elements. Overlapping shared loans are allowed, but
+temporary. Shared references can borrow either `let` or `const` locals, including
+struct fields and fixed-array elements. Overlapping shared loans are allowed, but
 prevent overlapping writes and mutable borrows until the lexical block ends.
 Constant field names and constant array indices are tracked precisely; unknown
 indices conservatively overlap. Vector elements remain ineligible. Named
@@ -227,14 +227,16 @@ return lifetime through local reference aliases, so the caller retains shared
 loans on every possible borrowed place. An origin the checker cannot establish
 is rejected rather than treated as a local-safe value. Returning a local borrow
 or a reference with an origin from another or undeclared lifetime is rejected.
-`if` and `match`
-results can be returned when every branch has only parameter origins with the
-function's declared lifetime; a branch that can refer to a local cannot escape.
-References still cannot be captured by a closure or stored in aggregates or
-globals. Provenance propagation is limited to direct named-function calls,
-local reference aliases, and `if`/`match` joins; function-value calls and other
-expression forms do not propagate reference origins. Last-use loan ending
-(NLL) is not implemented, so loans remain conservatively lexical.
+`if` and `match` results can be returned when every branch has only parameter
+origins with the function's declared lifetime; a branch that can refer to a
+local cannot escape. Function lifetime parameters are scoped to their
+declaration, and every reference type in a lifetime-generic signature must name
+one of those parameters. References still cannot be captured by a closure or
+stored in aggregates or globals. Provenance propagation is limited to direct
+named-function calls, local reference aliases, supported shared-reference
+reborrows, and `if`/`match` joins; function-value calls and other expression
+forms do not propagate reference origins. Last-use loan ending (NLL) is not
+implemented, so loans remain conservatively lexical.
 Raw pointers use `*const T` and `*mut T`. Form them explicitly with `&raw const
 place` or `&raw mut place`, then dereference with `*pointer`. Raw pointers retain
 their target and mutability in Vaca's type checker, are not implicitly

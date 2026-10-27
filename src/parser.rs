@@ -502,6 +502,21 @@ mod recovery_tests {
 
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
+
+    #[test]
+    fn failed_lifetime_generic_function_does_not_leak_lifetimes_during_recovery() {
+        let source = "fn broken<'a>(value: &'a i64) -> { 0 }\nfn main(value: &'a i64) -> i64 { 0 }";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(program.functions.len(), 0, "{:?}", program.functions);
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("undeclared lifetime `'a`")),
+            "{diagnostics:?}"
+        );
+    }
 }
 
 fn span_of_expr_parser(expr: &Expr) -> Span {

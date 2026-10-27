@@ -142,46 +142,49 @@ impl Parser {
         let declared_lifetimes: HashSet<String> = lifetime_params.iter().cloned().collect();
         let previous_lifetimes =
             std::mem::replace(&mut self.lifetime_parameters, declared_lifetimes.clone());
-        self.consume(&TokenKind::LParen, "`(`")?;
-        let mut params = Vec::new();
-        if !self.at(&TokenKind::RParen) {
-            loop {
-                let param_name = self.take_ident("parameter name")?;
-                let param_span = Span::from(self.previous());
-                self.consume(&TokenKind::Colon, "`:`")?;
-                let ty = self.parse_type()?;
-                self.validate_lifetime_use(&ty, &declared_lifetimes, param_span)?;
-                params.push(Param {
-                    name: param_name,
-                    ty,
-                    span: param_span,
-                });
-                if !self.take(&TokenKind::Comma) {
-                    break;
-                }
-                if self.at(&TokenKind::RParen) {
-                    break;
+        let result = (|| {
+            self.consume(&TokenKind::LParen, "`(`")?;
+            let mut params = Vec::new();
+            if !self.at(&TokenKind::RParen) {
+                loop {
+                    let param_name = self.take_ident("parameter name")?;
+                    let param_span = Span::from(self.previous());
+                    self.consume(&TokenKind::Colon, "`:`")?;
+                    let ty = self.parse_type()?;
+                    self.validate_lifetime_use(&ty, &declared_lifetimes, param_span)?;
+                    params.push(Param {
+                        name: param_name,
+                        ty,
+                        span: param_span,
+                    });
+                    if !self.take(&TokenKind::Comma) {
+                        break;
+                    }
+                    if self.at(&TokenKind::RParen) {
+                        break;
+                    }
                 }
             }
-        }
-        self.consume(&TokenKind::RParen, "`)`")?;
-        self.consume(&TokenKind::Arrow, "`->`")?;
-        let return_type = self.parse_type()?;
-        self.validate_lifetime_use(&return_type, &declared_lifetimes, Span::from(&start))?;
-        let body = self.parse_block()?;
+            self.consume(&TokenKind::RParen, "`)`")?;
+            self.consume(&TokenKind::Arrow, "`->`")?;
+            let return_type = self.parse_type()?;
+            self.validate_lifetime_use(&return_type, &declared_lifetimes, Span::from(&start))?;
+            let body = self.parse_block()?;
+            Ok(Function {
+                name,
+                generic_params,
+                lifetime_params,
+                params,
+                return_type,
+                body,
+                span: Span::from(&start),
+                is_public,
+                module: self.module.clone(),
+            })
+        })();
         self.type_parameters = previous_type_parameters;
         self.lifetime_parameters = previous_lifetimes;
-        Ok(Function {
-            name,
-            generic_params,
-            lifetime_params,
-            params,
-            return_type,
-            body,
-            span: Span::from(&start),
-            is_public,
-            module: self.module.clone(),
-        })
+        result
     }
 
     pub(super) fn parse_extern_function(

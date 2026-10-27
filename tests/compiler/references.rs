@@ -232,6 +232,61 @@ fn named_lifetime_provenance_unions_same_lifetime_parameters() {
 }
 
 #[test]
+fn match_returned_references_keep_loans_for_every_possible_origin() {
+    let result = compile_and_run(
+        r#"
+        fn select<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {
+            match condition {
+                true => { first },
+                false => { second },
+            }
+        }
+        fn main() -> i64 {
+            const first = 20;
+            const second = 22;
+            *select(false, &first, &second) - 22
+        }
+        "#,
+        "references-match-return-loan-readable",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (place, name) in [("first", "first"), ("second", "second")] {
+        let source = format!(
+            "fn select<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64 {{ match condition {{ true => {{ first }}, false => {{ second }} }} }} fn main() -> i64 {{ let first = 20; let second = 22; const selected = select(true, &first, &second); {place} = 42; *selected }}"
+        );
+        assert_compile_error(
+            &source,
+            &format!("references-match-return-loans-{name}"),
+            &format!("cannot modify `{name}` while it is borrowed"),
+        );
+    }
+}
+
+#[test]
+fn named_lifetime_signature_parameters_are_scoped_and_well_formed() {
+    for (source, name, diagnostic) in [
+        (
+            "fn invalid<'a, 'a>(value: &'a i64) -> i64 { 0 } fn main() -> i64 { 0 }",
+            "references-duplicate-lifetime-parameter",
+            "lifetime parameter `'a` is defined more than once",
+        ),
+        (
+            "fn invalid<'a, a>(value: &'a i64) -> i64 { 0 } fn main() -> i64 { 0 }",
+            "references-type-lifetime-name-collision",
+            "`a` cannot be both a type and lifetime parameter",
+        ),
+        (
+            "fn invalid<'a>(value: &i64) -> i64 { 0 } fn main() -> i64 { 0 }",
+            "references-named-lifetime-required-in-generic-signature",
+            "references in lifetime-generic function signatures must name a lifetime",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
 fn returned_reference_calls_propagate_shared_loans_through_aliases() {
     let source = "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn relay<'a>(value: &'a i64) -> &'a i64 { const alias = identity(value); alias } fn main() -> i64 { let answer = 42; const reference = relay(&answer); answer = 43; *reference }";
     assert_compile_error(
