@@ -120,6 +120,38 @@ Some examples to explore:
 - [`modules/`](examples/modules/) — split a program across nested source files
   and use qualified public structs, enums, and functions.
 
+## Testing
+
+Run the Rust unit and integration tests with:
+
+```sh
+cargo test
+```
+
+To check and run every example program, first build the release compiler and
+then run:
+
+```sh
+cargo build --release
+scripts/test-examples.sh
+```
+
+The deterministic adversarial corpus in [`tests/fuzz/`](tests/fuzz/) targets
+reference/lifetime diagnostics, generic specialization limits, malformed-source
+recovery and JSON diagnostics, deep module loading, checked integer overflow,
+IEEE floating-point values, returned closure captures, C scalar FFI, and LLVM
+emission. Run it against the release compiler with:
+
+```sh
+python3 tests/fuzz/run.py target/release/vacac
+```
+
+Expected compile errors and runtime traps are part of the corpus; its runner
+checks their diagnostics and exit statuses and fails on unexpected results. See
+[`tests/fuzz/README.md`](tests/fuzz/README.md) for coverage details and language
+limitations. Parser recovery reports multiple diagnostics when possible; their
+order reflects recovery and is not guaranteed to match source order.
+
 ## Hierarchical modules
 
 Declare a child module with `mod name;`. The compiler loads its source relative
