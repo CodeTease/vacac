@@ -1,0 +1,50 @@
+version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: cimg/rust:1.99.1
+    environment:
+      LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - cargo-v1-{{ arch }}-{{ checksum "Cargo.lock" }}-
+            - cargo-v1-{{ arch }}-
+      - run:
+          name: Install LLVM 23
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y ca-certificates curl
+            curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+            sudo bash /tmp/llvm.sh 23
+            sudo apt-get install -y libpolly-23-dev
+      - run:
+          name: Verify native toolchain
+          command: |
+            llvm-config-23 --version
+            cc --version
+      - run:
+          name: Check formatting
+          command: cargo fmt --all -- --check
+      - run:
+          name: Run tests
+          command: cargo test --locked
+      - run:
+          name: Build release binary
+          command: cargo build --release --locked
+      - run:
+          name: Check and run examples
+          command: scripts/test-examples.sh
+      - save_cache:
+          key: cargo-v1-{{ arch }}-{{ checksum "Cargo.lock" }}-{{ .Environment.CIRCLE_BUILD_NUM }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+            - target
+
+workflows:
+  build:
+    jobs:
+      - build

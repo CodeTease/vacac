@@ -15,7 +15,8 @@
 | Format | `cargo fmt` |
 | Check/run all examples | `scripts/test-examples.sh` (after `cargo build --release`) |
 
-No linter or CI config exists. This is a bare Cargo project.
+No linter config exists. CircleCI checks formatting, runs tests, builds the
+release compiler, and checks/runs all examples.
 
 ## Architecture
 
