@@ -21,10 +21,17 @@ jobs:
             sudo bash /tmp/llvm.sh 23
             sudo apt-get install -y libpolly-23-dev libzstd-dev
       - run:
-          name: Verify native toolchain
+          name: Install Python
+          command: sudo apt-get install -y python3 python3-pip
+      - run:
+          name: Verify tools
           command: |
             llvm-config-23 --version
             cc --version
+            python3 --version
+            pip3 --version
+            rustc --version
+            cargo --version
       - run:
           name: Check formatting
           command: cargo fmt --all -- --check
@@ -37,6 +44,9 @@ jobs:
       - run:
           name: Check and run examples
           command: scripts/test-examples.sh
+      - run:
+          name: Run fuzz tests
+          command: python3 tests/fuzz/run.py target/release/vacac
       - save_cache:
           key: cargo-v1-{{ arch }}-{{ checksum "Cargo.lock" }}-{{ .Environment.CIRCLE_BUILD_NUM }}
           paths:
