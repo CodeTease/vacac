@@ -1,0 +1,11 @@
+// Known constant array indexes are tracked as disjoint mutable places.
+fn main() -> i64 {
+    let values = [40, 1];
+    if true {
+        const first: &mut i64 = &mut values[0];
+        values[1] = 2;
+        *first + values[1] - 42
+    } else {
+        1
+    }
+}

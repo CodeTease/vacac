@@ -1,0 +1,20 @@
+// The returned closure reads a copied aggregate from a heap-backed environment.
+struct Payload {
+    left: i64,
+    right: i64,
+}
+
+fn make_adder(seed: i64) -> fn(i64) -> i64 {
+    const payload = Payload { left: seed, right: 1 };
+    fn(value: i64) -> i64 { payload.left + payload.right + value }
+}
+
+fn main() -> i64 {
+    const add = make_adder(40);
+    const copied = add;
+    if add == copied {
+        add(1) - 42
+    } else {
+        1
+    }
+}

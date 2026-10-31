@@ -1,0 +1,23 @@
+fn main() -> i64 {
+    const positive_infinity: f64 = 1.0 / 0.0;
+    const negative_infinity: f64 = -1.0 / 0.0;
+    const not_a_number: f64 = 0.0 / 0.0;
+    const single_infinity: f32 = 1f32 / 0f32;
+    const negative_zero: f64 = -1.0 / positive_infinity;
+
+    print_f64(positive_infinity);
+    print_f64(negative_infinity);
+    print_f64(not_a_number);
+    print_f32(-single_infinity);
+    print_f64(negative_zero);
+
+    if positive_infinity > 1.0e300
+        && negative_infinity < -1.0e300
+        && not_a_number != not_a_number
+        && !(not_a_number < 1.0)
+        && negative_zero == 0.0 {
+        0
+    } else {
+        1
+    }
+}

@@ -1,0 +1,7 @@
+// A function-local borrow cannot escape under an input lifetime contract.
+fn escape<'a>(input: &'a i64) -> &'a i64 {
+    const local = 42;
+    &local
+}
+
+fn main() -> i64 { 0 }

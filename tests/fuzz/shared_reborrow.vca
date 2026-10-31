@@ -1,0 +1,11 @@
+// Shared-reference reborrowing through &* retains valid provenance.
+fn identity<'a, T>(value: &'a T) -> &'a T {
+    &*value
+}
+
+fn main() -> i64 {
+    const value = 42;
+    const original: &i64 = &value;
+    const reborrowed: &i64 = &*original;
+    *identity(reborrowed) - 42
+}

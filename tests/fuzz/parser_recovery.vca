@@ -1,0 +1,9 @@
+// Both malformed declarations should be reported as separate JSON diagnostics.
+fn first() -> i64 {
+    let broken = ;
+    0
+}
+
+fn second( -> i64 { 0 }
+
+fn main() -> i64 { 0 }

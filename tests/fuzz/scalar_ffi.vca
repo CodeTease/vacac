@@ -1,0 +1,16 @@
+extern "C" fn fuzz_add_i64(left: i64, right: i64) -> i64;
+extern "C" fn fuzz_scale_f32(left: f32, right: f32) -> f32;
+extern "C" fn fuzz_scale_f64(left: f64, right: f64) -> f64;
+extern "C" fn fuzz_sink_i64(value: i64) -> unit;
+
+fn main() -> i64 {
+    const integer = fuzz_add_i64(19, 23);
+    fuzz_sink_i64(integer);
+    if integer == 42
+        && fuzz_scale_f32(1.5f32, 2.0f32) == 3.0f32
+        && fuzz_scale_f64(1.5, 2.0) == 3.0 {
+        0
+    } else {
+        1
+    }
+}

@@ -1,0 +1,6 @@
+// A reference from 'b cannot be returned under the unrelated 'a contract.
+fn choose<'a, 'b>(first: &'a i64, second: &'b i64) -> &'a i64 {
+    second
+}
+
+fn main() -> i64 { 0 }

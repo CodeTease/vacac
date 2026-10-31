@@ -1,0 +1,9 @@
+// A malformed arm should produce a JSON diagnostic without hanging recovery.
+fn helper() -> i64 {
+    match true {
+        false => { 0 },
+        true => { 1, 2 => { 2 } }
+    }
+}
+
+fn main() -> i64 { 0 }

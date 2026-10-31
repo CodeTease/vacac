@@ -1,0 +1,7 @@
+// Vaca explicitly rejects mutable-reference reborrowing.
+fn main() -> i64 {
+    let value = 42;
+    const mutable: &mut i64 = &mut value;
+    const second: &i64 = &*mutable;
+    *second - 42
+}

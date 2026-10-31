@@ -1,0 +1,5 @@
+// Negating i64::MIN must take the checked-overflow runtime trap path.
+fn main() -> i64 {
+    const minimum: i64 = -9223372036854775808;
+    -minimum
+}

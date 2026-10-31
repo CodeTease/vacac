@@ -1,0 +1,16 @@
+// Passing the same mutable origin to two parameters must be rejected.
+fn update_both(first: &mut i64, second: &mut i64) -> unit {
+    *first = 1;
+    *second = 2;
+}
+
+fn main() -> i64 {
+    let value = 0;
+    if true {
+        const reference: &mut i64 = &mut value;
+        update_both(reference, reference);
+        0
+    } else {
+        0
+    }
+}

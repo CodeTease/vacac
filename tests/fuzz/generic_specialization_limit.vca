@@ -1,0 +1,9 @@
+// Recursive type growth attempts to instantiate more than 512 concrete types.
+fn grow<T>(value: T) -> i64 {
+    let next: Vec<T> = vec_new();
+    grow::<Vec<T>>(next)
+}
+
+fn main() -> i64 {
+    grow(1)
+}

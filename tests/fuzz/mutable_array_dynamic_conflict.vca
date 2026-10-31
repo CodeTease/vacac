@@ -1,0 +1,12 @@
+// A dynamic index may alias a constant-index mutable loan and is conservatively rejected.
+fn main() -> i64 {
+    let values = [40, 1];
+    let index = 1;
+    if true {
+        const first: &mut i64 = &mut values[0];
+        values[index] = 2;
+        *first - 40
+    } else {
+        1
+    }
+}

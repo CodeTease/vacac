@@ -1,0 +1,11 @@
+// A mutable loan is conservatively held until the lexical block ends.
+fn main() -> i64 {
+    let value = 41;
+    if true {
+        const reference: &mut i64 = &mut value;
+        value = 42;
+        *reference - 42
+    } else {
+        0
+    }
+}
