@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      LLVM_SYS_231_PREFIX: /usr/lib/llvm-23
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install LLVM 23
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          sudo bash /tmp/llvm.sh 23
+          sudo apt-get install -y libpolly-23-dev libzstd-dev
+
+      - name: Install Python
+        run: sudo apt-get install -y python3 python3-pip
+
+      - name: Install Rust 1.99.1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          toolchain: 1.99.1
+          cache: false
+
+      - name: Restore cargo cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-v1-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            cargo-v1-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-
+            cargo-v1-${{ runner.arch }}-
+
+      - name: Verify tools
+        run: |
+          llvm-config-23 --version
+          cc --version
+          python3 --version
+          pip3 --version
+          rustc --version
+          cargo --version
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Check and run examples
+        run: scripts/test-examples.sh
+
+      - name: Run fuzz tests
+        run: python3 tests/fuzz/run.py target/release/vacac
+
+      - name: Save cargo cache
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-v1-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}-${{ github.run_attempt }}

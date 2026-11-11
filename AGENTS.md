@@ -15,8 +15,9 @@
 | Format | `cargo fmt` |
 | Check/run all examples | `scripts/test-examples.sh` (after `cargo build --release`) |
 
-No linter config exists. CircleCI checks formatting, runs tests, builds the
-release compiler, and checks/runs all examples.
+No linter config exists. GitHub Actions (`.github/workflows/ci.yml`) checks
+formatting, runs tests, builds the release compiler, checks/runs all examples,
+and runs the adversarial corpus in `tests/fuzz/`.
 
 ## Architecture
 
