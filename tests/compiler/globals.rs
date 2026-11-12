@@ -118,6 +118,43 @@ fn global_types_are_checked_and_inferred() {
 }
 
 #[test]
+fn global_constant_logical_operators_short_circuit_skipped_operands() {
+    let output = compile_and_run(
+        r#"
+const NEVER: bool = false && (1 / 0 == 0);
+const ALWAYS: bool = true || (1 / 0 == 0);
+const BASE: bool = false;
+const NESTED: bool = BASE && (9223372036854775807 + 1 == 0) || true;
+const REUSED: bool = ALWAYS || (1 / 0 == 0);
+
+fn main() -> i64 {
+    if NEVER { return 1; }
+    if !ALWAYS { return 2; }
+    if !NESTED { return 3; }
+    if !REUSED { return 4; }
+    0
+}
+"#,
+        "global-constant-short-circuit",
+    );
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn global_constant_logical_operators_still_evaluate_required_operands() {
+    assert_compile_error(
+        "const BAD: bool = (1 / 0 == 0) && false;\nfn main() -> i64 { 0 }\n",
+        "global-constant-short-circuit-left",
+        "invalid integer division in constant expression",
+    );
+    assert_compile_error(
+        "const BAD: bool = true && (1 / 0 == 0);\nfn main() -> i64 { 0 }\n",
+        "global-constant-short-circuit-right",
+        "invalid integer division in constant expression",
+    );
+}
+
+#[test]
 fn global_constant_evaluator_handles_minimum_integer_and_rejects_constant_overflow() {
     let output = compile_and_run(
         "const MINIMUM: i64 = -9223372036854775808;\nfn main() -> i64 { MINIMUM + 9223372036854775807 + 1 }\n",

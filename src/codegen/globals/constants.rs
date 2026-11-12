@@ -325,11 +325,23 @@ impl<'ctx> Codegen<'ctx> {
                 span,
             } => {
                 let left = self.evaluate_constant_expr(left, None)?;
-                let right = self.evaluate_constant_expr(right, Some(left.ty))?;
-                if left.ty != right.ty {
-                    return Err(fail(*span, "operator operands have different types"));
+                // `&&` and `||` short-circuit at runtime, so a skipped right operand
+                // must not be evaluated here either (it may divide by zero, overflow,
+                // or refer to an invalid constant).
+                let short_circuits = matches!(
+                    (&left.data, op),
+                    (ConstantData::Bool(false), BinaryOp::And)
+                        | (ConstantData::Bool(true), BinaryOp::Or)
+                );
+                if short_circuits {
+                    left
+                } else {
+                    let right = self.evaluate_constant_expr(right, Some(left.ty))?;
+                    if left.ty != right.ty {
+                        return Err(fail(*span, "operator operands have different types"));
+                    }
+                    self.evaluate_binary_constant(*op, left, right, *span)?
                 }
-                self.evaluate_binary_constant(*op, left, right, *span)?
             }
             Expr::Field { value, name, span } => {
                 let value = self.evaluate_constant_expr(value, None)?;
