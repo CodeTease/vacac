@@ -16,16 +16,27 @@ pub(crate) fn validate_aggregate_cycles(
         type_ids.insert(declaration.name.as_str(), enums.len() + index);
     }
 
-    fn named_type_id(ty: &Type, type_ids: &HashMap<&str, usize>) -> Option<usize> {
+    /// Collect every named type reachable by value from `ty`. All tuple elements
+    /// and type arguments must be inspected: a recursive element hidden behind an
+    /// earlier acyclic one still makes the layout infinitely sized.
+    fn named_type_ids(ty: &Type, type_ids: &HashMap<&str, usize>, out: &mut Vec<usize>) {
         match ty {
-            Type::Named(name) => type_ids.get(name.as_str()).copied(),
-            Type::Array(element, _) => named_type_id(element, type_ids),
-            Type::Tuple(elements) => elements
-                .iter()
-                .find_map(|element| named_type_id(element, type_ids)),
-            Type::Applied(_, arguments) => arguments
-                .iter()
-                .find_map(|argument| named_type_id(argument, type_ids)),
+            Type::Named(name) => {
+                if let Some(id) = type_ids.get(name.as_str()).copied() {
+                    out.push(id);
+                }
+            }
+            Type::Array(element, _) => named_type_ids(element, type_ids, out),
+            Type::Tuple(elements) => {
+                for element in elements {
+                    named_type_ids(element, type_ids, out);
+                }
+            }
+            Type::Applied(_, arguments) => {
+                for argument in arguments {
+                    named_type_ids(argument, type_ids, out);
+                }
+            }
             // A vector stores its elements behind a heap allocation, so it breaks
             // any otherwise by-value aggregate cycle.
             Type::Vector(_)
@@ -38,8 +49,8 @@ pub(crate) fn validate_aggregate_cycles(
             | Type::F64
             | Type::Bool
             | Type::Str
-            | Type::Unit => None,
-            Type::Parameter(_) => None,
+            | Type::Unit => {}
+            Type::Parameter(_) => {}
         }
     }
 
@@ -51,45 +62,42 @@ pub(crate) fn validate_aggregate_cycles(
         states: &mut [u8],
     ) -> Result<(), Diagnostic> {
         states[id] = 1;
-        let dependencies: Vec<(usize, Span, String)> = if id < enums.len() {
+        let mut dependencies: Vec<(usize, Span, String)> = Vec::new();
+        if id < enums.len() {
             let declaration = &enums[id];
-            declaration
-                .variants
-                .iter()
-                .flat_map(|variant| {
-                    variant.payload.iter().filter_map(|ty| {
-                        named_type_id(ty, type_ids).map(|target| {
-                            (
-                                target,
-                                variant.span,
-                                format!(
-                                    "enum `{}` has a recursive by-value payload in variant `{}`",
-                                    declaration.name, variant.name
-                                ),
-                            )
-                        })
-                    })
-                })
-                .collect()
+            for variant in &declaration.variants {
+                for ty in &variant.payload {
+                    let mut targets = Vec::new();
+                    named_type_ids(ty, type_ids, &mut targets);
+                    for target in targets {
+                        dependencies.push((
+                            target,
+                            variant.span,
+                            format!(
+                                "enum `{}` has a recursive by-value payload in variant `{}`",
+                                declaration.name, variant.name
+                            ),
+                        ));
+                    }
+                }
+            }
         } else {
             let declaration = &structs[id - enums.len()];
-            declaration
-                .fields
-                .iter()
-                .filter_map(|field| {
-                    named_type_id(&field.ty, type_ids).map(|target| {
-                        (
-                            target,
-                            field.span,
-                            format!(
-                                "struct `{}` has a recursive by-value field `{}`",
-                                declaration.name, field.name
-                            ),
-                        )
-                    })
-                })
-                .collect()
-        };
+            for field in &declaration.fields {
+                let mut targets = Vec::new();
+                named_type_ids(&field.ty, type_ids, &mut targets);
+                for target in targets {
+                    dependencies.push((
+                        target,
+                        field.span,
+                        format!(
+                            "struct `{}` has a recursive by-value field `{}`",
+                            declaration.name, field.name
+                        ),
+                    ));
+                }
+            }
+        }
 
         for (target, span, message) in dependencies {
             if states[target] == 1 {

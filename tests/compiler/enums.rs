@@ -269,6 +269,14 @@ fn enums_reject_duplicate_declarations_and_unsupported_payloads() {
         "enum-struct-recursive-payload",
         "recursive by-value field `link`",
     );
+    // `Good` is an earlier acyclic *named* type, so a cycle detector that only
+    // inspects the first resolvable tuple element would stop at `Good` and miss
+    // the recursive `Link` in the second element.
+    assert_compile_error(
+        "struct Good { x: i64 } enum Link { Next((Good, Link)) } fn main() -> i64 { 0 }\n",
+        "enum-recursive-tuple-payload-after-acyclic-element",
+        "enum `Link` has a recursive by-value payload in variant `Next`",
+    );
     assert_compile_error(
         "enum Choice { A } enum Choice { B } fn main() -> i64 { 0 }\n",
         "enum-duplicate-type",
