@@ -20,6 +20,9 @@ Usage:
   vacac <source.vca> --check
   vacac <source.vca> --emit-llvm <module.ll>
 
+Options may appear before or after <source.vca>. Use `--` before a source path
+that begins with `-`.
+
 Options:
   -o <path>            Set executable output path (default: a.out)
   --emit-obj <path>    Set object-file output path
@@ -62,16 +65,8 @@ enum ParseArgs {
 
 fn parse_args() -> Result<ParseArgs, String> {
     let mut args = std::env::args_os().skip(1);
-    let Some(first) = args.next() else {
-        return Err("missing source file (try --help)".into());
-    };
-    if first == "--help" || first == "-h" {
-        return Ok(ParseArgs::Help);
-    }
-    if first == "--version" || first == "-V" {
-        return Ok(ParseArgs::Version);
-    }
-    let source = PathBuf::from(first);
+    let mut source: Option<PathBuf> = None;
+    let mut positional_only = false;
 
     let mut output = PathBuf::from("a.out");
     let mut object = None;
@@ -83,56 +78,89 @@ fn parse_args() -> Result<ParseArgs, String> {
     let mut mode: Option<OutputMode> = None;
     let mut quiet = false;
     while let Some(arg) = args.next() {
-        match arg.to_str() {
-            Some("-h") | Some("--help") => return Ok(ParseArgs::Help),
-            Some("-V") | Some("--version") => return Ok(ParseArgs::Version),
-            Some("-o") => {
-                output = args.next().map(PathBuf::from).ok_or("-o requires a path")?;
-                output_was_set = true;
-            }
-            Some("--emit-obj") => {
-                if object_was_set {
-                    return Err("--emit-obj may be specified only once".into());
+        if !positional_only {
+            match arg.to_str() {
+                Some("-h") | Some("--help") => return Ok(ParseArgs::Help),
+                Some("-V") | Some("--version") => return Ok(ParseArgs::Version),
+                Some("--") => {
+                    positional_only = true;
+                    continue;
                 }
-                object = Some(
-                    args.next()
+                Some("-o") => {
+                    output = args.next().map(PathBuf::from).ok_or("-o requires a path")?;
+                    output_was_set = true;
+                    continue;
+                }
+                Some("--emit-obj") => {
+                    if object_was_set {
+                        return Err("--emit-obj may be specified only once".into());
+                    }
+                    object = Some(
+                        args.next()
+                            .map(PathBuf::from)
+                            .ok_or("--emit-obj requires a path")?,
+                    );
+                    object_was_set = true;
+                    continue;
+                }
+                Some("--link-object") => {
+                    link_objects.push(
+                        args.next()
+                            .map(PathBuf::from)
+                            .ok_or("--link-object requires a path")?,
+                    );
+                    continue;
+                }
+                Some("--link-search") => {
+                    link_search.push(
+                        args.next()
+                            .map(PathBuf::from)
+                            .ok_or("--link-search requires a directory")?,
+                    );
+                    continue;
+                }
+                Some("--link-lib") => {
+                    link_libs.push(args.next().ok_or("--link-lib requires a library name")?);
+                    continue;
+                }
+                Some("--check") => {
+                    set_mode(&mut mode, OutputMode::Check)?;
+                    continue;
+                }
+                Some("--run") => {
+                    set_mode(&mut mode, OutputMode::Run)?;
+                    continue;
+                }
+                Some("--emit-llvm") => {
+                    let path = args
+                        .next()
                         .map(PathBuf::from)
-                        .ok_or("--emit-obj requires a path")?,
-                );
-                object_was_set = true;
-            }
-            Some("--link-object") => link_objects.push(
-                args.next()
-                    .map(PathBuf::from)
-                    .ok_or("--link-object requires a path")?,
-            ),
-            Some("--link-search") => link_search.push(
-                args.next()
-                    .map(PathBuf::from)
-                    .ok_or("--link-search requires a directory")?,
-            ),
-            Some("--link-lib") => {
-                link_libs.push(args.next().ok_or("--link-lib requires a library name")?)
-            }
-            Some("--check") => set_mode(&mut mode, OutputMode::Check)?,
-            Some("--run") => set_mode(&mut mode, OutputMode::Run)?,
-            Some("--emit-llvm") => {
-                let path = args
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or("--emit-llvm requires a path")?;
-                set_mode(&mut mode, OutputMode::EmitLlvm(path))?;
-            }
-            Some("--quiet") | Some("-q") => quiet = true,
-            Some("--json") => {}
-            _ => {
-                return Err(format!(
-                    "unknown argument: {} (try --help)",
-                    arg.to_string_lossy()
-                ));
+                        .ok_or("--emit-llvm requires a path")?;
+                    set_mode(&mut mode, OutputMode::EmitLlvm(path))?;
+                    continue;
+                }
+                Some("--quiet") | Some("-q") => {
+                    quiet = true;
+                    continue;
+                }
+                Some("--json") => continue,
+                Some(flag) if flag.starts_with('-') => {
+                    return Err(format!("unknown argument: {flag} (try --help)"));
+                }
+                _ => {}
             }
         }
+        if source.is_some() {
+            return Err(format!(
+                "unexpected argument: {} (try --help)",
+                arg.to_string_lossy()
+            ));
+        }
+        source = Some(PathBuf::from(arg));
     }
+    let Some(source) = source else {
+        return Err("missing source file (try --help)".into());
+    };
     let mode = match mode {
         Some(OutputMode::Check) => {
             if !link_objects.is_empty() || !link_search.is_empty() || !link_libs.is_empty() {
@@ -186,6 +214,18 @@ fn object_path(output: &Path) -> PathBuf {
     let mut path = output.to_path_buf();
     path.set_extension("o");
     path
+}
+
+/// Qualify relative paths that begin with `-` so the linker cannot mistake them
+/// for command-line options.
+fn linker_argument(path: &Path) -> OsString {
+    if path.as_os_str().as_encoded_bytes().first() == Some(&b'-') {
+        let mut prefixed = OsString::from("./");
+        prefixed.push(path.as_os_str());
+        prefixed
+    } else {
+        path.as_os_str().to_os_string()
+    }
 }
 
 fn run() -> Result<i32, DiagnosticSet> {
@@ -287,9 +327,13 @@ fn link_object(
     link_libs: &[OsString],
 ) -> Result<std::process::ExitStatus, Diagnostic> {
     let mut command = Command::new("cc");
-    command.arg(object).args(link_objects).arg("-o").arg(output);
+    command
+        .arg(linker_argument(object))
+        .args(link_objects.iter().map(|path| linker_argument(path)))
+        .arg("-o")
+        .arg(linker_argument(output));
     for path in link_search {
-        command.arg("-L").arg(path);
+        command.arg("-L").arg(linker_argument(path));
     }
     for library in link_libs {
         let mut argument = OsString::from("-l");
