@@ -193,3 +193,90 @@ fn output_modes_reject_conflicting_arguments() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("may be specified only once"));
     let _ = fs::remove_dir_all(dir);
 }
+
+fn cli_test_dir(test_name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("vacac-{test_name}-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn options_may_appear_before_the_source_path() {
+    let dir = cli_test_dir("options-before-source");
+    fs::write(dir.join("test.vca"), "fn main() -> i64 { 0 }\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["--quiet", "--check", "test.vca"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stdout.is_empty());
+    assert!(!dir.join("a.out").exists());
+    assert!(!dir.join("a.o").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn option_values_may_appear_before_the_source_path() {
+    let dir = cli_test_dir("option-value-before-source");
+    fs::write(dir.join("test.vca"), "fn main() -> i64 { 7 }\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["-o", "program", "test.vca"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let run = Command::new(dir.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(7));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn double_dash_allows_a_source_path_that_begins_with_a_dash() {
+    let dir = cli_test_dir("dash-source");
+    fs::write(dir.join("-program.vca"), "fn main() -> i64 { 0 }\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["--check", "--", "-program.vca"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn dash_prefixed_output_paths_are_passed_safely_to_the_linker() {
+    let dir = cli_test_dir("dash-output");
+    fs::write(dir.join("test.vca"), "fn main() -> i64 { 5 }\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["test.vca", "-o", "-E"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let executable = dir.join("-E");
+    assert!(executable.exists());
+    assert!(dir.join("-E.o").exists());
+    let run = Command::new(&executable)
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(run.status.code(), Some(5));
+    let _ = fs::remove_dir_all(dir);
+}
