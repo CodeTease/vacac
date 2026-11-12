@@ -393,7 +393,10 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
-                        Diagnostic::at(span.into(), "only local bindings can be borrowed".to_string())
+                        Diagnostic::at(
+                            span.into(),
+                            "only local bindings can be borrowed".to_string(),
+                        )
                     })?;
                     if self.place_mutates_vector(value, name, local.ty)? {
                         return Err(Diagnostic::at(
@@ -435,7 +438,10 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
-                        Diagnostic::at(span.into(), "only local bindings can be borrowed".to_string())
+                        Diagnostic::at(
+                            span.into(),
+                            "only local bindings can be borrowed".to_string(),
+                        )
                     })?;
                     if local.immutable || local.loop_variable {
                         return Err(Diagnostic::at(
@@ -480,21 +486,24 @@ impl<'ctx> Codegen<'ctx> {
                         let Expr::Variable(name, _) = value.as_ref() else {
                             return Err(Diagnostic::at(
                                 span.into(),
-                                "raw address-taking currently requires a local or global variable".to_string(),
+                                "raw address-taking currently requires a local or global variable"
+                                    .to_string(),
                             ));
                         };
                         if let Some(local) = self.lookup_local(name) {
                             if local.immutable || local.loop_variable {
                                 return Err(Diagnostic::at(
                                     span.into(),
-                                    "cannot take a mutable raw pointer to an immutable binding".to_string(),
+                                    "cannot take a mutable raw pointer to an immutable binding"
+                                        .to_string(),
                                 ));
                             }
                         } else if let Some(global_name) = self.resolve_global_name(name) {
                             if !self.global_declarations[&global_name].mutable {
                                 return Err(Diagnostic::at(
                                     span.into(),
-                                    "cannot take a mutable raw pointer to an immutable global".to_string(),
+                                    "cannot take a mutable raw pointer to an immutable global"
+                                        .to_string(),
                                 ));
                             }
                         } else {

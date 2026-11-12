@@ -335,10 +335,11 @@ impl<'ctx> Codegen<'ctx> {
                     return Err(Diagnostic::at(
                         span.into(),
                         (if is_value_loop {
-                                "a value-producing loop requires `break` with a value"
-                            } else {
-                                "`break` with a value is only valid inside a value-producing `loop`"
-                            }).to_string(),
+                            "a value-producing loop requires `break` with a value"
+                        } else {
+                            "`break` with a value is only valid inside a value-producing `loop`"
+                        })
+                        .to_string(),
                     ));
                 }
                 let emitted_value = value

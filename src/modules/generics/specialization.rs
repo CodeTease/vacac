@@ -70,9 +70,9 @@ impl Specializer {
                 if let Type::Named(actual_name) = ty
                     && (name.rsplit("::").next() == actual_name.rsplit("::").next()
                         || actual_name.starts_with(&format!("{name}::<")))
-                    {
-                        *name = actual_name.clone();
-                    }
+                {
+                    *name = actual_name.clone();
+                }
                 let declaration = self.concrete_structs.get(name).cloned().or_else(|| {
                     self.generated_structs
                         .iter()

@@ -15,7 +15,8 @@ impl<'ctx> Codegen<'ctx> {
             if arms.len() != 1 {
                 return Err(Diagnostic::at(
                     span.into(),
-                    "tuple, array, and struct matches require exactly one destructuring arm".to_string(),
+                    "tuple, array, and struct matches require exactly one destructuring arm"
+                        .to_string(),
                 ));
             }
             let arm = &arms[0];
@@ -25,7 +26,8 @@ impl<'ctx> Codegen<'ctx> {
             ) {
                 return Err(Diagnostic::at(
                     arm.span.into(),
-                    "destructuring match arm must use a tuple, array, or struct pattern".to_string(),
+                    "destructuring match arm must use a tuple, array, or struct pattern"
+                        .to_string(),
                 ));
             }
             let aggregate = value
@@ -278,7 +280,8 @@ impl<'ctx> Codegen<'ctx> {
                     if is_bool && seen_bool.len() == 2 {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            "unreachable wildcard match arm after all values are covered".to_string(),
+                            "unreachable wildcard match arm after all values are covered"
+                                .to_string(),
                         ));
                     }
                     None
@@ -293,7 +296,8 @@ impl<'ctx> Codegen<'ctx> {
                     if is_bool && seen_bool.len() == 2 {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            "unreachable wildcard match arm after all values are covered".to_string(),
+                            "unreachable wildcard match arm after all values are covered"
+                                .to_string(),
                         ));
                     }
                     wildcard_seen = true;

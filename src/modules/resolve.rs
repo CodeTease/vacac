@@ -34,12 +34,13 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
     }
     for declaration in &program.structs {
         if let Some(previous) = symbols.get(&qualify(&declaration.module, &declaration.name))
-            && previous.kind == "enum" {
-                return Err(Diagnostic::at(
-                    declaration.span.into(),
-                    format!("type `{}` is defined more than once", declaration.name),
-                ));
-            }
+            && previous.kind == "enum"
+        {
+            return Err(Diagnostic::at(
+                declaration.span.into(),
+                format!("type `{}` is defined more than once", declaration.name),
+            ));
+        }
     }
     for declaration in &program.structs {
         add_symbol(
