@@ -270,6 +270,11 @@ fn enums_reject_duplicate_declarations_and_unsupported_payloads() {
         "recursive by-value field `link`",
     );
     assert_compile_error(
+        "enum Link { Next((i64, Link)) } fn main() -> i64 { 0 }\n",
+        "enum-recursive-tuple-payload-after-acyclic-element",
+        "enum `Link` has a recursive by-value payload in variant `Next`",
+    );
+    assert_compile_error(
         "enum Choice { A } enum Choice { B } fn main() -> i64 { 0 }\n",
         "enum-duplicate-type",
         "enum `Choice` is defined more than once",

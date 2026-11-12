@@ -224,6 +224,23 @@ fn structs_reject_duplicate_declarations_and_invalid_fields() {
         "recursive by-value field `children`",
     );
     assert_compile_error(
+        "struct Good { x: i64 } struct Bad { pair: (Good, Bad) } \
+         fn use_bad(b: Bad) -> i64 { 0 } fn main() -> i64 { 0 }",
+        "struct-recursive-tuple-field-after-acyclic-element",
+        "struct `Bad` has a recursive by-value field `pair`",
+    );
+    assert_compile_error(
+        "struct Good { x: i64 } struct Bad { pair: [(Good, Bad); 2] } fn main() -> i64 { 0 }",
+        "struct-recursive-array-of-tuple-field",
+        "struct `Bad` has a recursive by-value field `pair`",
+    );
+    assert_compile_error(
+        "struct Holder<A, B> { first: A, second: B } struct Good { x: i64 } \
+         struct Bad { pair: Holder<Good, Bad> } fn main() -> i64 { 0 }",
+        "struct-recursive-type-argument-field",
+        "recursive by-value field",
+    );
+    assert_compile_error(
         "struct Item { id: i64, id: bool } fn main() -> i64 { 0 }",
         "struct-duplicate-field-declaration",
         "struct field `id` is defined more than once",
