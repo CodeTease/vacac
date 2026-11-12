@@ -193,12 +193,11 @@ impl Parser {
             match parsed_arm {
                 Ok(arm) => {
                     arms.push(arm);
-                    if !self.at(&TokenKind::RBrace) {
-                        if !self.take(&TokenKind::Comma) {
+                    if !self.at(&TokenKind::RBrace)
+                        && !self.take(&TokenKind::Comma) {
                             self.report(unexpected(self.peek(), "`,` or `}` after match arm"));
                             self.synchronize_match_arm();
                         }
-                    }
                 }
                 Err(error) => {
                     self.report(error);

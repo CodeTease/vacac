@@ -39,7 +39,7 @@ impl<'ctx> Codegen<'ctx> {
                 let ValueType::Struct(struct_id) = base_type else {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("field access requires a struct value"),
+                        "field access requires a struct value".to_string(),
                     ));
                 };
                 let field_index = self.structs[struct_id]
@@ -146,7 +146,7 @@ impl<'ctx> Codegen<'ctx> {
                 let ValueType::Array(array_id) = array_type else {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("indexing requires an array (or vector)"),
+                        "indexing requires an array (or vector)".to_string(),
                     ));
                 };
                 let index_value = self.emit_expression(index)?;
@@ -232,7 +232,7 @@ impl<'ctx> Codegen<'ctx> {
                     ) {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("reference bindings cannot be reassigned"),
+                            "reference bindings cannot be reassigned".to_string(),
                         ));
                     }
                     if local.immutable {
@@ -241,7 +241,7 @@ impl<'ctx> Codegen<'ctx> {
                         } else {
                             format!("cannot assign to immutable binding `{name}`")
                         };
-                        return Err(Diagnostic::at(span.into(), format!("{reason}")));
+                        return Err(Diagnostic::at(span.into(), reason.to_string()));
                     }
                     (local.pointer, local.ty)
                 } else {
@@ -290,7 +290,7 @@ impl<'ctx> Codegen<'ctx> {
                 let name = codegen_assignment_root(target).ok_or_else(|| {
                     Diagnostic::at(
                         span.into(),
-                        format!("assignment target must start with a variable"),
+                        "assignment target must start with a variable".to_string(),
                     )
                 })?;
                 if matches!(target, Expr::Variable(_, _))
@@ -303,7 +303,7 @@ impl<'ctx> Codegen<'ctx> {
                 {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("reference bindings cannot be reassigned"),
+                        "reference bindings cannot be reassigned".to_string(),
                     ));
                 }
                 let (root_pointer, root_type, mutable, loop_variable) =
@@ -341,12 +341,12 @@ impl<'ctx> Codegen<'ctx> {
                     {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("assignment target must start with a variable"),
+                            "assignment target must start with a variable".to_string(),
                         ));
                     }
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("cannot assign through an immutable pointer"),
+                        "cannot assign through an immutable pointer".to_string(),
                     ));
                 }
                 if !through_pointer && !mutable && !vector_place {
@@ -355,7 +355,7 @@ impl<'ctx> Codegen<'ctx> {
                     } else {
                         format!("cannot assign through immutable binding `{name}`")
                     };
-                    return Err(Diagnostic::at(span.into(), format!("{reason}")));
+                    return Err(Diagnostic::at(span.into(), reason.to_string()));
                 }
                 let (target_pointer, target_type) =
                     self.emit_place_pointer(target, name, root_pointer, root_type)?;
@@ -417,7 +417,7 @@ impl<'ctx> Codegen<'ctx> {
                 else {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("field access requires a struct"),
+                        "field access requires a struct".to_string(),
                     ));
                 };
                 let field = self.structs[struct_id]
@@ -436,7 +436,7 @@ impl<'ctx> Codegen<'ctx> {
                 ValueType::Vector(index) => Ok(ValueType::from(self.vector_shapes[index].element)),
                 _ => Err(Diagnostic::at(
                     span.into(),
-                    format!("indexing requires an array or vector"),
+                    "indexing requires an array or vector".to_string(),
                 )),
             },
             _ => Err("invalid place expression".into()),

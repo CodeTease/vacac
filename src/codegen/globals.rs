@@ -21,13 +21,13 @@ impl<'ctx> Codegen<'ctx> {
             {
                 return Err(Diagnostic::at(
                     declaration.span.into(),
-                    format!("global initializer type cannot be `unit`, a vector, or a reference"),
+                    "global initializer type cannot be `unit`, a vector, or a reference".to_string(),
                 ));
             }
             if self.global_type_contains_raw_pointer(ty, &mut std::collections::HashSet::new())? {
                 return Err(Diagnostic::at(
                     declaration.span.into(),
-                    format!("global initializers cannot contain raw pointers"),
+                    "global initializers cannot contain raw pointers".to_string(),
                 ));
             }
             let llvm_type = self.llvm_type(ty).ok_or("global has no LLVM type")?;

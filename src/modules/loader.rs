@@ -124,7 +124,7 @@ impl Loader {
             .extern_functions
             .append(&mut parsed.extern_functions);
         for declaration in declarations {
-            if declaration.name == "" || declaration.name.contains("::") {
+            if declaration.name.is_empty() || declaration.name.contains("::") {
                 self.diagnostics.push(Diagnostic::at(
                     declaration.span.into(),
                     "module name must be a single identifier",

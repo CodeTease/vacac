@@ -104,12 +104,12 @@ impl<'ctx> Codegen<'ctx> {
                 if !args.is_empty() {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("`vec_new` expects 0 arguments"),
+                        "`vec_new` expects 0 arguments".to_string(),
                     ));
                 }
                 Err(Diagnostic::at(
                     span.into(),
-                    format!("`vec_new()` requires a `Vec<T>` type annotation"),
+                    "`vec_new()` requires a `Vec<T>` type annotation".to_string(),
                 ))
             }
             Expr::Variable(name, span) => {
@@ -269,7 +269,7 @@ impl<'ctx> Codegen<'ctx> {
                 let ValueType::Array(array_id) = array_value.ty else {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("indexing requires an array (or vector)"),
+                        "indexing requires an array (or vector)".to_string(),
                     ));
                 };
                 let shape = self.array_shapes[array_id];
@@ -317,7 +317,7 @@ impl<'ctx> Codegen<'ctx> {
                 let ValueType::Struct(struct_id) = value.ty else {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("field access requires a struct value"),
+                        "field access requires a struct value".to_string(),
                     ));
                 };
                 let (owner, public) = self
@@ -393,7 +393,7 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
-                        Diagnostic::at(span.into(), format!("only local bindings can be borrowed"))
+                        Diagnostic::at(span.into(), "only local bindings can be borrowed".to_string())
                     })?;
                     if self.place_mutates_vector(value, name, local.ty)? {
                         return Err(Diagnostic::at(
@@ -409,7 +409,7 @@ impl<'ctx> Codegen<'ctx> {
                     ) {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("references to references are not supported"),
+                            "references to references are not supported".to_string(),
                         ));
                     }
                     if !self.reference_target_is_supported(
@@ -418,7 +418,7 @@ impl<'ctx> Codegen<'ctx> {
                     )? {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("references to values containing vectors are not supported"),
+                            "references to values containing vectors are not supported".to_string(),
                         ));
                     }
                     let reference_type = self.reference_type(target_type);
@@ -435,12 +435,12 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     };
                     let local = self.lookup_local(name).ok_or_else(|| {
-                        Diagnostic::at(span.into(), format!("only local bindings can be borrowed"))
+                        Diagnostic::at(span.into(), "only local bindings can be borrowed".to_string())
                     })?;
                     if local.immutable || local.loop_variable {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("mutable borrowing requires a mutable local binding"),
+                            "mutable borrowing requires a mutable local binding".to_string(),
                         ));
                     }
                     if self.place_mutates_vector(value, name, local.ty)? {
@@ -457,7 +457,7 @@ impl<'ctx> Codegen<'ctx> {
                     )? {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("references to values containing vectors are not supported"),
+                            "references to values containing vectors are not supported".to_string(),
                         ));
                     }
                     if matches!(
@@ -466,7 +466,7 @@ impl<'ctx> Codegen<'ctx> {
                     ) {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("references to references are not supported"),
+                            "references to references are not supported".to_string(),
                         ));
                     }
                     let ty = self.mutable_reference_type(target_type);
@@ -480,27 +480,21 @@ impl<'ctx> Codegen<'ctx> {
                         let Expr::Variable(name, _) = value.as_ref() else {
                             return Err(Diagnostic::at(
                                 span.into(),
-                                format!(
-                                    "raw address-taking currently requires a local or global variable"
-                                ),
+                                "raw address-taking currently requires a local or global variable".to_string(),
                             ));
                         };
                         if let Some(local) = self.lookup_local(name) {
                             if local.immutable || local.loop_variable {
                                 return Err(Diagnostic::at(
                                     span.into(),
-                                    format!(
-                                        "cannot take a mutable raw pointer to an immutable binding"
-                                    ),
+                                    "cannot take a mutable raw pointer to an immutable binding".to_string(),
                                 ));
                             }
                         } else if let Some(global_name) = self.resolve_global_name(name) {
                             if !self.global_declarations[&global_name].mutable {
                                 return Err(Diagnostic::at(
                                     span.into(),
-                                    format!(
-                                        "cannot take a mutable raw pointer to an immutable global"
-                                    ),
+                                    "cannot take a mutable raw pointer to an immutable global".to_string(),
                                 ));
                             }
                         } else {
@@ -692,7 +686,7 @@ impl<'ctx> Codegen<'ctx> {
                     ) {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("closures cannot capture references"),
+                            "closures cannot capture references".to_string(),
                         ));
                     }
                     captures.push((capture_name, local.ty, local.pointer));
@@ -824,7 +818,7 @@ impl<'ctx> Codegen<'ctx> {
                 if matches!(value.ty, ValueType::Reference(_)) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references cannot escape through loop expressions"),
+                        "references cannot escape through loop expressions".to_string(),
                     ));
                 }
                 Ok(value)

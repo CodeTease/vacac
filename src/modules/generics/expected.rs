@@ -280,8 +280,8 @@ impl Specializer {
                     for (parameter, argument) in
                         template.generic_params.iter().zip(&mut resolved_arguments)
                     {
-                        if let Some(inferred) = inferred.get(parameter) {
-                            if argument != inferred {
+                        if let Some(inferred) = inferred.get(parameter)
+                            && argument != inferred {
                                 return Err(Diagnostic::at(
                                     (*variant_span).into(),
                                     format!(
@@ -289,7 +289,6 @@ impl Specializer {
                                     ),
                                 ));
                             }
-                        }
                     }
                 }
                 if resolved_arguments.len() != template.generic_params.len() {

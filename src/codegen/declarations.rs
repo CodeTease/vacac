@@ -243,7 +243,7 @@ impl<'ctx> Codegen<'ctx> {
                 if element == ValueType::Unit {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references cannot target `unit`"),
+                        "references cannot target `unit`".to_string(),
                     ));
                 }
                 if matches!(
@@ -252,7 +252,7 @@ impl<'ctx> Codegen<'ctx> {
                 ) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references to references are not supported"),
+                        "references to references are not supported".to_string(),
                     ));
                 }
                 if !self
@@ -260,7 +260,7 @@ impl<'ctx> Codegen<'ctx> {
                 {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references to values containing vectors are not supported"),
+                        "references to values containing vectors are not supported".to_string(),
                     ));
                 }
                 self.reference_type(element)
@@ -275,7 +275,7 @@ impl<'ctx> Codegen<'ctx> {
                 {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("invalid mutable reference target"),
+                        "invalid mutable reference target".to_string(),
                     ));
                 }
                 if !self
@@ -283,7 +283,7 @@ impl<'ctx> Codegen<'ctx> {
                 {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references to values containing vectors are not supported"),
+                        "references to values containing vectors are not supported".to_string(),
                     ));
                 }
                 self.mutable_reference_type(element)
@@ -293,7 +293,7 @@ impl<'ctx> Codegen<'ctx> {
                 if element == ValueType::Unit {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("raw pointers cannot target `unit`"),
+                        "raw pointers cannot target `unit`".to_string(),
                     ));
                 }
                 if matches!(
@@ -302,7 +302,7 @@ impl<'ctx> Codegen<'ctx> {
                 ) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("raw pointers cannot target safe references"),
+                        "raw pointers cannot target safe references".to_string(),
                     ));
                 }
                 self.raw_pointer_type(element, *mutable)
@@ -311,7 +311,7 @@ impl<'ctx> Codegen<'ctx> {
                 if elements.is_empty() {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("tuple types must contain at least one element"),
+                        "tuple types must contain at least one element".to_string(),
                     ));
                 }
                 let mut types = Vec::with_capacity(elements.len());
@@ -320,13 +320,13 @@ impl<'ctx> Codegen<'ctx> {
                     if ty == ValueType::Unit {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("tuple elements cannot have type `unit`"),
+                            "tuple elements cannot have type `unit`".to_string(),
                         ));
                     }
                     if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("references cannot be stored in tuples"),
+                            "references cannot be stored in tuples".to_string(),
                         ));
                     }
                     types.push(ty);
@@ -340,7 +340,7 @@ impl<'ctx> Codegen<'ctx> {
                     if param_type == ValueType::Unit {
                         return Err(Diagnostic::at(
                             span.into(),
-                            format!("function type parameters cannot have type `unit`"),
+                            "function type parameters cannot have type `unit`".to_string(),
                         ));
                     }
                     param_types.push(param_type);
@@ -352,7 +352,7 @@ impl<'ctx> Codegen<'ctx> {
                 ) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("function types cannot return references"),
+                        "function types cannot return references".to_string(),
                     ));
                 }
                 self.function_type(param_types, return_type)
@@ -718,13 +718,13 @@ impl<'ctx> Codegen<'ctx> {
                     ) {
                         return Err(Diagnostic::at(
                             variant.span.into(),
-                            format!("references cannot be stored in enums"),
+                            "references cannot be stored in enums".to_string(),
                         ));
                     }
                     if value_type == ValueType::Unit {
                         return Err(Diagnostic::at(
                             variant.span.into(),
-                            format!("enum payloads cannot have type `unit`"),
+                            "enum payloads cannot have type `unit`".to_string(),
                         ));
                     }
                     payload_fields.push(
@@ -794,13 +794,13 @@ impl<'ctx> Codegen<'ctx> {
                     Type::Unit => {
                         return Err(Diagnostic::at(
                             field.span.into(),
-                            format!("struct fields cannot have type `unit`"),
+                            "struct fields cannot have type `unit`".to_string(),
                         ));
                     }
                     Type::Reference(_, _) | Type::MutableReference(_, _) => {
                         return Err(Diagnostic::at(
                             field.span.into(),
-                            format!("references cannot be stored in structs"),
+                            "references cannot be stored in structs".to_string(),
                         ));
                     }
                     Type::Applied(name, _) => {
@@ -892,7 +892,7 @@ impl<'ctx> Codegen<'ctx> {
                 if param.ty == Type::Unit {
                     return Err(Diagnostic::at(
                         param.span.into(),
-                        format!("parameters cannot have type `unit`"),
+                        "parameters cannot have type `unit`".to_string(),
                     ));
                 }
                 if !names.insert(param.name.as_str()) {

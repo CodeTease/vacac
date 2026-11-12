@@ -56,7 +56,7 @@ impl<'ctx> Codegen<'ctx> {
         expr: &Expr,
         expected: Option<ValueType>,
     ) -> Result<ConstantValue, Diagnostic> {
-        let fail = |span: Span, message: &str| Diagnostic::at(span.into(), format!("{message}"));
+        let fail = |span: Span, message: &str| Diagnostic::at(span.into(), message.to_string());
         let value = match expr {
             Expr::Integer(value, span) => {
                 let value = if let Some(value) = value.checked_into_i64() {

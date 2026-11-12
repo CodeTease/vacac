@@ -15,9 +15,7 @@ impl<'ctx> Codegen<'ctx> {
             if arms.len() != 1 {
                 return Err(Diagnostic::at(
                     span.into(),
-                    format!(
-                        "tuple, array, and struct matches require exactly one destructuring arm"
-                    ),
+                    "tuple, array, and struct matches require exactly one destructuring arm".to_string(),
                 ));
             }
             let arm = &arms[0];
@@ -27,7 +25,7 @@ impl<'ctx> Codegen<'ctx> {
             ) {
                 return Err(Diagnostic::at(
                     arm.span.into(),
-                    format!("destructuring match arm must use a tuple, array, or struct pattern"),
+                    "destructuring match arm must use a tuple, array, or struct pattern".to_string(),
                 ));
             }
             let aggregate = value
@@ -43,12 +41,12 @@ impl<'ctx> Codegen<'ctx> {
                     "destructuring match arm unexpectedly terminated",
                 ));
             }
-            return Ok(result.ok_or_else(|| {
+            return result.ok_or_else(|| {
                 Diagnostic::at(
                     arm.span.into(),
                     "destructuring match arm must produce a value",
                 )
-            })?);
+            });
         }
         if matches!(
             value.ty,
@@ -59,7 +57,7 @@ impl<'ctx> Codegen<'ctx> {
         let ValueType::Enum(enum_id) = value.ty else {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("match requires an enum value"),
+                "match requires an enum value".to_string(),
             ));
         };
         let enum_value = value
@@ -273,14 +271,14 @@ impl<'ctx> Codegen<'ctx> {
                     if wildcard_seen {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("duplicate wildcard match arm"),
+                            "duplicate wildcard match arm".to_string(),
                         ));
                     }
                     wildcard_seen = true;
                     if is_bool && seen_bool.len() == 2 {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable wildcard match arm after all values are covered"),
+                            "unreachable wildcard match arm after all values are covered".to_string(),
                         ));
                     }
                     None
@@ -289,13 +287,13 @@ impl<'ctx> Codegen<'ctx> {
                     if wildcard_seen {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable match arm after wildcard"),
+                            "unreachable match arm after wildcard".to_string(),
                         ));
                     }
                     if is_bool && seen_bool.len() == 2 {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable wildcard match arm after all values are covered"),
+                            "unreachable wildcard match arm after all values are covered".to_string(),
                         ));
                     }
                     wildcard_seen = true;
@@ -311,7 +309,7 @@ impl<'ctx> Codegen<'ctx> {
                     if wildcard_seen {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable match arm after wildcard"),
+                            "unreachable match arm after wildcard".to_string(),
                         ));
                     }
                     if !seen_bool.insert(*pattern) {
@@ -326,7 +324,7 @@ impl<'ctx> Codegen<'ctx> {
                     if wildcard_seen {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable match arm after wildcard"),
+                            "unreachable match arm after wildcard".to_string(),
                         ));
                     }
                     if !seen_i64.insert(*pattern) {
@@ -341,10 +339,10 @@ impl<'ctx> Codegen<'ctx> {
                     if wildcard_seen {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable match arm after wildcard"),
+                            "unreachable match arm after wildcard".to_string(),
                         ));
                     }
-                    if seen_f32.iter().any(|seen| *seen == *pattern) {
+                    if seen_f32.contains(pattern) {
                         return Err(Diagnostic::at(
                             arm.span.into(),
                             format!("duplicate match arm for `{pattern}`"),
@@ -357,10 +355,10 @@ impl<'ctx> Codegen<'ctx> {
                     if wildcard_seen {
                         return Err(Diagnostic::at(
                             arm.span.into(),
-                            format!("unreachable match arm after wildcard"),
+                            "unreachable match arm after wildcard".to_string(),
                         ));
                     }
-                    if seen_f64.iter().any(|seen| *seen == *pattern) {
+                    if seen_f64.contains(pattern) {
                         return Err(Diagnostic::at(
                             arm.span.into(),
                             format!("duplicate match arm for `{pattern}`"),

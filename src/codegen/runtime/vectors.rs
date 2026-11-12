@@ -361,7 +361,7 @@ impl<'ctx> Codegen<'ctx> {
                 }) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references cannot be stored in tuples"),
+                        "references cannot be stored in tuples".to_string(),
                     ));
                 }
                 Ok(ArrayElementType::Tuple(index))
@@ -380,15 +380,15 @@ impl<'ctx> Codegen<'ctx> {
             }
             Type::Unit => Err(Diagnostic::at(
                 span.into(),
-                format!("array elements cannot have type `unit`"),
+                "array elements cannot have type `unit`".to_string(),
             )),
             Type::Reference(_, _) => Err(Diagnostic::at(
                 span.into(),
-                format!("references cannot be stored in arrays or vectors"),
+                "references cannot be stored in arrays or vectors".to_string(),
             )),
             Type::MutableReference(_, _) => Err(Diagnostic::at(
                 span.into(),
-                format!("references cannot be stored in arrays or vectors"),
+                "references cannot be stored in arrays or vectors".to_string(),
             )),
             Type::RawPointer(_, _) => {
                 let ValueType::RawPointer(index) = self.resolve_type(element, span)? else {

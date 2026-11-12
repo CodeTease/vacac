@@ -10,7 +10,7 @@ impl<'ctx> Codegen<'ctx> {
         let ValueType::Function(function_id) = callee.ty else {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("called expression must have a function type"),
+                "called expression must have a function type".to_string(),
             ));
         };
         let shape = self.function_shapes[function_id].clone();
@@ -114,7 +114,7 @@ impl<'ctx> Codegen<'ctx> {
             let ValueType::Vector(vector_id) = vector.ty else {
                 return Err(Diagnostic::at(
                     span.into(),
-                    format!("argument 1 to `vec_push` must be a vector"),
+                    "argument 1 to `vec_push` must be a vector".to_string(),
                 ));
             };
             let element_type = ValueType::from(self.vector_shapes[vector_id].element);
@@ -201,7 +201,7 @@ impl<'ctx> Codegen<'ctx> {
                 _ => {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("argument 1 to `len` must be an array (or vector)"),
+                        "argument 1 to `len` must be an array (or vector)".to_string(),
                     ));
                 }
             };

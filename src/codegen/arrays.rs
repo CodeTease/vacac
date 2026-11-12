@@ -153,7 +153,7 @@ impl<'ctx> Codegen<'ctx> {
             if shape.length != 0 {
                 return Err(Diagnostic::at(
                     span.into(),
-                    format!("empty array literal must have array length 0"),
+                    "empty array literal must have array length 0".to_string(),
                 ));
             }
             return Ok(TypedValue {
@@ -227,19 +227,19 @@ impl<'ctx> Codegen<'ctx> {
         if elements.is_empty() {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("empty array literals require an array type annotation"),
+                "empty array literals require an array type annotation".to_string(),
             ));
         }
         let Some(first) = elements.first() else {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("array literals must contain at least one element"),
+                "array literals must contain at least one element".to_string(),
             ));
         };
         if elements.len() > u32::MAX as usize {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("array literal is too large"),
+                "array literal is too large".to_string(),
             ));
         }
         let first = self.emit_expression(first)?;
@@ -322,7 +322,7 @@ impl<'ctx> Codegen<'ctx> {
         if elements.is_empty() {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("tuple literals must contain at least one element"),
+                "tuple literals must contain at least one element".to_string(),
             ));
         }
         let mut values = Vec::with_capacity(elements.len());
@@ -332,7 +332,7 @@ impl<'ctx> Codegen<'ctx> {
             if value.ty == ValueType::Unit {
                 return Err(Diagnostic::at(
                     span.into(),
-                    format!("tuple elements cannot have type `unit`"),
+                    "tuple elements cannot have type `unit`".to_string(),
                 ));
             }
             types.push(value.ty);

@@ -168,7 +168,7 @@ impl Checker {
                     if wildcard_seen {
                         return Err(at(arm.span, "unreachable match arm after wildcard"));
                     }
-                    if seen_f32.iter().any(|seen| *seen == *value) {
+                    if seen_f32.contains(value) {
                         return Err(at(arm.span, format!("duplicate match arm for `{value}`")));
                     }
                     seen_f32.push(*value);
@@ -177,7 +177,7 @@ impl Checker {
                     if wildcard_seen {
                         return Err(at(arm.span, "unreachable match arm after wildcard"));
                     }
-                    if seen_f64.iter().any(|seen| *seen == *value) {
+                    if seen_f64.contains(value) {
                         return Err(at(arm.span, format!("duplicate match arm for `{value}`")));
                     }
                     seen_f64.push(*value);

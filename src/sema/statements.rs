@@ -549,16 +549,13 @@ impl Checker {
                         value: borrowed,
                         ..
                     } = value
-                    {
-                        if let Expr::Variable(source, source_span) = borrowed.as_ref() {
-                            if self.is_place_mutably_borrowed(borrowed, *source_span)? {
+                        && let Expr::Variable(source, source_span) = borrowed.as_ref()
+                            && self.is_place_mutably_borrowed(borrowed, *source_span)? {
                                 return Err(at(
                                     *source_span,
                                     format!("`{source}` is already mutably borrowed"),
                                 ));
                             }
-                        }
-                    }
                     let value_type = self.check_expr(value, false)?;
                     if matches!(
                         value_type,
@@ -598,11 +595,10 @@ impl Checker {
                     if matches!(
                         value_type,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
-                    ) {
-                        if self.return_lifetime.is_some() {
+                    )
+                        && self.return_lifetime.is_some() {
                             self.validate_return_provenance(value, *span)?;
                         }
-                    }
                     self.expect_type(value_type, return_type, span_of_expr(value), "return value")?;
                 } else if return_type != ValueType::Unit {
                     return Err(at(

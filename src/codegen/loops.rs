@@ -237,7 +237,7 @@ impl<'ctx> Codegen<'ctx> {
             _ => {
                 return Err(Diagnostic::at(
                     span.into(),
-                    format!("array iteration requires an array or vector"),
+                    "array iteration requires an array or vector".to_string(),
                 ));
             }
         };

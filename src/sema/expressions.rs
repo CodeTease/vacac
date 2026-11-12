@@ -584,14 +584,12 @@ impl Checker {
                         ..
                     } = arg
                         && let Expr::Variable(source, source_span) = value.as_ref()
-                    {
-                        if self.is_place_mutably_borrowed(value, *source_span)? {
+                        && self.is_place_mutably_borrowed(value, *source_span)? {
                             return Err(at(
                                 *source_span,
                                 format!("`{source}` is already mutably borrowed"),
                             ));
                         }
-                    }
                     let previous_shared_borrow_permission = self.allow_shared_borrow;
                     if matches!(expected, ValueType::Reference(_)) {
                         self.allow_shared_borrow = true;

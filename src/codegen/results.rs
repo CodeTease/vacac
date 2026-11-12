@@ -10,13 +10,13 @@ impl<'ctx> Codegen<'ctx> {
         let ValueType::Enum(result_id) = result.ty else {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("postfix `?` requires a `Result<T, E>` value"),
+                "postfix `?` requires a `Result<T, E>` value".to_string(),
             ));
         };
         if !self.enums[result_id].name.starts_with("Result::<") {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("postfix `?` requires the built-in `Result<T, E>` type"),
+                "postfix `?` requires the built-in `Result<T, E>` type".to_string(),
             ));
         }
         let result_value = result
@@ -57,13 +57,13 @@ impl<'ctx> Codegen<'ctx> {
         let ValueType::Enum(return_id) = self.return_type else {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("postfix `?` can only be used in a function returning `Result<T, E>`"),
+                "postfix `?` can only be used in a function returning `Result<T, E>`".to_string(),
             ));
         };
         if !self.enums[return_id].name.starts_with("Result::<") {
             return Err(Diagnostic::at(
                 span.into(),
-                format!("postfix `?` can only be used in a function returning `Result<T, E>`"),
+                "postfix `?` can only be used in a function returning `Result<T, E>`".to_string(),
             ));
         }
         let return_err_index = self.enums[return_id]

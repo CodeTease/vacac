@@ -209,7 +209,7 @@ impl<'ctx> Codegen<'ctx> {
                 if emitted_value.ty == ValueType::Unit {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("cannot bind a value of type `unit`"),
+                        "cannot bind a value of type `unit`".to_string(),
                     ));
                 }
                 if matches!(
@@ -219,7 +219,7 @@ impl<'ctx> Codegen<'ctx> {
                 {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("reference bindings must be immutable"),
+                        "reference bindings must be immutable".to_string(),
                     ));
                 }
                 let ty = match ty {
@@ -334,14 +334,11 @@ impl<'ctx> Codegen<'ctx> {
                 if is_value_loop != value.is_some() {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!(
-                            "{}",
-                            if is_value_loop {
+                        (if is_value_loop {
                                 "a value-producing loop requires `break` with a value"
                             } else {
                                 "`break` with a value is only valid inside a value-producing `loop`"
-                            }
-                        ),
+                            }).to_string(),
                     ));
                 }
                 let emitted_value = value
@@ -356,7 +353,7 @@ impl<'ctx> Codegen<'ctx> {
                 }) {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("references cannot escape through loop breaks"),
+                        "references cannot escape through loop breaks".to_string(),
                     ));
                 }
                 let break_block = self
@@ -366,7 +363,7 @@ impl<'ctx> Codegen<'ctx> {
                 if self.loop_targets.is_empty() {
                     return Err(Diagnostic::at(
                         span.into(),
-                        format!("`break` is only valid inside a loop"),
+                        "`break` is only valid inside a loop".to_string(),
                     ));
                 }
                 if let Some(value) = emitted_value {
@@ -410,7 +407,7 @@ impl<'ctx> Codegen<'ctx> {
                     .ok_or_else(|| {
                         Diagnostic::at(
                             span.into(),
-                            format!("`continue` is only valid inside a loop"),
+                            "`continue` is only valid inside a loop".to_string(),
                         )
                     })?;
                 self.builder
