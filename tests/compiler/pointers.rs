@@ -39,6 +39,28 @@ fn mutable_raw_pointers_write_through_const_bindings() {
 }
 
 #[test]
+fn pointer_dereference_assignment_evaluates_the_place_once() {
+    let result = compile_and_run(
+        r#"
+        fn side_effect(v: &i64) -> i64 {
+            print_i64(777);
+            0
+        }
+        fn main() -> i64 {
+            let x = 10;
+            let arr: [*mut i64; 1] = [&raw mut x];
+            let dummy = 0;
+            *arr[side_effect(&dummy)] = 42;
+            x - 42
+        }
+        "#,
+        "pointer-deref-assignment-single-evaluation",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "777\n");
+}
+
+#[test]
 fn raw_pointer_mutability_and_unsupported_escapes_are_checked() {
     for (source, name, diagnostic) in [
         (
