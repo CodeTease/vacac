@@ -55,5 +55,5 @@ Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `t
 - Division/remainder by zero and `i64::MIN / -1` or `% -1` exit with status 1.
 - Structs support by-value fields containing arrays, enums, and other structs; recursive by-value struct layouts are rejected.
 - Reserved names: `print_i64`, `print`, `println`, `read_i64`, `len`, `printf`, `strcmp`, `vaca_main`, `getchar`, `exit`, `strlen`, `malloc`, `realloc`, `memcpy`, `vaca_alloc`, `vaca_str_concat`, `vaca_vec_new`, `vaca_vec_push`. User may not define these.
-- `str` is lowered to an LLVM `ptr` to a NUL-terminated global constant (deduplicated per module); concatenation calls a generated runtime helper and returns a heap allocation retained until process exit. `==`/`!=` call `strcmp`; `\0` escapes are rejected in the lexer for this reason. Other operators on `str` are type errors.
+- `str` is lowered to an LLVM `ptr` to a NUL-terminated global constant (deduplicated per module); concatenation calls a generated runtime helper and returns a heap allocation retained until process exit. `==`/`!=` call `strcmp`; `\0` escapes and raw `0x00` bytes are rejected in the lexer for this reason. Other operators on `str` are type errors.
 - Object files land next to the output executable by default (`target/release/vacac foo.vca -o bar` → `bar.o`). Use `--emit-obj` to override.

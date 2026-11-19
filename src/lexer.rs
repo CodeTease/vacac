@@ -490,6 +490,21 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                         i += 2;
                         column += 2;
                     }
+                    Some(&0) => {
+                        // Raw NUL bytes are rejected for the same reason `\0` is:
+                        // strings are lowered to NUL-terminated C strings, so an
+                        // embedded NUL would silently truncate at runtime while
+                        // compile-time constant comparison still saw the full value.
+                        return Err(Diagnostic::at(
+                            SourceSpan {
+                                line,
+                                column,
+                                end_column: column + 1,
+                                file: source_id,
+                            },
+                            "NUL characters are not supported in string literals",
+                        ));
+                    }
                     Some(&byte) => {
                         value.push(byte);
                         i += 1;
