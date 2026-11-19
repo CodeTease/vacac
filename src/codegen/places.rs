@@ -1,5 +1,13 @@
 use super::*;
 
+/// Write access granted by the first pointer dereferenced along a place path.
+#[derive(Clone, Copy)]
+enum DerefMutability {
+    Mutable,
+    SharedReference,
+    Immutable,
+}
+
 impl<'ctx> Codegen<'ctx> {
     pub(super) fn emit_place_pointer(
         &mut self,
@@ -8,18 +16,47 @@ impl<'ctx> Codegen<'ctx> {
         root_pointer: PointerValue<'ctx>,
         root_type: ValueType,
     ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
+        let (pointer, ty, _) =
+            self.emit_place_pointer_with_deref(expr, root_name, root_pointer, root_type)?;
+        Ok((pointer, ty))
+    }
+
+    /// Computes the address of a place expression. The third element reports the
+    /// mutability of the first dereference in the place path so assignment code
+    /// can check write access without evaluating the pointer expression twice.
+    fn emit_place_pointer_with_deref(
+        &mut self,
+        expr: &Expr,
+        root_name: &str,
+        root_pointer: PointerValue<'ctx>,
+        root_type: ValueType,
+    ) -> Result<(PointerValue<'ctx>, ValueType, Option<DerefMutability>), Diagnostic> {
         match expr {
-            Expr::Variable(name, _) if name == root_name => Ok((root_pointer, root_type)),
+            Expr::Variable(name, _) if name == root_name => Ok((root_pointer, root_type, None)),
             Expr::Unary {
                 op: UnaryOp::Dereference,
                 value,
                 span,
             } => {
                 let pointer_value = self.emit_expression(value)?;
-                let target_type = match pointer_value.ty {
-                    ValueType::Reference(index) => self.reference_types[index],
-                    ValueType::MutableReference(index) => self.mutable_reference_types[index],
-                    ValueType::RawPointer(index) => self.raw_pointer_types[index].0,
+                let (target_type, mutability) = match pointer_value.ty {
+                    ValueType::MutableReference(index) => (
+                        self.mutable_reference_types[index],
+                        DerefMutability::Mutable,
+                    ),
+                    ValueType::Reference(index) => (
+                        self.reference_types[index],
+                        DerefMutability::SharedReference,
+                    ),
+                    ValueType::RawPointer(index) => {
+                        let (target_type, mutable) = self.raw_pointer_types[index];
+                        let mutability = if mutable {
+                            DerefMutability::Mutable
+                        } else {
+                            DerefMutability::Immutable
+                        };
+                        (target_type, mutability)
+                    }
                     other => {
                         return Err(Diagnostic::at(
                             span.into(),
@@ -31,11 +68,11 @@ impl<'ctx> Codegen<'ctx> {
                     .value
                     .ok_or("dereference pointer has no value")?
                     .into_pointer_value();
-                Ok((pointer, target_type))
+                Ok((pointer, target_type, Some(mutability)))
             }
             Expr::Field { value, name, span } => {
-                let (base_pointer, base_type) =
-                    self.emit_place_pointer(value, root_name, root_pointer, root_type)?;
+                let (base_pointer, base_type, mutability) =
+                    self.emit_place_pointer_with_deref(value, root_name, root_pointer, root_type)?;
                 let ValueType::Struct(struct_id) = base_type else {
                     return Err(Diagnostic::at(
                         span.into(),
@@ -68,11 +105,11 @@ impl<'ctx> Codegen<'ctx> {
                         "struct.field.ptr",
                     )
                     .map_err(|error| error.to_string())?;
-                Ok((field_pointer, field_type))
+                Ok((field_pointer, field_type, mutability))
             }
             Expr::Index { array, index, span } => {
-                let (array_pointer, array_type) =
-                    self.emit_place_pointer(array, root_name, root_pointer, root_type)?;
+                let (array_pointer, array_type, mutability) =
+                    self.emit_place_pointer_with_deref(array, root_name, root_pointer, root_type)?;
                 if let ValueType::Vector(vector_id) = array_type {
                     let index_value = self.emit_expression(index)?;
                     let index_value = self.expect_i64(index_value, "vector index", *span)?;
@@ -141,7 +178,7 @@ impl<'ctx> Codegen<'ctx> {
                             "vec.element.ptr",
                         )
                         .map_err(|error| error.to_string())?;
-                    return Ok((pointer, element_type));
+                    return Ok((pointer, element_type, mutability));
                 }
                 let ValueType::Array(array_id) = array_type else {
                     return Err(Diagnostic::at(
@@ -155,7 +192,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.emit_bounds_check(index_value, shape.length)?;
                 let element_pointer =
                     self.array_element_pointer(array_pointer, array_type, index_value)?;
-                Ok((element_pointer, ValueType::from(shape.element)))
+                Ok((element_pointer, ValueType::from(shape.element), mutability))
             }
             _ => Err("invalid assignment target".into()),
         }
@@ -193,30 +230,6 @@ impl<'ctx> Codegen<'ctx> {
             )
         };
         self.emit_place_pointer(expr, name, root_pointer, root_type)
-    }
-
-    fn place_is_mutable(&mut self, expr: &Expr) -> Result<bool, Diagnostic> {
-        match expr {
-            Expr::Unary {
-                op: UnaryOp::Dereference,
-                value,
-                span,
-            } => {
-                let pointer = self.emit_expression(value)?;
-                match pointer.ty {
-                    ValueType::MutableReference(_) => Ok(true),
-                    ValueType::Reference(_) => Ok(false),
-                    ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].1),
-                    other => Err(Diagnostic::at(
-                        span.into(),
-                        format!("cannot dereference {}", self.type_name(other)),
-                    )),
-                }
-            }
-            Expr::Field { value, .. } => self.place_is_mutable(value),
-            Expr::Index { array, .. } => self.place_is_mutable(array),
-            _ => Ok(false),
-        }
     }
 
     pub(super) fn emit_assignment_statement(
@@ -335,20 +348,6 @@ impl<'ctx> Codegen<'ctx> {
                 let through_pointer = codegen_place_contains_dereference(target);
                 let vector_place =
                     !through_pointer && self.place_mutates_vector(target, name, root_type)?;
-                if through_pointer && !self.place_is_mutable(target)? {
-                    if let Expr::Unary { value: pointer, .. } = target
-                        && matches!(self.emit_expression(pointer)?.ty, ValueType::Reference(_))
-                    {
-                        return Err(Diagnostic::at(
-                            span.into(),
-                            "assignment target must start with a variable".to_string(),
-                        ));
-                    }
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        "cannot assign through an immutable pointer".to_string(),
-                    ));
-                }
                 if !through_pointer && !mutable && !vector_place {
                     let reason = if loop_variable {
                         format!("cannot assign through immutable loop variable `{name}`")
@@ -357,8 +356,23 @@ impl<'ctx> Codegen<'ctx> {
                     };
                     return Err(Diagnostic::at(span.into(), reason.to_string()));
                 }
-                let (target_pointer, target_type) =
-                    self.emit_place_pointer(target, name, root_pointer, root_type)?;
+                let (target_pointer, target_type, mutability) =
+                    self.emit_place_pointer_with_deref(target, name, root_pointer, root_type)?;
+                match mutability {
+                    None | Some(DerefMutability::Mutable) => {}
+                    Some(DerefMutability::SharedReference) => {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "assignment target must start with a variable".to_string(),
+                        ));
+                    }
+                    Some(DerefMutability::Immutable) => {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "cannot assign through an immutable pointer".to_string(),
+                        ));
+                    }
+                }
                 let value = self.emit_expression_expected(value, target_type)?;
                 if value.ty != target_type {
                     return Err(Diagnostic::at(
