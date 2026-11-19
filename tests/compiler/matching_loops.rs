@@ -46,6 +46,53 @@ fn scalar_matches_allow_wildcards_and_integer_fallback() {
 }
 
 #[test]
+fn match_scrutinees_accept_equality_bitwise_and_logical_operators() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let equality = match 1 == 1 { true => { 10 }, false => { 0 } };
+            let inequality = match 1 != 2 { true => { 10 }, false => { 0 } };
+            let bit_and = match 6 & 3 { 2 => { 10 }, _ => { 0 } };
+            let bit_xor = match 6 ^ 3 { 5 => { 10 }, _ => { 0 } };
+            let bit_or = match 6 | 3 { 7 => { 10 }, _ => { 0 } };
+            let logical_and = match true && true { true => { 10 }, false => { 0 } };
+            let logical_or = match false || true { true => { 10 }, false => { 0 } };
+            print_i64(equality + inequality + bit_and + bit_xor + bit_or + logical_and + logical_or);
+            0
+        }
+        "#,
+        "match-scrutinee-operator-precedence",
+    );
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "70\n");
+}
+
+#[test]
+fn match_scrutinees_parse_with_full_binary_operator_precedence() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let a = 2;
+            let b = 3;
+            let mixed = match a + b * a == 8 && b < 4 {
+                true => { 40 },
+                false => { 0 },
+            };
+            let grouped = match (1 == 1) || (2 > 3) {
+                true => { 2 },
+                false => { 0 },
+            };
+            print_i64(mixed + grouped);
+            0
+        }
+        "#,
+        "match-scrutinee-mixed-precedence",
+    );
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "42\n");
+}
+
+#[test]
 fn value_producing_loop_returns_from_break_and_supports_continue() {
     let result = compile_and_run(
         r#"
