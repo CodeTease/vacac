@@ -146,3 +146,83 @@ fn lexer_columns_and_underlines_count_unicode_scalar_values() {
     );
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn unexpected_non_ascii_characters_report_the_complete_scalar_value() {
+    let (dir, compile) =
+        compile_source("fn main() -> i64 { λ }\n", "unexpected-non-ascii-character");
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("test.vca:1:20: unexpected character `λ`"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains('Î'),
+        "reported a Latin-1 rendering of the leading UTF-8 byte: {stderr}"
+    );
+    assert!(stderr.contains(" 1 | fn main() -> i64 { λ }"), "{stderr}");
+    assert!(
+        stderr.contains(&format!("   | {}^", " ".repeat(19))),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn unexpected_non_ascii_character_columns_ignore_preceding_multibyte_text() {
+    let (dir, compile) = compile_source(
+        "fn main() -> i64 {\n    println(\"héllo\"); €\n    0\n}\n",
+        "unexpected-non-ascii-column",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("test.vca:2:23: unexpected character `€`"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("   | {}^", " ".repeat(22))),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn control_characters_are_escaped_in_unexpected_character_diagnostics() {
+    let (dir, compile) = compile_source(
+        "fn main() -> i64 {\n \u{7} 0\n}\n",
+        "unexpected-control-character",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    let message = stderr.lines().next().unwrap_or_default();
+    assert!(
+        message.contains("test.vca:2:2: unexpected character `\\u{7}`"),
+        "{stderr}"
+    );
+    assert!(
+        !message.contains('\u{7}'),
+        "leaked a raw control character into the diagnostic: {message:?}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn multibyte_escape_characters_get_a_two_column_span() {
+    let (dir, result) = run_compiler_with_args(
+        "fn main() -> i64 {\n    println(\"a\\€a\");\n    0\n}\n",
+        "multibyte-escape-span",
+        &["--json"],
+    );
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(stderr.contains("\"line\":2"), "{stderr}");
+    assert!(stderr.contains("\"column\":15"), "{stderr}");
+    assert!(stderr.contains("\"end_column\":17"), "{stderr}");
+    assert!(
+        stderr.contains("unknown escape sequence `\\\\€`"),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}

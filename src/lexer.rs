@@ -166,6 +166,20 @@ fn token_name(kind: &TokenKind) -> &'static str {
     }
 }
 
+/// Decode the whole UTF-8 scalar value starting at `index`.
+///
+/// Diagnostics must never report a single byte of a multi-byte character: the
+/// leading byte rendered as Latin-1 turns `λ` into `Î`. Invalid UTF-8 cannot
+/// reach the lexer (source is read as `str`), so an `index` that is out of
+/// bounds or not on a character boundary only falls back to the replacement
+/// character instead of panicking on a diagnostic path.
+fn scalar_at(input: &str, index: usize) -> char {
+    input
+        .get(index..)
+        .and_then(|rest| rest.chars().next())
+        .unwrap_or(char::REPLACEMENT_CHARACTER)
+}
+
 #[cfg(test)]
 pub fn lex(input: &str) -> Result<Vec<Token>, Diagnostic> {
     lex_named(input, None)
@@ -471,11 +485,14 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                                 ));
                             }
                             Some(_) => {
-                                let escape = input[i + 1..].chars().next().unwrap_or('?');
+                                let escape = scalar_at(input, i + 1);
                                 return Err(Diagnostic::at(
                                     SourceSpan {
                                         line,
                                         column: escape_column,
+                                        // The backslash and the escaped scalar value
+                                        // occupy two columns no matter how many UTF-8
+                                        // bytes that value needs.
                                         end_column: escape_column + 2,
                                         file: source_id,
                                     },
@@ -555,6 +572,7 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                 b'|' => (TokenKind::Pipe, 1),
                 b'^' => (TokenKind::Caret, 1),
                 _ => {
+                    let character = scalar_at(input, i);
                     return Err(Diagnostic::at(
                         SourceSpan {
                             line,
@@ -562,7 +580,7 @@ pub fn lex_named(input: &str, source_id: Option<usize>) -> Result<Vec<Token>, Di
                             end_column: column + 1,
                             file: source_id,
                         },
-                        format!("unexpected character `{}`", b as char),
+                        format!("unexpected character `{}`", character.escape_debug()),
                     ));
                 }
             };
@@ -598,4 +616,56 @@ pub fn unexpected(token: &Token, expected: &str) -> Diagnostic {
         },
         format!("expected {expected}, found {}", token.describe()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_at_decodes_multi_byte_characters_from_their_leading_byte() {
+        let source = "λ€";
+        assert_eq!(scalar_at(source, 0), 'λ');
+        assert_eq!(scalar_at(source, 2), '€');
+        assert_eq!(scalar_at(source, 5), char::REPLACEMENT_CHARACTER);
+    }
+
+    #[test]
+    fn unexpected_characters_are_reported_as_whole_scalar_values() {
+        let mut diagnostic = lex("λ").unwrap_err().message;
+        assert_eq!(diagnostic, "unexpected character `λ`");
+        diagnostic = lex("\u{7}").unwrap_err().message;
+        assert_eq!(diagnostic, "unexpected character `\\u{7}`");
+    }
+
+    #[test]
+    fn unknown_escapes_report_the_whole_scalar_value() {
+        assert_eq!(
+            lex(r#""\λ""#).unwrap_err().message,
+            "unknown escape sequence `\\λ`"
+        );
+        assert_eq!(
+            lex(r#""\€""#).unwrap_err().message,
+            "unknown escape sequence `\\€`"
+        );
+    }
+
+    #[test]
+    fn multi_byte_characters_inside_string_literals_still_lex() {
+        let tokens = lex(r#""héllo λ""#).unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::StringLit("héllo λ".to_owned()));
+    }
+
+    #[test]
+    fn non_ascii_error_columns_count_characters_not_bytes() {
+        let diagnostic = lex_named("abcde €", Some(0)).unwrap_err();
+        let span = diagnostic.span.expect("character errors carry a span");
+        assert_eq!((span.line, span.column, span.end_column), (1, 7, 8));
+
+        // The multi-byte prefix must not shift byte offsets into the columns.
+        let diagnostic = lex_named("héllo €", Some(0)).unwrap_err();
+        let span = diagnostic.span.expect("character errors carry a span");
+        assert_eq!((span.line, span.column, span.end_column), (1, 2, 3));
+        assert_eq!(diagnostic.message, "unexpected character `é`");
+    }
 }

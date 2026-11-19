@@ -191,6 +191,10 @@ def main():
         compiler, "raw NUL byte in a string literal is rejected", "raw_nul_literal.vca",
         "NUL characters are not supported in string literals",
     ))
+    record(diagnostic_case(
+        compiler, "unexpected non-ASCII character reports the whole scalar", "unexpected_unicode_character.vca",
+        "unexpected character `λ`",
+    ))
     record(parser_json_case(compiler))
     record(malformed_match_json_case(compiler))
 
