@@ -187,6 +187,10 @@ def main():
         compiler, "generic expansion hits the 512-instance diagnostic", "generic_specialization_limit.vca",
         "generic specialization exceeded the limit of 512",
     ))
+    record(diagnostic_case(
+        compiler, "raw NUL byte in a string literal is rejected", "raw_nul_literal.vca",
+        "NUL characters are not supported in string literals",
+    ))
     record(parser_json_case(compiler))
     record(malformed_match_json_case(compiler))
 
