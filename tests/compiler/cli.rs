@@ -280,3 +280,151 @@ fn dash_prefixed_output_paths_are_passed_safely_to_the_linker() {
     assert_eq!(run.status.code(), Some(5));
     let _ = fs::remove_dir_all(dir);
 }
+#[test]
+fn output_paths_that_match_the_source_file_are_rejected() {
+    for (label, args) in [
+        ("executable", vec!["test.vca", "-o", "test.vca"]),
+        ("object", vec!["--emit-obj", "test.vca", "test.vca"]),
+        ("llvm", vec!["--emit-llvm", "test.vca", "test.vca"]),
+    ] {
+        let dir = cli_test_dir(&format!("collision-source-{label}"));
+        let source = "fn main() -> i64 { 0 }\n";
+        fs::write(dir.join("test.vca"), source).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            !result.status.success(),
+            "{label}: compiler unexpectedly succeeded"
+        );
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            stderr.contains("would overwrite the source file"),
+            "{label}: {stderr}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("test.vca")).unwrap(),
+            source,
+            "{label}: source file was modified"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn output_paths_that_match_the_derived_object_are_rejected() {
+    let dir = cli_test_dir("collision-derived-object");
+    let source = "fn main() -> i64 { 0 }\n";
+    fs::write(dir.join("test.vca"), source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["test.vca", "-o", "test.vca"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("would overwrite the source file"));
+    assert_eq!(fs::read_to_string(dir.join("test.vca")).unwrap(), source);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn executable_and_object_outputs_must_differ() {
+    let dir = cli_test_dir("collision-object-executable");
+    fs::write(dir.join("test.vca"), "fn main() -> i64 { 0 }\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["test.vca", "-o", "program.o"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(
+        String::from_utf8_lossy(&result.stderr)
+            .contains("is the same as the executable output path")
+    );
+    assert!(!dir.join("program.o").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn output_paths_that_match_link_object_inputs_are_rejected() {
+    let dir = cli_test_dir("collision-link-object");
+    fs::write(dir.join("test.vca"), "fn main() -> i64 { 0 }\n").unwrap();
+    let object = dir.join("support.o");
+    let object_bytes = b"not a real object file";
+    fs::write(&object, object_bytes).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["test.vca", "--link-object", "support.o", "-o", "support"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("would overwrite the linker input"));
+    assert_eq!(fs::read(&object).unwrap(), object_bytes);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn dotted_output_paths_still_detect_source_collisions() {
+    let dir = cli_test_dir("collision-dotted-path");
+    let source = "fn main() -> i64 { 0 }\n";
+    fs::create_dir_all(dir.join("nested")).unwrap();
+    fs::write(dir.join("test.vca"), source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["test.vca", "-o", "nested/../test.vca"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("would overwrite the source file"));
+    assert_eq!(fs::read_to_string(dir.join("test.vca")).unwrap(), source);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn hard_linked_output_paths_cannot_overwrite_the_source_file() {
+    let dir = cli_test_dir("collision-hard-link");
+    let source = "fn main() -> i64 { 0 }\n";
+    fs::write(dir.join("test.vca"), source).unwrap();
+    fs::hard_link(dir.join("test.vca"), dir.join("alias.vca")).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["test.vca", "-o", "alias.vca"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("would overwrite the source file"));
+    assert_eq!(fs::read_to_string(dir.join("test.vca")).unwrap(), source);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn outputs_cannot_overwrite_a_module_source_file() {
+    let dir = cli_test_dir("collision-module-source");
+    let module_source = "pub fn value() -> i64 { 7 }\n";
+    fs::write(
+        dir.join("main.vca"),
+        "mod child;\nfn main() -> i64 { child::value() }\n",
+    )
+    .unwrap();
+    fs::write(dir.join("child.vca"), module_source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .current_dir(&dir)
+        .args(["main.vca", "-o", "child.vca"])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("would overwrite the source file"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("child.vca"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(dir.join("child.vca")).unwrap(),
+        module_source
+    );
+    let _ = fs::remove_dir_all(dir);
+}

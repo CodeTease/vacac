@@ -23,6 +23,8 @@ Usage:
 Options may appear before or after <source.vca>. Use `--` before a source path
 that begins with `-`.
 
+Output paths may not overwrite the source file or a --link-object input.
+
 Options:
   -o <path>            Set executable output path (default: a.out)
   --emit-obj <path>    Set object-file output path
@@ -216,6 +218,90 @@ fn object_path(output: &Path) -> PathBuf {
     path
 }
 
+/// Resolve a path to an absolute form with `.`/`..` and symlinks removed.
+/// Output paths may not exist yet, so a missing path falls back to resolving
+/// its parent directory.
+fn normalized_path(path: &Path) -> PathBuf {
+    if let Ok(resolved) = std::fs::canonicalize(path) {
+        return resolved;
+    }
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    match (std::fs::canonicalize(parent), path.file_name()) {
+        (Ok(parent), Some(name)) => parent.join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
+fn same_file(left: &Path, right: &Path) -> bool {
+    normalized_path(left) == normalized_path(right) || shares_identity(left, right)
+}
+
+/// Existing hard links have distinct names but share one file, so overwriting
+/// either destroys the other.
+#[cfg(unix)]
+fn shares_identity(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(left), std::fs::metadata(right)) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn shares_identity(_left: &Path, _right: &Path) -> bool {
+    false
+}
+
+/// Refuse to run when an output would be written over one of the compiler's
+/// inputs. Overwriting the source file or a `--link-object` input destroys
+/// user data, and a single path cannot be both the executable and its object.
+fn reject_output_collisions(
+    program: &parser::Program,
+    mode: &OutputMode,
+    link_objects: &[PathBuf],
+) -> Result<(), Diagnostic> {
+    let mut outputs: Vec<(&str, PathBuf)> = Vec::new();
+    match mode {
+        OutputMode::Executable { output, object } => {
+            let object = object.clone().unwrap_or_else(|| object_path(output));
+            if same_file(&object, output) {
+                return Err(Diagnostic::new(format!(
+                    "object file output path `{}` is the same as the executable output path `{}`",
+                    object.display(),
+                    output.display()
+                )));
+            }
+            outputs.push(("executable", output.clone()));
+            outputs.push(("object file", object));
+        }
+        OutputMode::EmitLlvm(path) => outputs.push(("LLVM IR", path.clone())),
+        OutputMode::Run | OutputMode::Check => {}
+    }
+    for (kind, output) in &outputs {
+        for source in &program.source_files {
+            if same_file(output, Path::new(source)) {
+                return Err(Diagnostic::new(format!(
+                    "{kind} output path `{}` would overwrite the source file `{source}`",
+                    output.display()
+                )));
+            }
+        }
+        for input in link_objects {
+            if same_file(output, input) {
+                return Err(Diagnostic::new(format!(
+                    "{kind} output path `{}` would overwrite the linker input `{}`",
+                    output.display(),
+                    input.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Qualify relative paths that begin with `-` so the linker cannot mistake them
 /// for command-line options.
 fn linker_argument(path: &Path) -> OsString {
@@ -250,6 +336,7 @@ fn run() -> Result<i32, DiagnosticSet> {
         ..
     } = options;
     let mut program = modules::load(&source_path)?;
+    reject_output_collisions(&program, &mode, &link_objects)?;
     let file = source_path.display().to_string();
     sema::check(&mut program).map_err(|e| {
         if let Some(source_id) = e.source_id {
