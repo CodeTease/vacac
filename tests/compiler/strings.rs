@@ -147,6 +147,91 @@ fn invalid_string_escapes_are_rejected() {
 }
 
 #[test]
+fn raw_nul_bytes_in_string_literals_are_rejected() {
+    // A raw 0x00 inside a literal must be rejected exactly like the `\0`
+    // escape: strings are NUL-terminated at runtime, so an embedded NUL would
+    // silently truncate output while compile-time `==` still compared the
+    // full logical value.
+    let (dir, compile) = compile_source(
+        "fn main() -> i64 {\n    println(\"a\0b\");\n    0\n}\n",
+        "raw-nul-literal",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "compiler unexpectedly succeeded");
+    assert!(
+        stderr.contains("test.vca:2:15: NUL characters are not supported in string literals"),
+        "unexpected diagnostic: {stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn raw_nul_bytes_are_rejected_in_global_string_literals() {
+    // Constants take a different path than local `let`s; both must reject the
+    // raw byte so constant folding cannot disagree with runtime comparison.
+    let (dir, compile) = compile_source(
+        "const G1: str = \"a\0b\";\nconst G2: str = \"a\0c\";\nconst GEQ: bool = G1 == G2;\nfn main() -> i64 {\n    let l1 = \"a\0b\";\n    0\n}\n",
+        "raw-nul-global",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "compiler unexpectedly succeeded");
+    assert!(
+        stderr.contains("test.vca:1:19: NUL characters are not supported in string literals"),
+        "unexpected diagnostic: {stderr}"
+    );
+    assert!(
+        stderr.contains(" 1 | const G1: str = \"a"),
+        "missing source excerpt: {stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn raw_nul_bytes_report_the_offending_column_after_multibyte_characters() {
+    // Columns are counted in characters, so a multi-byte character before the
+    // NUL must not shift the reported position.
+    let (dir, compile) = compile_source(
+        "fn main() -> i64 {\n    println(\"héllo\0\");\n    0\n}\n",
+        "raw-nul-columns",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "compiler unexpectedly succeeded");
+    assert!(
+        stderr.contains("test.vca:2:19: NUL characters are not supported in string literals"),
+        "unexpected diagnostic: {stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn raw_nul_bytes_produce_json_diagnostics_with_file_and_location() {
+    let (dir, compile) = run_compiler_with_args(
+        "fn main() -> i64 {\n    println(\"a\0b\");\n    0\n}\n",
+        "raw-nul-json",
+        &["--check", "--json"],
+    );
+    assert!(!compile.status.success(), "compiler unexpectedly succeeded");
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(
+        stderr.starts_with("{\"severity\":\"error\",\"file\":"),
+        "unexpected diagnostic: {stderr}"
+    );
+    assert!(
+        !stderr.contains("\"file\":null"),
+        "diagnostic lost its file: {stderr}"
+    );
+    assert!(
+        stderr.contains("\"line\":2,\"column\":15,\"end_column\":16"),
+        "unexpected diagnostic: {stderr}"
+    );
+    assert!(
+        stderr.contains("NUL characters are not supported in string literals"),
+        "unexpected diagnostic: {stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn strings_only_support_addition_and_equality() {
     let (dir, compile) = compile_source(
         "fn main() -> i64 {\n    let s = \"a\" - \"b\";\n    0\n}\n",
