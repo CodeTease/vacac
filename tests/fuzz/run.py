@@ -187,6 +187,10 @@ def main():
         compiler, "generic expansion hits the 512-instance diagnostic", "generic_specialization_limit.vca",
         "generic specialization exceeded the limit of 512",
     ))
+    record(diagnostic_case(
+        compiler, "unexpected non-ASCII character reports the whole scalar", "unexpected_unicode_character.vca",
+        "unexpected character `λ`",
+    ))
     record(parser_json_case(compiler))
     record(malformed_match_json_case(compiler))
 

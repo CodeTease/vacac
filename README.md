@@ -79,6 +79,8 @@ checking and code generation.
 Diagnostics use one-based source line and column numbers. Columns count Unicode
 scalar values (a tab is one source column); human-readable excerpts expand tabs
 to four-column stops and align carets using the same scalar-value convention.
+Messages name a whole character rather than a single UTF-8 byte, so an unexpected
+`λ` or `€` is reported verbatim and control characters are escaped as `\u{7}`.
 JSON diagnostics always contain `severity`, `file`, `line`, `column`,
 `end_column`, and `message`; unavailable file or location values are `null`.
 
