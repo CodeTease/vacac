@@ -69,6 +69,14 @@ object or executable. Use `--quiet` (or `-q`) to suppress success messages, and
 `--json` to emit errors as JSON for tools. `--help` lists all options and
 `--version` prints the compiler version.
 
+Every output path is compared against the compilation inputs before anything is
+written. A run is refused when the executable, the object file, or the
+`--emit-llvm` path would overwrite the root source, any module source, or a
+`--link-object` input, and when the executable and object paths resolve to the
+same file. This keeps `vacac main.vca -o main.vca` and
+`vacac main.vca --link-object helper.o -o helper` from destroying the inputs
+(`helper.o` is the derived object path there).
+
 When parsing fails, the compiler attempts to recover at top-level declaration
 boundaries and within function bodies and match arms, reporting further syntax
 errors from later declarations, statements, and arms where possible. Recovery is
