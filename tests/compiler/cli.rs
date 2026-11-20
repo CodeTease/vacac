@@ -101,6 +101,52 @@ fn json_diagnostics_include_lexer_spans() {
 }
 
 #[test]
+fn resolve_and_generics_diagnostics_include_file_and_excerpt() {
+    let source = "fn broken<T>(x: Unknown) -> i64 { 0 }\nfn main() -> i64 { 0 }\n";
+    let (dir, result) = run_compiler_with_args(source, "generics-source-json", &["--json"]);
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    let escaped_path = dir
+        .join("test.vca")
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    assert!(
+        stderr.contains(&format!(
+            "\"file\":\"{escaped_path}\",\"line\":1,\"column\":14"
+        )),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(dir);
+
+    let (dir, result) = run_compiler_with_args(source, "generics-source-human", &["--check"]);
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    let path = dir.join("test.vca");
+    assert!(
+        stderr.contains(&format!("{}:1:14: unknown type", path.display())),
+        "{stderr}"
+    );
+    assert!(stderr.contains("fn broken<T>(x: Unknown)"), "{stderr}");
+    assert!(stderr.contains("^"), "{stderr}");
+    let _ = fs::remove_dir_all(dir);
+
+    let (dir, result) = run_compiler_with_args(
+        "fn dup() -> i64 { 0 }\nfn dup() -> i64 { 1 }\nfn main() -> i64 { 0 }\n",
+        "resolve-source-json",
+        &["--json"],
+    );
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("\"file\":") && stderr.contains("\"line\":2"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("\"file\":null"), "{stderr}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn json_diagnostics_use_null_for_unavailable_source_locations() {
     let (dir, result) = run_compiler_with_args(
         "fn main() -> i64 { 0 }\n",
