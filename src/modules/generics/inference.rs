@@ -238,7 +238,10 @@ impl Specializer {
                     Some(Type::Named(concrete_name))
                 }
             }
-            Expr::Call { name, .. } => self.signatures.get(name).map(|(_, result)| result.clone()),
+            Expr::Call { name, .. } => match variables.get(name) {
+                Some(Type::Function(_, result)) => Some((**result).clone()),
+                _ => self.signatures.get(name).map(|(_, result)| result.clone()),
+            },
             Expr::Lambda {
                 params,
                 return_type,

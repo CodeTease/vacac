@@ -219,12 +219,19 @@ impl Specializer {
                     param.ty = self.normalize_type(param.ty.clone(), substitutions, param.span)?;
                 }
                 *return_type = self.normalize_type(return_type.clone(), substitutions, *span)?;
-                let mut lambda_variables = params
-                    .iter()
-                    .map(|param| (param.name.clone(), param.ty.clone()))
-                    .collect::<HashMap<_, _>>();
-                let previous_return_type = self.current_return_type.replace(return_type.clone());
-                let result = self.process_block(body, substitutions, &mut lambda_variables, *span);
+                let mut lambda_variables = variables.clone();
+                for param in params.iter() {
+                    lambda_variables.insert(param.name.clone(), param.ty.clone());
+                }
+                let body_expected = return_type.clone();
+                let previous_return_type = self.current_return_type.replace(body_expected.clone());
+                let result = self.process_block_with_expected(
+                    body,
+                    substitutions,
+                    &mut lambda_variables,
+                    &body_expected,
+                    *span,
+                );
                 self.current_return_type = previous_return_type;
                 result?;
             }
@@ -271,10 +278,14 @@ impl Specializer {
                 args,
                 span,
             } => {
-                let expected_parameters = self
-                    .signatures
-                    .get(name)
-                    .map(|(parameters, _)| parameters.clone());
+                let local_callee = variables.contains_key(name);
+                let expected_parameters = match variables.get(name) {
+                    Some(Type::Function(parameters, _)) => Some(parameters.clone()),
+                    _ => self
+                        .signatures
+                        .get(name)
+                        .map(|(parameters, _)| parameters.clone()),
+                };
                 for (index, argument) in args.iter_mut().enumerate() {
                     let expected = expected_parameters
                         .as_ref()
@@ -296,7 +307,7 @@ impl Specializer {
                 for argument in type_arguments.iter_mut() {
                     *argument = self.normalize_type(argument.clone(), substitutions, *span)?;
                 }
-                if self.generic_functions.contains_key(name) {
+                if !local_callee && self.generic_functions.contains_key(name) {
                     let template = self.generic_functions.get(name).unwrap().clone();
                     if args.len() != template.params.len() {
                         return Err(Diagnostic::at(

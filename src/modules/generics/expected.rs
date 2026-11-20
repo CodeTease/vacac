@@ -204,13 +204,19 @@ impl Specializer {
                     param.ty = self.normalize_type(expected_param.clone(), substitutions, span)?;
                 }
                 *return_type = expected_return;
-                let mut lambda_variables = params
-                    .iter()
-                    .map(|param| (param.name.clone(), param.ty.clone()))
-                    .collect::<HashMap<_, _>>();
-                let previous_return_type = self.current_return_type.replace(return_type.clone());
-                let result =
-                    self.process_block(body, substitutions, &mut lambda_variables, *lambda_span);
+                let mut lambda_variables = variables.clone();
+                for param in params.iter() {
+                    lambda_variables.insert(param.name.clone(), param.ty.clone());
+                }
+                let body_expected = return_type.clone();
+                let previous_return_type = self.current_return_type.replace(body_expected.clone());
+                let result = self.process_block_with_expected(
+                    body,
+                    substitutions,
+                    &mut lambda_variables,
+                    &body_expected,
+                    *lambda_span,
+                );
                 self.current_return_type = previous_return_type;
                 result
             }
@@ -347,7 +353,7 @@ impl Specializer {
         }
     }
 
-    fn process_block_with_expected(
+    pub(super) fn process_block_with_expected(
         &mut self,
         block: &mut Block,
         substitutions: &Substitution,

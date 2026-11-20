@@ -212,3 +212,46 @@ fn expanding_generic_recursion_is_stopped_by_the_specialization_limit() {
         "generic specialization exceeded the limit of 512",
     );
 }
+
+#[test]
+fn generic_calls_inside_lambdas_see_captured_locals() {
+    let result = compile_and_run(
+        r#"
+        fn identity<T>(value: T) -> T { value }
+        fn main() -> i64 {
+            let outer = 40;
+            let f: fn() -> i64 = fn() -> i64 {
+                let inner: fn() -> i64 = fn() -> i64 { identity(outer) };
+                inner() + 2
+            };
+            f() - 42
+        }
+        "#,
+        "generics-lambda-capture-inference",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn generic_constructors_and_patterns_follow_function_value_types() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let annotated: fn() -> Result<i64, str> = fn() -> Result<i64, str> { Result::Ok(42) };
+            let inferred = fn() -> Result<i64, str> { Result::Ok(42) };
+            let direct = match annotated() {
+                Result::Ok(value) => { value - 42 },
+                Result::Err(_) => { 1 },
+            };
+            let stored = inferred();
+            let matched = match stored {
+                Result::Ok(value) => { value - 42 },
+                Result::Err(_) => { 1 },
+            };
+            direct + matched
+        }
+        "#,
+        "generics-function-value-enums",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
