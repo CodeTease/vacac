@@ -102,6 +102,9 @@ impl Checker {
         for arm in arms {
             match &arm.pattern {
                 MatchPattern::Wildcard => {
+                    if wildcard_seen {
+                        return Err(at(arm.span, "unreachable match arm after wildcard"));
+                    }
                     if value_type == ValueType::Bool && seen_bool.len() == 2 {
                         return Err(at(
                             arm.span,

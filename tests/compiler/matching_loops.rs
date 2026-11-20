@@ -173,6 +173,20 @@ fn boolean_match_must_be_exhaustive_and_reject_duplicate_arms() {
 }
 
 #[test]
+fn scalar_match_rejects_arms_after_a_binding_or_wildcard() {
+    assert_compile_error(
+        "fn main() -> i64 { match 5 { x => { x }, _ => { 2 } } }\n",
+        "integer-match-binding-before-wildcard",
+        "unreachable match arm after wildcard",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { match 5 { _ => { 1 }, _ => { 2 } } }\n",
+        "integer-match-duplicate-wildcard",
+        "unreachable match arm after wildcard",
+    );
+}
+
+#[test]
 fn integer_match_requires_a_wildcard_and_scalar_patterns_must_match_value_type() {
     assert_compile_error(
         "fn main() -> i64 { match 1 { 1 => { 1 } } }\n",

@@ -393,12 +393,12 @@ impl<'ctx> Codegen<'ctx> {
                     ));
                 }
             };
-            let next = if index + 1 == arms.len() {
-                fallback_bb
-            } else {
-                self.context.append_basic_block(function, "match.next")
-            };
             if let Some(pattern) = &test_pattern {
+                let next = if index + 1 == arms.len() {
+                    fallback_bb
+                } else {
+                    self.context.append_basic_block(function, "match.next")
+                };
                 let test = match pattern {
                     MatchPattern::Bool(pattern) => self.builder.build_int_compare(
                         IntPredicate::EQ,
@@ -432,15 +432,13 @@ impl<'ctx> Codegen<'ctx> {
                 self.builder
                     .build_conditional_branch(test, arm_blocks[index], next)
                     .map_err(|error| error.to_string())?;
+                if index + 1 != arms.len() {
+                    self.builder.position_at_end(next);
+                }
             } else {
                 self.builder
                     .build_unconditional_branch(arm_blocks[index])
                     .map_err(|error| error.to_string())?;
-            }
-            if test_pattern.is_some() && index + 1 != arms.len() {
-                self.builder.position_at_end(next);
-            } else if test_pattern.is_some() {
-                self.builder.position_at_end(fallback_bb);
             }
             if matches!(
                 arm.pattern,
