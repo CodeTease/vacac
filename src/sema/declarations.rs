@@ -645,32 +645,30 @@ impl Checker {
     }
 
     pub(super) fn find_global_name(&self, name: &str) -> Option<String> {
-        if self.global_declarations.contains_key(name) {
-            Some(name.to_owned())
+        let qualified = if self.module_context.is_empty() {
+            name.to_owned()
         } else {
-            let qualified = if self.module_context.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{}::{name}", self.module_context)
-            };
+            format!("{}::{name}", self.module_context)
+        };
+        if self.global_declarations.contains_key(&qualified) {
+            Some(qualified)
+        } else {
             self.global_declarations
-                .contains_key(&qualified)
-                .then_some(qualified)
+                .contains_key(name)
+                .then(|| name.to_owned())
         }
     }
 
     pub(super) fn find_function_name(&self, name: &str) -> Option<String> {
-        if self.signatures.contains_key(name) {
-            Some(name.to_owned())
+        let qualified = if self.module_context.is_empty() {
+            name.to_owned()
         } else {
-            let qualified = if self.module_context.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{}::{name}", self.module_context)
-            };
-            self.signatures
-                .contains_key(&qualified)
-                .then_some(qualified)
+            format!("{}::{name}", self.module_context)
+        };
+        if self.signatures.contains_key(&qualified) {
+            Some(qualified)
+        } else {
+            self.signatures.contains_key(name).then(|| name.to_owned())
         }
     }
 

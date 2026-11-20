@@ -316,6 +316,47 @@ fn public_globals_work_across_modules_and_private_globals_stay_private() {
 }
 
 #[test]
+fn child_module_declarations_are_not_shadowed_by_root_declarations() {
+    let (directory, compile) = module_project(
+        "root-shadowing-public",
+        "mod child;\npub let x: i64 = 1;\nfn main() -> i64 {\n    let c = child::update();\n    print_i64(x);\n    print_i64(c);\n    0\n}\n",
+        &[(
+            "child.vca",
+            "let x: i64 = 100;\npub fn update() -> i64 {\n    x = 42;\n    x\n}\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "1\n42\n");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn child_module_declarations_resolve_before_private_root_declarations() {
+    let (directory, compile) = module_project(
+        "root-shadowing-private",
+        "mod child;\nconst value: i64 = 1;\nfn helper() -> i64 { 1 }\nfn main() -> i64 { child::run() - 42 }\n",
+        &[(
+            "child.vca",
+            "const value: i64 = 42;\nfn helper() -> i64 { value }\npub fn run() -> i64 { helper() }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn private_generic_module_declarations_remain_private() {
     let (directory, compile) = module_project(
         "private-generic-module",

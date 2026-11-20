@@ -140,15 +140,15 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub(super) fn resolve_global_name(&self, name: &str) -> Option<String> {
-        if self.globals.contains_key(name) {
-            Some(name.to_owned())
+        let qualified = if self.module_context.is_empty() {
+            name.to_owned()
         } else {
-            let qualified = if self.module_context.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{}::{name}", self.module_context)
-            };
-            self.globals.contains_key(&qualified).then_some(qualified)
+            format!("{}::{name}", self.module_context)
+        };
+        if self.globals.contains_key(&qualified) {
+            Some(qualified)
+        } else {
+            self.globals.contains_key(name).then(|| name.to_owned())
         }
     }
 

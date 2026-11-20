@@ -230,17 +230,14 @@ fn resolve_reference(
     if name == "Result" {
         return Ok("Result".into());
     }
-    let already_qualified = symbols.contains_key(name);
-    let symbol = if already_qualified {
-        symbols.get(name)
-    } else if name.contains("::") {
+    let symbol = if name.contains("::") {
         symbols.get(name).or_else(|| {
             let local = qualify(module, name);
             symbols.get(&local)
         })
     } else {
         let local = qualify(module, name);
-        symbols.get(&local)
+        symbols.get(&local).or_else(|| symbols.get(name))
     };
     let Some(symbol) = symbol else {
         return Ok(if name.contains("::") {
