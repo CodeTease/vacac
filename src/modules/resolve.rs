@@ -97,18 +97,6 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             resolve_type(&mut field.ty, &declaration.module, field.span, &symbols)?;
         }
     }
-    let struct_names = program
-        .structs
-        .iter()
-        .map(|declaration| {
-            declaration
-                .name
-                .rsplit("::")
-                .next()
-                .unwrap_or_default()
-                .to_owned()
-        })
-        .collect::<HashSet<_>>();
     let enum_names = program
         .enums
         .iter()
@@ -127,13 +115,8 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         if let Some(ty) = &mut declaration.ty {
             resolve_type(ty, &declaration.module, declaration.span, &symbols)?;
         }
-        resolve_expr(
-            &mut declaration.value,
-            &declaration.module,
-            &symbols,
-            &struct_names,
-            &enum_names,
-        )?;
+        let mut resolver = Resolver::new(&declaration.module, &symbols, &enum_names);
+        resolver.resolve_expr(&mut declaration.value)?;
     }
     for function in &mut program.functions {
         let original_name = function.name.clone();
@@ -158,14 +141,13 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         } else {
             qualify(&function.module, &original_name)
         };
-        resolve_block(
-            &mut function.body,
-            &function.module,
-            function.span,
-            &symbols,
-            &struct_names,
-            &enum_names,
-        )?;
+        let mut resolver = Resolver::new(&function.module, &symbols, &enum_names);
+        resolver.push_scope();
+        for param in &function.params {
+            resolver.bind(&param.name);
+        }
+        resolver.resolve_block(&mut function.body, function.span)?;
+        resolver.pop_scope();
     }
     for function in &mut program.extern_functions {
         let original_name = function.name.clone();
@@ -292,262 +274,340 @@ fn resolve_type(
     Ok(())
 }
 
-fn resolve_block(
-    block: &mut crate::ast::Block,
-    module: &str,
-    span: crate::ast::Span,
-    symbols: &HashMap<String, Symbol>,
-    struct_names: &HashSet<String>,
-    enum_names: &HashSet<String>,
-) -> Result<(), Diagnostic> {
-    use crate::ast::Stmt;
-    for statement in &mut block.statements {
-        match statement {
-            Stmt::Let {
-                pattern, ty, value, ..
-            } => {
-                if let Some(ty) = ty {
-                    resolve_type(ty, module, span, symbols)?;
+struct Resolver<'a> {
+    module: &'a str,
+    symbols: &'a HashMap<String, Symbol>,
+    enum_names: &'a HashSet<String>,
+    scopes: Vec<HashSet<String>>,
+}
+
+impl<'a> Resolver<'a> {
+    fn new(
+        module: &'a str,
+        symbols: &'a HashMap<String, Symbol>,
+        enum_names: &'a HashSet<String>,
+    ) -> Self {
+        Self {
+            module,
+            symbols,
+            enum_names,
+            scopes: Vec::new(),
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn bind(&mut self, name: &str) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name.to_owned());
+        }
+    }
+
+    fn bind_pattern(&mut self, pattern: &crate::ast::MatchPattern) {
+        use crate::ast::MatchPattern;
+        match pattern {
+            MatchPattern::Binding(name) => self.bind(name),
+            MatchPattern::Tuple(patterns) | MatchPattern::Array(patterns) => {
+                for pattern in patterns {
+                    self.bind_pattern(pattern);
                 }
-                resolve_pattern(pattern, module, span, symbols)?;
-                resolve_expr(value, module, symbols, struct_names, enum_names)?;
             }
-            Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-                resolve_expr(value, module, symbols, struct_names, enum_names)?
+            MatchPattern::Struct { fields, .. } => {
+                for (_, pattern, _) in fields {
+                    self.bind_pattern(pattern);
+                }
             }
-            Stmt::If {
+            MatchPattern::Variant { bindings, .. } => {
+                if let Some(bindings) = bindings {
+                    for pattern in bindings {
+                        self.bind_pattern(pattern);
+                    }
+                }
+            }
+            MatchPattern::Wildcard
+            | MatchPattern::Bool(_)
+            | MatchPattern::I64(_)
+            | MatchPattern::F32(_)
+            | MatchPattern::F64(_) => {}
+        }
+    }
+
+    fn is_local(&self, name: &str) -> bool {
+        self.scopes.iter().rev().any(|scope| scope.contains(name))
+    }
+
+    fn resolve_block(
+        &mut self,
+        block: &mut crate::ast::Block,
+        span: crate::ast::Span,
+    ) -> Result<(), Diagnostic> {
+        use crate::ast::Stmt;
+        self.push_scope();
+        let result = (|| -> Result<(), Diagnostic> {
+            for statement in &mut block.statements {
+                match statement {
+                    Stmt::Let {
+                        pattern, ty, value, ..
+                    } => {
+                        if let Some(ty) = ty {
+                            resolve_type(ty, self.module, span, self.symbols)?;
+                        }
+                        resolve_pattern(pattern, self.module, span, self.symbols)?;
+                        self.resolve_expr(value)?;
+                        self.bind_pattern(pattern);
+                    }
+                    Stmt::Assign { value, .. } | Stmt::Expr(value) => self.resolve_expr(value)?,
+                    Stmt::If {
+                        condition,
+                        then_block,
+                        else_block,
+                    } => {
+                        self.resolve_expr(condition)?;
+                        self.resolve_block(then_block, span)?;
+                        if let Some(block) = else_block {
+                            self.resolve_block(block, span)?;
+                        }
+                    }
+                    Stmt::While { condition, body } => {
+                        self.resolve_expr(condition)?;
+                        self.resolve_block(body, span)?;
+                    }
+                    Stmt::For {
+                        name,
+                        start,
+                        end,
+                        body,
+                    } => {
+                        self.resolve_expr(start)?;
+                        self.resolve_expr(end)?;
+                        self.push_scope();
+                        self.bind(name);
+                        let result = self.resolve_block(body, span);
+                        self.pop_scope();
+                        result?;
+                    }
+                    Stmt::ForArray {
+                        name, array, body, ..
+                    } => {
+                        self.resolve_expr(array)?;
+                        self.push_scope();
+                        self.bind(name);
+                        let result = self.resolve_block(body, span);
+                        self.pop_scope();
+                        result?;
+                    }
+                    Stmt::Break { value, .. } | Stmt::Return { value, .. } => {
+                        if let Some(value) = value {
+                            self.resolve_expr(value)?;
+                        }
+                    }
+                    Stmt::Continue { .. } => {}
+                    Stmt::AssignPlace { target, value, .. } => {
+                        self.resolve_expr(target)?;
+                        self.resolve_expr(value)?;
+                    }
+                }
+            }
+            if let Some(tail) = &mut block.tail {
+                self.resolve_expr(tail)?;
+            }
+            Ok(())
+        })();
+        self.pop_scope();
+        result
+    }
+
+    fn resolve_expr(&mut self, expr: &mut crate::ast::Expr) -> Result<(), Diagnostic> {
+        use crate::ast::Expr;
+        match expr {
+            Expr::Array(values, _) | Expr::Tuple(values, _) => {
+                for value in values {
+                    self.resolve_expr(value)?;
+                }
+            }
+            Expr::Index { array, index, .. } => {
+                self.resolve_expr(array)?;
+                self.resolve_expr(index)?;
+            }
+            Expr::Field { value, .. } | Expr::Unary { value, .. } => self.resolve_expr(value)?,
+            Expr::Struct {
+                name,
+                type_arguments,
+                fields,
+                span,
+            } => {
+                *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                for argument in type_arguments {
+                    resolve_type(argument, self.module, *span, self.symbols)?;
+                }
+                for (_, value, _) in fields {
+                    self.resolve_expr(value)?;
+                }
+            }
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                span,
+            } => {
+                for param in params.iter_mut() {
+                    resolve_type(&mut param.ty, self.module, param.span, self.symbols)?;
+                }
+                resolve_type(return_type, self.module, *span, self.symbols)?;
+                self.push_scope();
+                for param in params.iter() {
+                    self.bind(&param.name);
+                }
+                let result = self.resolve_block(body, *span);
+                self.pop_scope();
+                result?;
+            }
+            Expr::CallValue { callee, args, .. } => {
+                self.resolve_expr(callee)?;
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                self.resolve_expr(left)?;
+                self.resolve_expr(right)?;
+            }
+            Expr::Call {
+                name,
+                type_arguments,
+                args,
+                span,
+            } => {
+                let enum_constructor =
+                    if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
+                        let resolved_enum =
+                            resolve_reference(enum_name, self.module, *span, self.symbols)?;
+                        let is_enum = self
+                            .symbols
+                            .get(&resolved_enum)
+                            .is_some_and(|symbol| symbol.kind == "enum")
+                            && self
+                                .enum_names
+                                .contains(enum_name.rsplit("::").next().unwrap_or(enum_name));
+                        is_enum.then_some((resolved_enum, variant_name.to_owned()))
+                    } else {
+                        None
+                    };
+                if let Some((enum_name, variant_name)) = enum_constructor {
+                    if args.is_empty() {
+                        return Err(Diagnostic::at(
+                            (*span).into(),
+                            "enum variant payload must contain at least one value",
+                        ));
+                    }
+                    let payload = std::mem::take(args);
+                    *expr = Expr::Variant {
+                        enum_name,
+                        type_arguments: std::mem::take(type_arguments),
+                        variant_name,
+                        payload: Some(payload),
+                        span: *span,
+                    };
+                    return self.resolve_expr(expr);
+                }
+                if !self.is_local(name)
+                    && !matches!(name.as_str(), "len" | "vec_new" | "vec_push")
+                    && !matches!(
+                        name.as_str(),
+                        "print_i64" | "print_f32" | "print_f64" | "print" | "println" | "read_i64"
+                    )
+                {
+                    *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                }
+                for argument in type_arguments {
+                    resolve_type(argument, self.module, *span, self.symbols)?;
+                }
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
+            Expr::If {
                 condition,
                 then_block,
                 else_block,
+                span,
             } => {
-                resolve_expr(condition, module, symbols, struct_names, enum_names)?;
-                resolve_block(then_block, module, span, symbols, struct_names, enum_names)?;
-                if let Some(block) = else_block {
-                    resolve_block(block, module, span, symbols, struct_names, enum_names)?;
+                self.resolve_expr(condition)?;
+                self.resolve_block(then_block, *span)?;
+                self.resolve_block(else_block, *span)?;
+            }
+            Expr::Match { value, arms, span } => {
+                self.resolve_expr(value)?;
+                for arm in arms {
+                    resolve_pattern(&mut arm.pattern, self.module, arm.span, self.symbols)?;
+                    self.push_scope();
+                    self.bind_pattern(&arm.pattern);
+                    let result = self.resolve_block(&mut arm.body, *span);
+                    self.pop_scope();
+                    result?;
                 }
             }
-            Stmt::While { condition, body } => {
-                resolve_expr(condition, module, symbols, struct_names, enum_names)?;
-                resolve_block(body, module, span, symbols, struct_names, enum_names)?;
-            }
-            Stmt::For {
-                start, end, body, ..
+            Expr::Loop { body, span } => self.resolve_block(body, *span)?,
+            Expr::Try { value, .. } => self.resolve_expr(value)?,
+            Expr::Variant {
+                enum_name,
+                payload,
+                span,
+                ..
             } => {
-                resolve_expr(start, module, symbols, struct_names, enum_names)?;
-                resolve_expr(end, module, symbols, struct_names, enum_names)?;
-                resolve_block(body, module, span, symbols, struct_names, enum_names)?;
-            }
-            Stmt::ForArray { array, body, .. } => {
-                resolve_expr(array, module, symbols, struct_names, enum_names)?;
-                resolve_block(body, module, span, symbols, struct_names, enum_names)?;
-            }
-            Stmt::Break { value, .. } | Stmt::Return { value, .. } => {
-                if let Some(value) = value {
-                    resolve_expr(value, module, symbols, struct_names, enum_names)?;
+                *enum_name = resolve_reference(enum_name, self.module, *span, self.symbols)?;
+                if let Some(payload) = payload {
+                    for value in payload {
+                        self.resolve_expr(value)?;
+                    }
                 }
             }
-            Stmt::Continue { .. } => {}
-            Stmt::AssignPlace { target, value, .. } => {
-                resolve_expr(target, module, symbols, struct_names, enum_names)?;
-                resolve_expr(value, module, symbols, struct_names, enum_names)?;
-            }
-        }
-    }
-    if let Some(tail) = &mut block.tail {
-        resolve_expr(tail, module, symbols, struct_names, enum_names)?;
-    }
-    Ok(())
-}
-
-fn resolve_expr(
-    expr: &mut crate::ast::Expr,
-    module: &str,
-    symbols: &HashMap<String, Symbol>,
-    struct_names: &HashSet<String>,
-    enum_names: &HashSet<String>,
-) -> Result<(), Diagnostic> {
-    use crate::ast::Expr;
-    match expr {
-        Expr::Array(values, _) => {
-            for value in values {
-                resolve_expr(value, module, symbols, struct_names, enum_names)?;
-            }
-        }
-        Expr::Tuple(values, _) => {
-            for value in values {
-                resolve_expr(value, module, symbols, struct_names, enum_names)?;
-            }
-        }
-        Expr::Index { array, index, .. } => {
-            resolve_expr(array, module, symbols, struct_names, enum_names)?;
-            resolve_expr(index, module, symbols, struct_names, enum_names)?;
-        }
-        Expr::Field { value, .. } | Expr::Unary { value, .. } => {
-            resolve_expr(value, module, symbols, struct_names, enum_names)?
-        }
-        Expr::Struct {
-            name,
-            type_arguments,
-            fields,
-            span,
-        } => {
-            *name = resolve_reference(name, module, *span, symbols)?;
-            for argument in type_arguments {
-                resolve_type(argument, module, *span, symbols)?;
-            }
-            for (_, value, _) in fields {
-                resolve_expr(value, module, symbols, struct_names, enum_names)?;
-            }
-        }
-        Expr::Lambda {
-            params,
-            return_type,
-            body,
-            span,
-        } => {
-            for param in params {
-                resolve_type(&mut param.ty, module, param.span, symbols)?;
-            }
-            resolve_type(return_type, module, *span, symbols)?;
-            resolve_block(body, module, *span, symbols, struct_names, enum_names)?;
-        }
-        Expr::CallValue { callee, args, .. } => {
-            resolve_expr(callee, module, symbols, struct_names, enum_names)?;
-            for arg in args {
-                resolve_expr(arg, module, symbols, struct_names, enum_names)?;
-            }
-        }
-        Expr::Binary { left, right, .. } => {
-            resolve_expr(left, module, symbols, struct_names, enum_names)?;
-            resolve_expr(right, module, symbols, struct_names, enum_names)?;
-        }
-        Expr::Call {
-            name,
-            type_arguments,
-            args,
-            span,
-        } => {
-            let enum_constructor = if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
-                let resolved_enum = resolve_reference(enum_name, module, *span, symbols)?;
-                let is_enum = symbols
-                    .get(&resolved_enum)
-                    .is_some_and(|symbol| symbol.kind == "enum")
-                    && enum_names.contains(enum_name.rsplit("::").next().unwrap_or(enum_name));
-                is_enum.then_some((resolved_enum, variant_name.to_owned()))
-            } else {
-                None
-            };
-            if let Some((enum_name, variant_name)) = enum_constructor {
-                if args.is_empty() {
-                    return Err(Diagnostic::at(
-                        (*span).into(),
-                        "enum variant payload must contain at least one value",
-                    ));
-                }
-                let payload = std::mem::take(args);
-                *expr = Expr::Variant {
-                    enum_name,
-                    type_arguments: std::mem::take(type_arguments),
-                    variant_name,
-                    payload: Some(payload),
-                    span: *span,
-                };
-                return resolve_expr(expr, module, symbols, struct_names, enum_names);
-            }
-            if !matches!(name.as_str(), "len" | "vec_new" | "vec_push")
-                && !matches!(
-                    name.as_str(),
-                    "print_i64" | "print_f32" | "print_f64" | "print" | "println" | "read_i64"
-                )
-            {
-                *name = resolve_reference(name, module, *span, symbols)?;
-            }
-            for argument in type_arguments {
-                resolve_type(argument, module, *span, symbols)?;
-            }
-            for arg in args {
-                resolve_expr(arg, module, symbols, struct_names, enum_names)?;
-            }
-        }
-        Expr::If {
-            condition,
-            then_block,
-            else_block,
-            span,
-        } => {
-            resolve_expr(condition, module, symbols, struct_names, enum_names)?;
-            resolve_block(then_block, module, *span, symbols, struct_names, enum_names)?;
-            resolve_block(else_block, module, *span, symbols, struct_names, enum_names)?;
-        }
-        Expr::Match { value, arms, span } => {
-            resolve_expr(value, module, symbols, struct_names, enum_names)?;
-            for arm in arms {
-                resolve_pattern(&mut arm.pattern, module, arm.span, symbols)?;
-                resolve_block(
-                    &mut arm.body,
-                    module,
-                    *span,
-                    symbols,
-                    struct_names,
-                    enum_names,
-                )?;
-            }
-        }
-        Expr::Loop { body, span } => {
-            resolve_block(body, module, *span, symbols, struct_names, enum_names)?
-        }
-        Expr::Try { value, .. } => {
-            resolve_expr(value, module, symbols, struct_names, enum_names)?;
-        }
-        Expr::Variant {
-            enum_name,
-            payload,
-            span,
-            ..
-        } => {
-            *enum_name = resolve_reference(enum_name, module, *span, symbols)?;
-            if let Some(payload) = payload {
-                for value in payload {
-                    resolve_expr(value, module, symbols, struct_names, enum_names)?;
-                }
-            }
-        }
-        Expr::Variable(name, span) if name.contains("::") => {
-            if symbols
-                .get(name)
-                .is_some_and(|symbol| symbol.kind == "function")
-            {
-                *name = resolve_reference(name, module, *span, symbols)?;
-                return Ok(());
-            }
-            if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
-                let resolved_enum = resolve_reference(enum_name, module, *span, symbols)?;
-                if symbols
-                    .get(&resolved_enum)
-                    .is_some_and(|symbol| symbol.kind == "enum")
+            Expr::Variable(name, span) if name.contains("::") => {
+                if self
+                    .symbols
+                    .get(name)
+                    .is_some_and(|symbol| symbol.kind == "function")
                 {
-                    *expr = Expr::Variant {
-                        enum_name: resolved_enum,
-                        type_arguments: Vec::new(),
-                        variant_name: variant_name.to_owned(),
-                        payload: None,
-                        span: *span,
-                    };
-                    return resolve_expr(expr, module, symbols, struct_names, enum_names);
+                    *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                    return Ok(());
+                }
+                if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
+                    let resolved_enum =
+                        resolve_reference(enum_name, self.module, *span, self.symbols)?;
+                    if self
+                        .symbols
+                        .get(&resolved_enum)
+                        .is_some_and(|symbol| symbol.kind == "enum")
+                    {
+                        *expr = Expr::Variant {
+                            enum_name: resolved_enum,
+                            type_arguments: Vec::new(),
+                            variant_name: variant_name.to_owned(),
+                            payload: None,
+                            span: *span,
+                        };
+                        return self.resolve_expr(expr);
+                    }
+                }
+                if let Expr::Variable(name, span) = expr {
+                    *name = resolve_reference(name, self.module, *span, self.symbols)?;
                 }
             }
-            if let Expr::Variable(name, span) = expr {
-                *name = resolve_reference(name, module, *span, symbols)?;
-            }
+            Expr::Integer(..)
+            | Expr::Float32(..)
+            | Expr::Float(..)
+            | Expr::Bool(..)
+            | Expr::String(..)
+            | Expr::Variable(..) => {}
         }
-        Expr::Integer(..)
-        | Expr::Float32(..)
-        | Expr::Float(..)
-        | Expr::Bool(..)
-        | Expr::String(..)
-        | Expr::Variable(..) => {}
+        Ok(())
     }
-    Ok(())
 }
 
 fn resolve_pattern(

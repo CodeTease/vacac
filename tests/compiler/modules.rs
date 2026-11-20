@@ -357,6 +357,26 @@ fn child_module_declarations_resolve_before_private_root_declarations() {
 }
 
 #[test]
+fn local_function_value_shadows_a_private_root_function_in_a_child_module() {
+    let (directory, compile) = module_project(
+        "local-function-value-shadow",
+        "mod child;\nfn cb() -> i64 { 99 }\nfn main() -> i64 {\n    child::run(fn() -> i64 { 42 }) - 42\n}\n",
+        &[(
+            "child.vca",
+            "pub fn run(cb: fn() -> i64) -> i64 {\n    cb()\n}\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn private_generic_module_declarations_remain_private() {
     let (directory, compile) = module_project(
         "private-generic-module",
