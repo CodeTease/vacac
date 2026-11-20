@@ -170,15 +170,11 @@ impl Parser {
     }
 
     pub(super) fn parse_match(&mut self, span: Span) -> Result<Expr, Diagnostic> {
-        let was_parsing_match_value = self.parsing_match_value;
-        self.parsing_match_value = true;
         // The scrutinee must accept every binary operator, including equality,
         // bitwise, and logical operators, which bind looser than comparison.
         // Struct-literal suppression for the scrutinee is handled by
-        // `parsing_match_value`, not by a raised minimum precedence.
-        let parsed_value = self.parse_expression(0);
-        self.parsing_match_value = was_parsing_match_value;
-        let value = parsed_value?;
+        // `parse_header_expression`, not by a raised minimum precedence.
+        let value = self.parse_header_expression()?;
         self.consume(&TokenKind::LBrace, "`{` before match arms")?;
         let mut arms = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {

@@ -6,7 +6,7 @@ impl Parser {
         loop {
             if self.at(&TokenKind::LBracket) {
                 let span = Span::from(self.advance());
-                let index = self.parse_expression(0)?;
+                let index = self.parse_nested_expression()?;
                 self.consume(&TokenKind::RBracket, "`]` after array index")?;
                 left = Expr::Index {
                     array: Box::new(left),
@@ -59,6 +59,29 @@ impl Parser {
             };
         }
         Ok(left)
+    }
+
+    /// Parse an expression directly before a block, such as an `if`/`while`/`for`
+    /// header or a `match` scrutinee. A trailing `{` there starts the block, so
+    /// struct-literal parsing is suppressed for the whole expression; otherwise
+    /// `name { ... }` and `module::CONST { ... }` swallow the block brace.
+    pub(super) fn parse_header_expression(&mut self) -> Result<Expr, Diagnostic> {
+        let was_suppressed = self.suppress_struct_literal;
+        self.suppress_struct_literal = true;
+        let parsed = self.parse_expression(0);
+        self.suppress_struct_literal = was_suppressed;
+        parsed
+    }
+
+    /// Parse a delimited subexpression (call argument, grouped expression, array
+    /// element, or index). A `{` in these positions cannot open the enclosing
+    /// block, so struct literals stay allowed even during header parsing.
+    fn parse_nested_expression(&mut self) -> Result<Expr, Diagnostic> {
+        let was_suppressed = self.suppress_struct_literal;
+        self.suppress_struct_literal = false;
+        let parsed = self.parse_expression(0);
+        self.suppress_struct_literal = was_suppressed;
+        parsed
     }
 
     pub(super) fn parse_prefix(&mut self) -> Result<Expr, Diagnostic> {
@@ -160,7 +183,7 @@ impl Parser {
                 let mut elements = Vec::new();
                 if !self.at(&TokenKind::RBracket) {
                     loop {
-                        elements.push(self.parse_expression(0)?);
+                        elements.push(self.parse_nested_expression()?);
                         if !self.take(&TokenKind::Comma) {
                             break;
                         }
@@ -179,7 +202,7 @@ impl Parser {
                         "at least one tuple element; empty tuples are not supported",
                     ));
                 }
-                let first = self.parse_expression(0)?;
+                let first = self.parse_nested_expression()?;
                 if !self.take(&TokenKind::Comma) {
                     self.consume(&TokenKind::RParen, "`)` after grouped expression")?;
                     return Ok(first);
@@ -187,7 +210,7 @@ impl Parser {
                 let mut elements = vec![first];
                 if !self.at(&TokenKind::RParen) {
                     loop {
-                        elements.push(self.parse_expression(0)?);
+                        elements.push(self.parse_nested_expression()?);
                         if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
                             break;
                         }
@@ -197,7 +220,7 @@ impl Parser {
                 Ok(Expr::Tuple(elements, span))
             }
             TokenKind::If => {
-                let condition = self.parse_expression(0)?;
+                let condition = self.parse_header_expression()?;
                 let then_block = self.parse_block()?;
                 self.consume(&TokenKind::Else, "`else` in an `if` expression")?;
                 let else_block = self.parse_block()?;
@@ -240,7 +263,7 @@ impl Parser {
                     let mut args = Vec::new();
                     if !self.at(&TokenKind::RParen) {
                         loop {
-                            args.push(self.parse_expression(0)?);
+                            args.push(self.parse_nested_expression()?);
                             if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
                                 break;
                             }
@@ -256,7 +279,7 @@ impl Parser {
                 }
                 if path.len() >= 2
                     && type_arguments.is_empty()
-                    && !self.parsing_match_value
+                    && !self.suppress_struct_literal
                     && self.at(&TokenKind::LBrace)
                 {
                     let type_name = path.last().expect("path has at least two segments");
@@ -299,10 +322,11 @@ impl Parser {
                         span,
                     });
                 }
-                if (path.len() >= 2
-                    || self
-                        .struct_names
-                        .contains(path.last().expect("path is non-empty")))
+                if !self.suppress_struct_literal
+                    && (path.len() >= 2
+                        || self
+                            .struct_names
+                            .contains(path.last().expect("path is non-empty")))
                     && self.at(&TokenKind::Less)
                     && self.generic_struct_literal_ahead()
                 {
@@ -348,7 +372,7 @@ impl Parser {
                         let mut values = Vec::new();
                         if !self.at(&TokenKind::RParen) {
                             loop {
-                                values.push(self.parse_expression(0)?);
+                                values.push(self.parse_nested_expression()?);
                                 if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
                                     break;
                                 }
@@ -370,7 +394,10 @@ impl Parser {
                     })
                 } else if path.len() >= 2 {
                     Ok(Expr::Variable(name, span))
-                } else if self.struct_names.contains(&name) && self.at(&TokenKind::LBrace) {
+                } else if !self.suppress_struct_literal
+                    && self.struct_names.contains(&name)
+                    && self.at(&TokenKind::LBrace)
+                {
                     self.advance();
                     let mut fields = Vec::new();
                     if !self.at(&TokenKind::RBrace) {
@@ -399,7 +426,7 @@ impl Parser {
                     let mut args = Vec::new();
                     if !self.at(&TokenKind::RParen) {
                         loop {
-                            args.push(self.parse_expression(0)?);
+                            args.push(self.parse_nested_expression()?);
                             if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
                                 break;
                             }
@@ -442,7 +469,7 @@ impl Parser {
         let mut args = Vec::new();
         if !self.at(&TokenKind::RParen) {
             loop {
-                args.push(self.parse_expression(0)?);
+                args.push(self.parse_nested_expression()?);
                 if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
                     break;
                 }

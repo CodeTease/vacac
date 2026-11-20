@@ -3,6 +3,16 @@ use super::*;
 impl Parser {
     pub(super) fn parse_block(&mut self) -> Result<Block, Diagnostic> {
         self.consume(&TokenKind::LBrace, "`{")?;
+        // A committed block is a fresh context: header struct-literal
+        // suppression from an enclosing `if`/`match` does not apply inside it.
+        let was_suppressed = self.suppress_struct_literal;
+        self.suppress_struct_literal = false;
+        let parsed = self.parse_block_body();
+        self.suppress_struct_literal = was_suppressed;
+        parsed
+    }
+
+    fn parse_block_body(&mut self) -> Result<Block, Diagnostic> {
         let mut statements = Vec::new();
         let mut tail = None;
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
@@ -29,7 +39,7 @@ impl Parser {
                     }
                 } else if self.at(&TokenKind::If) {
                     let if_token = self.advance().clone();
-                    let condition = self.parse_expression(0)?;
+                    let condition = self.parse_header_expression()?;
                     let then_block = self.parse_block()?;
                     let else_block = if self.take(&TokenKind::Else) {
                         Some(self.parse_block()?)
@@ -62,15 +72,15 @@ impl Parser {
                         }
                     }
                 } else if self.take(&TokenKind::While) {
-                    let condition = self.parse_expression(0)?;
+                    let condition = self.parse_header_expression()?;
                     let body = self.parse_block()?;
                     Stmt::While { condition, body }
                 } else if self.take(&TokenKind::For) {
                     let name = self.take_ident("loop variable")?;
                     self.consume(&TokenKind::In, "`in`")?;
-                    let iterable = self.parse_expression(0)?;
+                    let iterable = self.parse_header_expression()?;
                     if self.take(&TokenKind::DotDot) {
-                        let end = self.parse_expression(0)?;
+                        let end = self.parse_header_expression()?;
                         let body = self.parse_block()?;
                         Stmt::For {
                             name,

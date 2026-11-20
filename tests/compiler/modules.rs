@@ -136,6 +136,61 @@ fn public_enum_patterns_resolve_from_child_modules() {
 }
 
 #[test]
+fn module_constants_parse_in_if_and_while_headers() {
+    let (directory, compile) = module_project(
+        "module-const-if-header",
+        "mod m;\nfn main() -> i64 {\n    if m::ENABLED { 0 } else { 1 }\n}\n",
+        &[("m.vca", "pub const ENABLED: bool = true;\n")],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "module-const-while-header",
+        "mod m;\nfn main() -> i64 {\n    while m::ENABLED { return 0; }\n    1\n}\n",
+        &[("m.vca", "pub const ENABLED: bool = true;\n")],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn module_constants_parse_in_for_range_headers() {
+    let (directory, compile) = module_project(
+        "module-const-for-header",
+        concat!(
+            "mod m;\n",
+            "fn main() -> i64 {\n",
+            "    let total = 0;\n",
+            "    for i in 0..m::LIMIT { total = total + i; }\n",
+            "    total - 3\n",
+            "}\n",
+        ),
+        &[("m.vca", "pub const LIMIT: i64 = 3;\n")],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn directory_modules_load_mod_vca_sources() {
     let (directory, compile) = module_project(
         "directory-module",

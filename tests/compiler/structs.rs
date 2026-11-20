@@ -309,3 +309,18 @@ fn structs_can_contain_arrays_of_structs_and_enums() {
     assert_eq!(result.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&result.stdout), "11\n1\n");
 }
+
+#[test]
+fn struct_literals_stay_available_inside_if_header_arguments() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64 }
+        fn sum(point: Point) -> i64 { point.x }
+        fn main() -> i64 {
+            if sum(Point { x: 41 }) == 41 { 0 } else { 1 }
+        }
+        "#,
+        "struct-literal-in-if-header",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}

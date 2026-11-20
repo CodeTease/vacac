@@ -1,6 +1,21 @@
 use crate::common::*;
 
 #[test]
+fn match_scrutinee_shadowing_a_struct_name_is_not_a_struct_literal() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64 }
+        fn main() -> i64 {
+            let Point = 1;
+            match Point { 1 => { 0 }, _ => { 1 } }
+        }
+        "#,
+        "match-shadowed-struct-name",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn boolean_and_integer_matches_produce_values() {
     let result = compile_and_run(
         r#"
