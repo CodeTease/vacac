@@ -54,6 +54,25 @@ fn generic_structs_can_be_constructed_nested_and_passed_to_functions() {
 }
 
 #[test]
+fn generic_struct_literal_lookahead_stops_at_expression_boundaries() {
+    let result = compile_and_run(
+        r#"
+        struct X { value: i64 }
+        fn main() -> i64 {
+            let X = 1;
+            let ok = X < 5;
+            match ok {
+                true => { 0 },
+                false => { 1 },
+            }
+        }
+        "#,
+        "generics-struct-lookahead-boundary",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn generic_functions_can_construct_and_return_specialized_structs() {
     let result = compile_and_run(
         r#"

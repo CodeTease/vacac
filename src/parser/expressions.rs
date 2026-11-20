@@ -454,6 +454,8 @@ impl Parser {
 
     fn generic_struct_literal_ahead(&self) -> bool {
         let mut depth = 0usize;
+        let mut brackets = 0usize;
+        let mut parentheses = 0usize;
         for (offset, token) in self.tokens[self.current..].iter().enumerate() {
             match token.kind {
                 TokenKind::Less => depth += 1,
@@ -463,10 +465,12 @@ impl Parser {
                     };
                     depth = next_depth;
                     if depth == 0 {
-                        return self
-                            .tokens
-                            .get(self.current + offset + 1)
-                            .is_some_and(|next| matches!(next.kind, TokenKind::LBrace));
+                        return brackets == 0
+                            && parentheses == 0
+                            && self
+                                .tokens
+                                .get(self.current + offset + 1)
+                                .is_some_and(|next| matches!(next.kind, TokenKind::LBrace));
                     }
                 }
                 TokenKind::ShiftRight => {
@@ -475,14 +479,48 @@ impl Parser {
                     };
                     depth = next_depth;
                     if depth == 0 {
-                        return self
-                            .tokens
-                            .get(self.current + offset + 1)
-                            .is_some_and(|next| matches!(next.kind, TokenKind::LBrace));
+                        return brackets == 0
+                            && parentheses == 0
+                            && self
+                                .tokens
+                                .get(self.current + offset + 1)
+                                .is_some_and(|next| matches!(next.kind, TokenKind::LBrace));
                     }
                 }
+                TokenKind::LBracket => brackets += 1,
+                TokenKind::RBracket => {
+                    let Some(next_brackets) = brackets.checked_sub(1) else {
+                        return false;
+                    };
+                    brackets = next_brackets;
+                }
+                TokenKind::LParen => parentheses += 1,
+                TokenKind::RParen => {
+                    let Some(next_parentheses) = parentheses.checked_sub(1) else {
+                        return false;
+                    };
+                    parentheses = next_parentheses;
+                }
+                TokenKind::Semicolon if brackets == 0 => return false,
+                TokenKind::Ident(_)
+                | TokenKind::DoubleColon
+                | TokenKind::Comma
+                | TokenKind::Amp
+                | TokenKind::Star
+                | TokenKind::Const
+                | TokenKind::Lifetime(_)
+                | TokenKind::Fn
+                | TokenKind::Arrow
+                | TokenKind::I64
+                | TokenKind::F32
+                | TokenKind::F64
+                | TokenKind::Bool
+                | TokenKind::Str
+                | TokenKind::Unit
+                | TokenKind::Integer(_)
+                | TokenKind::Semicolon => {}
                 TokenKind::Eof => return false,
-                _ => {}
+                _ => return false,
             }
         }
         false
