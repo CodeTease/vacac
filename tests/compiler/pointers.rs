@@ -276,3 +276,42 @@ fn mutable_reference_rules_reject_unsafe_lifetimes_and_immutable_origins() {
         assert_compile_error(source, name, diagnostic);
     }
 }
+
+#[test]
+fn closures_cannot_take_the_raw_address_of_enclosing_locals() {
+    for (source, name) in [
+        (
+            "fn main() -> i64 { let x = 42; let f: fn() -> *const i64 = fn() -> *const i64 { &raw const x }; 0 }",
+            "raw-pointer-closure-const-capture",
+        ),
+        (
+            "fn main() -> i64 { let x = 42; let f: fn() -> *mut i64 = fn() -> *mut i64 { &raw mut x }; 0 }",
+            "raw-pointer-closure-mut-capture",
+        ),
+    ] {
+        assert_compile_error(
+            source,
+            name,
+            "closures cannot take the raw address of enclosing local `x`",
+        );
+    }
+}
+
+#[test]
+fn closures_can_take_raw_addresses_of_globals_and_their_own_locals() {
+    let result = compile_and_run(
+        r#"
+        const GLOBAL: i64 = 42;
+        fn main() -> i64 {
+            let closure: fn() -> i64 = fn() -> i64 {
+                let local = 40;
+                let pointer = &raw const local;
+                *pointer + *(&raw const GLOBAL) - 82
+            };
+            closure()
+        }
+        "#,
+        "raw-pointer-closure-allowed-roots",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}

@@ -258,7 +258,17 @@ impl Checker {
                 "raw address-taking requires a variable, field, or array element",
             )
         })?;
-        let root_type = if let Some(ty) = self.lookup_local(root) {
+        let root_type = if let Some((scope_index, ty)) = self.lookup_local_with_scope(root) {
+            if self
+                .lambda_scope_boundaries
+                .last()
+                .is_some_and(|boundary| scope_index < *boundary)
+            {
+                return Err(at(
+                    span,
+                    format!("closures cannot take the raw address of enclosing local `{root}`"),
+                ));
+            }
             self.reject_mutably_borrowed(root, span)?;
             if mutable {
                 if self.is_place_shared_borrowed(expr, span)? {
