@@ -954,6 +954,19 @@ impl Checker {
             .any(|borrow| borrow.overlaps(&place)))
     }
 
+    pub(super) fn is_place_shared_borrowed(
+        &self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<bool, Diagnostic> {
+        let place = self.borrow_place(expr, span)?;
+        Ok(self
+            .shared_borrows
+            .iter()
+            .flatten()
+            .any(|borrow| borrow.overlaps(&place)))
+    }
+
     pub(super) fn reject_mutably_borrowed_place(
         &self,
         expr: &Expr,

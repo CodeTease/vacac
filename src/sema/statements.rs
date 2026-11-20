@@ -370,6 +370,14 @@ impl Checker {
                 ) {
                     return Err(at(*span, "reference bindings cannot be reassigned"));
                 }
+                if through_pointer && !self.place_is_mutable(target)? {
+                    if let Expr::Unary { value: pointer, .. } = target
+                        && matches!(self.check_expr(pointer, false)?, ValueType::Reference(_))
+                    {
+                        return Err(at(*span, "assignment target must start with a variable"));
+                    }
+                    return Err(at(*span, "cannot assign through an immutable pointer"));
+                }
                 let vector_place = self.place_crosses_vector(target, binding_type)?;
                 if vector_place {
                     let value_type = self.check_expr_expected(value, target_type)?;
@@ -382,16 +390,7 @@ impl Checker {
                     return Ok(false);
                 }
                 let is_global = self.lookup_local(root).is_none();
-                if through_pointer {
-                    if !self.place_is_mutable(target)? {
-                        if let Expr::Unary { value: pointer, .. } = target
-                            && matches!(self.check_expr(pointer, false)?, ValueType::Reference(_))
-                        {
-                            return Err(at(*span, "assignment target must start with a variable"));
-                        }
-                        return Err(at(*span, "cannot assign through an immutable pointer"));
-                    }
-                } else if !is_global && self.is_loop_variable(root) {
+                if !through_pointer && !is_global && self.is_loop_variable(root) {
                     return Err(at(
                         *span,
                         format!("cannot assign through immutable loop variable `{root}`"),

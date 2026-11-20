@@ -279,6 +279,21 @@ mod types;
 use types::{assignment_root, at, span_of_expr};
 
 #[cfg(test)]
+mod pointer_mutability_tests {
+    use super::*;
+
+    #[test]
+    fn vector_element_store_through_const_pointer_is_rejected() {
+        let source = "struct H { v: Vec<i64> } fn main() -> i64 { let v: Vec<i64> = vec_new(); vec_push(v, 1); let h = H { v: v }; let p: *const H = &raw const h; (*p).v[0] = 2; 0 }";
+        let tokens = crate::lexer::lex(source).expect("source lexes");
+        let (mut program, diagnostics) = crate::parser::Parser::new(tokens).parse_program();
+        assert!(diagnostics.is_empty(), "parse diagnostics: {diagnostics:?}");
+        let error = check(&mut program).expect_err("sema must reject the store");
+        assert_eq!(error.message, "cannot assign through an immutable pointer");
+    }
+}
+
+#[cfg(test)]
 mod borrow_place_tests {
     use super::{BorrowPlace, BorrowProjection, BorrowRoot};
 

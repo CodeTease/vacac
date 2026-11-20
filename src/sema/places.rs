@@ -260,11 +260,21 @@ impl Checker {
         })?;
         let root_type = if let Some(ty) = self.lookup_local(root) {
             self.reject_mutably_borrowed(root, span)?;
-            if mutable && self.is_immutable_binding(root) {
-                return Err(at(
-                    span,
-                    "cannot take a mutable raw pointer to an immutable binding",
-                ));
+            if mutable {
+                if self.is_place_shared_borrowed(expr, span)? {
+                    return Err(at(
+                        span,
+                        format!(
+                            "cannot take a mutable raw pointer to `{root}` while it is borrowed"
+                        ),
+                    ));
+                }
+                if self.is_immutable_binding(root) {
+                    return Err(at(
+                        span,
+                        "cannot take a mutable raw pointer to an immutable binding",
+                    ));
+                }
             }
             ty
         } else if let Some(global) = self.find_global_name(root) {

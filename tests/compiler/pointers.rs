@@ -74,6 +74,11 @@ fn raw_pointer_mutability_and_unsupported_escapes_are_checked() {
             "cannot take a mutable raw pointer to an immutable binding",
         ),
         (
+            "fn main() -> i64 { let value = 1; const reference: &i64 = &value; const pointer: *mut i64 = &raw mut value; 0 }",
+            "raw-pointer-shared-borrow",
+            "cannot take a mutable raw pointer to `value` while it is borrowed",
+        ),
+        (
             "fn main() -> i64 { let value = 1; const pointer: *mut i64 = &raw mut value; let other: *const i64 = pointer; 0 }",
             "raw-pointer-no-coercion",
             "initializer for `other` has type *mut i64, expected *const i64",
