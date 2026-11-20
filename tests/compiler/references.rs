@@ -390,6 +390,67 @@ fn shared_references_borrow_mutable_local_bindings() {
 }
 
 #[test]
+fn shared_borrows_span_sibling_call_arguments() {
+    assert_compile_error(
+        r#"
+        fn mutate(value: &mut i64) -> i64 { *value = 999; 1 }
+        fn observe(reference: &i64, computed: i64) -> i64 { *reference + computed }
+        fn main() -> i64 {
+            let answer = 10;
+            observe(&answer, loop {
+                const mutable: &mut i64 = &mut answer;
+                break mutate(mutable);
+            })
+        }
+        "#,
+        "references-sibling-argument-mutable-borrow",
+        "`answer` is already mutably borrowed",
+    );
+    assert_compile_error(
+        "fn observe(reference: &i64, other: i64) -> i64 { 0 } fn main() -> i64 { let answer = 10; observe(&answer, loop { answer = 999; break 0; }) }",
+        "references-sibling-argument-write",
+        "cannot modify `answer` while it is borrowed",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { let answer = 10; let forward: fn(&i64, i64) -> i64 = fn(reference: &i64, other: i64) -> i64 { *reference + other }; forward(&answer, loop { const mutable: &mut i64 = &mut answer; break 0; }) }",
+        "references-sibling-argument-function-value",
+        "`answer` is already mutably borrowed",
+    );
+
+    let result = compile_and_run(
+        r#"
+        fn read(value: &i64, other: i64) -> i64 { *value + other }
+
+        fn main() -> i64 {
+            let answer = 10;
+            read(&answer, 0);
+            answer = 32;
+            answer - 32
+        }
+        "#,
+        "references-sibling-argument-loan-release",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64, y: i64 }
+        fn read(value: &i64, other: i64) -> i64 { *value + other }
+
+        fn main() -> i64 {
+            let point = Point { x: 20, y: 22 };
+            read(&point.x, loop {
+                const mutable: &mut i64 = &mut point.y;
+                break *mutable;
+            }) - 42
+        }
+        "#,
+        "references-sibling-argument-disjoint-fields",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn references_borrow_struct_fields_and_track_projection_overlap() {
     let result = compile_and_run(
         r#"

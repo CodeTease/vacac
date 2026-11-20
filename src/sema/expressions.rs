@@ -577,34 +577,41 @@ impl Checker {
                 let params = signature.params.clone();
                 let return_type = signature.return_type;
                 self.reject_overlapping_mutable_reference_arguments(args, &params)?;
-                for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
-                    if let Expr::Unary {
-                        op: UnaryOp::BorrowMut,
-                        value,
-                        ..
-                    } = arg
-                        && let Expr::Variable(source, source_span) = value.as_ref()
-                        && self.is_place_mutably_borrowed(value, *source_span)?
-                    {
-                        return Err(at(
-                            *source_span,
-                            format!("`{source}` is already mutably borrowed"),
-                        ));
+                self.shared_borrows.push(Vec::new());
+                let checked_arguments: Result<(), Diagnostic> = (|| {
+                    for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
+                        if let Expr::Unary {
+                            op: UnaryOp::BorrowMut,
+                            value,
+                            ..
+                        } = arg
+                            && let Expr::Variable(source, source_span) = value.as_ref()
+                            && self.is_place_mutably_borrowed(value, *source_span)?
+                        {
+                            return Err(at(
+                                *source_span,
+                                format!("`{source}` is already mutably borrowed"),
+                            ));
+                        }
+                        let previous_shared_borrow_permission = self.allow_shared_borrow;
+                        if matches!(expected, ValueType::Reference(_)) {
+                            self.allow_shared_borrow = true;
+                        }
+                        let checked_argument = self.check_expr_expected(arg, expected);
+                        self.allow_shared_borrow = previous_shared_borrow_permission;
+                        let actual = checked_argument?;
+                        self.expect_type(
+                            actual,
+                            expected,
+                            span_of_expr(arg),
+                            &format!("argument {} to `{name}`", index + 1),
+                        )?;
+                        self.record_argument_shared_borrows(arg, actual)?;
                     }
-                    let previous_shared_borrow_permission = self.allow_shared_borrow;
-                    if matches!(expected, ValueType::Reference(_)) {
-                        self.allow_shared_borrow = true;
-                    }
-                    let checked_argument = self.check_expr_expected(arg, expected);
-                    self.allow_shared_borrow = previous_shared_borrow_permission;
-                    let actual = checked_argument?;
-                    self.expect_type(
-                        actual,
-                        expected,
-                        span_of_expr(arg),
-                        &format!("argument {} to `{name}`", index + 1),
-                    )?;
-                }
+                    Ok(())
+                })();
+                self.shared_borrows.pop();
+                checked_arguments?;
                 Ok(return_type)
             }
             Expr::CallValue { callee, args, span } => {
@@ -894,21 +901,47 @@ impl Checker {
             ));
         }
         self.reject_overlapping_mutable_reference_arguments(args, &shape.params)?;
-        for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
-            let previous_shared_borrow_permission = self.allow_shared_borrow;
-            if matches!(expected, ValueType::Reference(_)) {
-                self.allow_shared_borrow = true;
+        self.shared_borrows.push(Vec::new());
+        let checked_arguments: Result<(), Diagnostic> = (|| {
+            for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
+                let previous_shared_borrow_permission = self.allow_shared_borrow;
+                if matches!(expected, ValueType::Reference(_)) {
+                    self.allow_shared_borrow = true;
+                }
+                let checked_argument = self.check_expr_expected(arg, expected);
+                self.allow_shared_borrow = previous_shared_borrow_permission;
+                let actual = checked_argument?;
+                self.expect_type(
+                    actual,
+                    expected,
+                    span_of_expr(arg),
+                    &format!("argument {} to function value", index + 1),
+                )?;
+                self.record_argument_shared_borrows(arg, actual)?;
             }
-            let checked_argument = self.check_expr_expected(arg, expected);
-            self.allow_shared_borrow = previous_shared_borrow_permission;
-            let actual = checked_argument?;
-            self.expect_type(
-                actual,
-                expected,
-                span_of_expr(arg),
-                &format!("argument {} to function value", index + 1),
-            )?;
-        }
+            Ok(())
+        })();
+        self.shared_borrows.pop();
+        checked_arguments?;
         Ok(shape.return_type)
+    }
+
+    fn record_argument_shared_borrows(
+        &mut self,
+        argument: &Expr,
+        actual: ValueType,
+    ) -> Result<(), Diagnostic> {
+        if !matches!(actual, ValueType::Reference(_)) {
+            return Ok(());
+        }
+        let Some(origin) = self.reference_origin(argument) else {
+            return Ok(());
+        };
+        for source in &origin.sources {
+            if let ReferenceSource::Borrowed(place) = source {
+                self.record_shared_borrow_place(place.clone(), span_of_expr(argument))?;
+            }
+        }
+        Ok(())
     }
 }
