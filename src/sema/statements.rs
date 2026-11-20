@@ -16,8 +16,20 @@ impl Checker {
         self.mutable_reference_origins.push(HashMap::new());
         let mut returns = false;
         for statement in &block.statements {
-            let statement_returns = self.check_statement(statement, return_type)?;
-            returns |= statement_returns;
+            if returns {
+                return Err(at(
+                    span_of_stmt(statement),
+                    "unreachable statement after `return`",
+                ));
+            }
+            returns = self.check_statement(statement, return_type)?;
+        }
+
+        if returns && let Some(tail) = &block.tail {
+            return Err(at(
+                span_of_expr(tail),
+                "unreachable expression after `return`",
+            ));
         }
 
         if let Some(tail) = &block.tail {
@@ -613,6 +625,21 @@ impl Checker {
                 Ok(false)
             }
         }
+    }
+}
+
+fn span_of_stmt(statement: &Stmt) -> Span {
+    match statement {
+        Stmt::Let { span, .. }
+        | Stmt::Assign { span, .. }
+        | Stmt::ForArray { span, .. }
+        | Stmt::Break { span, .. }
+        | Stmt::Continue { span, .. }
+        | Stmt::Return { span, .. }
+        | Stmt::AssignPlace { span, .. } => *span,
+        Stmt::If { condition, .. } | Stmt::While { condition, .. } => span_of_expr(condition),
+        Stmt::For { start, .. } => span_of_expr(start),
+        Stmt::Expr(expr) => span_of_expr(expr),
     }
 }
 

@@ -201,6 +201,23 @@ fn integer_match_requires_a_wildcard_and_scalar_patterns_must_match_value_type()
 }
 
 #[test]
+fn unreachable_statements_after_return_are_rejected_during_type_checking() {
+    assert_compile_error(
+        r#"
+        fn main() -> i64 {
+            let x = loop {
+                return 0;
+                break 1;
+            };
+            x
+        }
+        "#,
+        "unreachable-statement-after-return",
+        "unreachable statement after `return`",
+    );
+}
+
+#[test]
 fn value_loop_breaks_must_be_typed_and_bare_breaks_stay_statement_loop_only() {
     assert_compile_error(
         "fn main() -> i64 { let result = loop { break 1; break true; }; result }\n",
