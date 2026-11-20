@@ -2,7 +2,8 @@ use super::*;
 
 impl<'ctx> Codegen<'ctx> {
     pub(super) fn target_machine(&mut self) -> Result<TargetMachine, Diagnostic> {
-        Target::initialize_x86(&InitializationConfig::default());
+        Target::initialize_native(&InitializationConfig::default())
+            .map_err(|e| format!("could not initialize the native LLVM target: {e}"))?;
         let triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
         let machine = target
