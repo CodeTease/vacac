@@ -568,12 +568,14 @@ fn trait_dispatch_is_erased_before_llvm_emission() {
 #[test]
 fn malformed_traits_and_impls_recover_to_later_declarations() {
     let (directory, compile) = compile_source(
-        "trait Broken { fn show(value: Self) -> str }\nimpl Show for i64 { fn show(value: i64) -> str { \"x\" } }\nfn main() -> i64 { 0 }\n",
+        "trait Broken { fn show(value: Self) -> str }\nfn broken( -> i64 { 0 }\nfn main() -> i64 { 0 }\n",
         "traits-parser-recovery",
     );
     assert!(!compile.status.success());
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(stderr.contains("expected `;`"), "{stderr}");
-    assert!(stderr.matches("vacac:").count() >= 1, "{stderr}");
+    assert_eq!(stderr.matches("vacac:").count(), 2, "{stderr}");
+    assert!(stderr.contains("test.vca:1:"), "{stderr}");
+    assert!(stderr.contains("test.vca:2:"), "{stderr}");
     let _ = fs::remove_dir_all(directory);
 }

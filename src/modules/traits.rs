@@ -242,7 +242,16 @@ fn validate_type_shape(
         }
         Type::Function(params, result) => {
             for param in params {
+                if *param == Type::Unit {
+                    return Err(at(span, "function type parameters cannot have type `unit`"));
+                }
                 validate_type_shape(param, parameters, self_allowed, shapes, span)?;
+            }
+            if matches!(
+                result.as_ref(),
+                Type::Reference(_, _) | Type::MutableReference(_, _)
+            ) {
+                return Err(at(span, "function types cannot return references"));
             }
             validate_type_shape(result, parameters, self_allowed, shapes, span)
         }
