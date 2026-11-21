@@ -122,17 +122,19 @@ impl Specializer {
                 span: if_span,
             } => {
                 self.process_expr(condition, substitutions, variables)?;
+                let mut then_variables = variables.clone();
                 self.process_block_with_expected(
                     then_block,
                     substitutions,
-                    variables,
+                    &mut then_variables,
                     expected,
                     *if_span,
                 )?;
+                let mut else_variables = variables.clone();
                 self.process_block_with_expected(
                     else_block,
                     substitutions,
-                    variables,
+                    &mut else_variables,
                     expected,
                     *if_span,
                 )
@@ -238,7 +240,6 @@ impl Specializer {
                             format!("enum `{enum_name}` has no variant `{variant_name}`"),
                         )
                     })?;
-                let mut inferred = HashMap::new();
                 if let Some(values) = payload {
                     if values.len() != variant.payload.len() {
                         return Err(Diagnostic::at(
@@ -249,11 +250,6 @@ impl Specializer {
                                 values.len()
                             ),
                         ));
-                    }
-                    for (formal, value) in variant.payload.iter().zip(values) {
-                        if let Some(actual) = self.infer_expr_type(value, variables) {
-                            self.unify(formal, &actual, &mut inferred, *variant_span)?;
-                        }
                     }
                 }
                 let mut resolved_arguments = if !type_arguments.is_empty() {
@@ -282,23 +278,6 @@ impl Specializer {
                         }
                     }
                 };
-                {
-                    for (parameter, argument) in
-                        template.generic_params.iter().zip(&mut resolved_arguments)
-                    {
-                        if let Some(inferred) = inferred.get(&parameter.name)
-                            && argument != inferred
-                        {
-                            return Err(Diagnostic::at(
-                                (*variant_span).into(),
-                                format!(
-                                    "generic enum argument for `{}` conflicts with inferred type",
-                                    parameter.name
-                                ),
-                            ));
-                        }
-                    }
-                }
                 if resolved_arguments.len() != template.generic_params.len() {
                     return Err(Diagnostic::at(
                         (*variant_span).into(),
@@ -346,6 +325,16 @@ impl Specializer {
                             expected_payload,
                             *variant_span,
                         )?;
+                        if let Some(actual) = self.infer_expr_type(value, variables) {
+                            let actual =
+                                self.normalize_type(actual, substitutions, *variant_span)?;
+                            self.unify(
+                                expected_payload,
+                                &actual,
+                                &mut Substitution::new(),
+                                *variant_span,
+                            )?;
+                        }
                     }
                 }
                 Ok(())

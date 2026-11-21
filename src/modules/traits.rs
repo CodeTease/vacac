@@ -168,6 +168,7 @@ fn validate_declaration_types(
             &shapes,
             declaration.target_span,
         )?;
+        validate_signature_type(&declaration.target, true, true, declaration.target_span)?;
         for function in &declaration.functions {
             for param in &function.params {
                 validate_type_shape(&param.ty, &parameters, true, &shapes, param.span)?;
@@ -837,38 +838,57 @@ fn unify_overlap(
 }
 
 fn bind_overlap(variable: &str, ty: &Type, bindings: &mut HashMap<String, Type>) -> Result<(), ()> {
-    if let Type::Parameter(name) = ty
+    let ty = resolve_overlap(ty, bindings);
+    if let Type::Parameter(name) = &ty
         && name == variable
     {
         return Ok(());
     }
     if let Some(previous) = bindings.get(variable).cloned() {
-        return unify_overlap(&previous, ty, bindings);
+        return unify_overlap(&previous, &ty, bindings);
     }
-    if occurs_overlap(variable, ty) {
+    if occurs_overlap(variable, &ty, bindings) {
         return Err(());
     }
-    bindings.insert(variable.to_owned(), ty.clone());
+    bindings.insert(variable.to_owned(), ty);
     Ok(())
 }
 
-fn occurs_overlap(variable: &str, ty: &Type) -> bool {
+fn resolve_overlap(ty: &Type, bindings: &HashMap<String, Type>) -> Type {
+    if let Type::Parameter(name) = ty
+        && let Some(bound) = bindings.get(name)
+    {
+        return resolve_overlap(bound, bindings);
+    }
+    ty.clone()
+}
+
+fn occurs_overlap(variable: &str, ty: &Type, bindings: &HashMap<String, Type>) -> bool {
     match ty {
-        Type::Parameter(name) => name == variable,
-        Type::Array(element, _) | Type::Vector(element) => occurs_overlap(variable, element),
+        Type::Parameter(name) => {
+            name == variable
+                || bindings
+                    .get(name)
+                    .is_some_and(|bound| occurs_overlap(variable, bound, bindings))
+        }
+        Type::Array(element, _) | Type::Vector(element) => {
+            occurs_overlap(variable, element, bindings)
+        }
         Type::Reference(element, _)
         | Type::MutableReference(element, _)
-        | Type::RawPointer(element, _) => occurs_overlap(variable, element),
+        | Type::RawPointer(element, _) => occurs_overlap(variable, element, bindings),
         Type::Tuple(elements) => elements
             .iter()
-            .any(|element| occurs_overlap(variable, element)),
+            .any(|element| occurs_overlap(variable, element, bindings)),
         Type::Function(params, result) => {
-            params.iter().any(|param| occurs_overlap(variable, param))
-                || occurs_overlap(variable, result)
+            params
+                .iter()
+                .any(|param| occurs_overlap(variable, param, bindings))
+                || occurs_overlap(variable, result, bindings)
         }
         Type::Applied(_, arguments) => arguments
             .iter()
-            .any(|argument| occurs_overlap(variable, argument)),
+            .any(|argument| occurs_overlap(variable, argument, bindings)),
         Type::I64
         | Type::F32
         | Type::F64
@@ -918,6 +938,18 @@ mod tests {
         assert!(!impl_targets_overlap(
             &Type::Vector(Box::new(parameter("T"))),
             &boxed(parameter("U"))
+        ));
+    }
+
+    #[test]
+    fn indirect_recursive_targets_do_not_overlap() {
+        let left = Type::Tuple(vec![parameter("T"), Type::Vector(Box::new(parameter("T")))]);
+        let right = Type::Tuple(vec![parameter("U"), parameter("U")]);
+        assert!(!impl_targets_overlap(&left, &right));
+        assert!(!impl_targets_overlap(&right, &left));
+        assert!(impl_targets_overlap(
+            &boxed(parameter("T")),
+            &boxed(Type::I64)
         ));
     }
 

@@ -238,6 +238,24 @@ fn main() -> i64 {
 }
 
 #[test]
+fn trait_selection_uses_processed_nested_generic_arguments() {
+    let result = compile_and_run(
+        r#"
+struct Box<T> { value: T }
+trait Unwrap { fn unwrap(value: Self) -> i64; }
+impl Unwrap for Box<Box<i64>> {
+    fn unwrap(value: Box<Box<i64>>) -> i64 { value.value.value }
+}
+fn main() -> i64 {
+    Unwrap::unwrap(Box<Box<i64>> { value: Box<i64> { value: 42 } }) - 42
+}
+"#,
+        "traits-nested-generic-selection",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn unused_generic_bodies_defer_missing_impls_until_instantiation() {
     let result = compile_and_run(
         r#"
@@ -338,6 +356,29 @@ fn unused_trait_and_impl_declarations_still_validate_their_types() {
         "traits-invalid-target-type",
         "generic type `Box` requires explicit type arguments",
     );
+}
+
+#[test]
+fn impl_target_types_are_validated_without_self_in_methods() {
+    assert_compile_error(
+        "trait Marker { fn marker() -> i64; } impl Marker for Vec<unit> { fn marker() -> i64 { 0 } } fn main() -> i64 { 0 }",
+        "traits-invalid-nested-target-type",
+        "type `unit` is not valid in this function type position",
+    );
+
+    let result = compile_and_run(
+        r#"
+trait Marker { fn marker() -> i64; }
+trait Concrete { fn concrete() -> i64; }
+impl<T> Marker for Vec<T> { fn marker() -> i64 { 0 } }
+impl Concrete for Vec<i64> { fn concrete() -> i64 { 0 } }
+fn main() -> i64 {
+    <Vec<i64> as Marker>::marker() + <Vec<i64> as Concrete>::concrete()
+}
+"#,
+        "traits-valid-nested-target-types",
+    );
+    assert_eq!(result.status.code(), Some(0));
 }
 
 #[test]
@@ -528,6 +569,44 @@ fn main() -> i64 {
 }
 
 #[test]
+fn trait_calls_normalize_typed_global_arguments() {
+    let result = compile_and_run(
+        r#"
+struct Box<T> { value: T }
+const VALUE: Box<i64> = Box<i64> { value: 42 };
+trait Unwrap { fn unwrap(value: Self) -> i64; }
+impl Unwrap for Box<i64> { fn unwrap(value: Box<i64>) -> i64 { value.value } }
+fn main() -> i64 { Unwrap::unwrap(VALUE) - 42 }
+"#,
+        "traits-normalize-global-argument",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn trait_self_inference_compares_concrete_type_identities() {
+    let result = compile_and_run(
+        r#"
+struct Box<T> { value: T }
+const RIGHT: Box<i64> = Box<i64> { value: 22 };
+trait Combine { fn combine(left: Self, right: Self) -> i64; }
+impl Combine for Box<i64> {
+    fn combine(left: Box<i64>, right: Box<i64>) -> i64 { left.value + right.value }
+}
+fn main() -> i64 { Combine::combine(Box<i64> { value: 20 }, RIGHT) - 42 }
+"#,
+        "traits-self-concrete-identity",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "struct Box<T> { value: T } trait Combine { fn combine(left: Self, right: Self) -> i64; } impl Combine for Box<i64> { fn combine(left: Box<i64>, right: Box<i64>) -> i64 { 0 } } fn main() -> i64 { Combine::combine(Box<bool> { value: true }, Box<i64> { value: 1 }) }",
+        "traits-self-conflicting-concrete-types",
+        "trait `Self` is inferred as both",
+    );
+}
+
+#[test]
 fn explicit_self_errors_use_trait_function_names() {
     assert_compile_error(
         "trait Zero { fn zero() -> Self; } impl Zero for i64 { fn zero() -> Self { 0 } } fn main() -> i64 { <i64 as Zero>::zero(1); 0 }",
@@ -542,7 +621,7 @@ fn explicit_self_errors_use_trait_function_names() {
 }
 
 #[test]
-fn trait_calls_infer_generic_enum_arguments() {
+fn trait_calls_infer_generic_enum_arguments_and_explicit_none() {
     let result = compile_and_run(
         r#"
 trait Unwrap { fn unwrap(value: Self) -> i64; }
@@ -558,7 +637,8 @@ impl Unwrap for Maybe<i64> {
 fn main() -> i64 {
     let explicit = <Maybe<i64> as Unwrap>::unwrap(Maybe::Some(20));
     let inferred = Unwrap::unwrap(Maybe::Some(22));
-    explicit + inferred - 42
+    let none = Unwrap::unwrap(Maybe::<i64>::None);
+    explicit + inferred + none - 42
 }
 "#,
         "traits-expected-enum",
@@ -634,6 +714,39 @@ fn trait_names_cannot_collide_with_modules() {
         String::from_utf8_lossy(&compile.stderr)
             .contains("trait `util` conflicts with a module of the same name")
     );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn module_functions_take_precedence_over_root_traits() {
+    let (directory, compile) = module_project(
+        "module-callable-before-trait",
+        concat!(
+            "mod child;\n",
+            "pub trait Ops { fn value(value: Self) -> i64; }\n",
+            "impl Ops for i64 { fn value(value: i64) -> i64 { value } }\n",
+            "pub trait Show { fn show(value: Self) -> i64; }\n",
+            "impl Show for i64 { fn show(value: i64) -> i64 { value } }\n",
+            "fn main() -> i64 { child::module_call() - 42 + child::trait_call() - 41 + child::Ops::value(39) - 40 }\n",
+        ),
+        &[
+            (
+                "child.vca",
+                "mod Ops;\npub fn module_call() -> i64 { Ops::value(41) }\npub fn trait_call() -> i64 { Show::show(41) }\n",
+            ),
+            (
+                "child/Ops.vca",
+                "pub fn value(value: i64) -> i64 { value + 1 }\n",
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
     let _ = fs::remove_dir_all(directory);
 }
 

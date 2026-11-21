@@ -623,8 +623,11 @@ impl<'a> Resolver<'a> {
                 span,
             } => {
                 if let Some((trait_name, function_name)) = name.rsplit_once("::") {
-                    let is_trait = find_symbol(trait_name, self.module, self.symbols)
-                        .is_some_and(|symbol| symbol.kind == "trait");
+                    let is_callable = find_symbol(name, self.module, self.symbols)
+                        .is_some_and(|symbol| symbol.kind == "function");
+                    let is_trait = !is_callable
+                        && find_symbol(trait_name, self.module, self.symbols)
+                            .is_some_and(|symbol| symbol.kind == "trait");
                     if is_trait {
                         let resolved_trait =
                             resolve_reference(trait_name, self.module, *span, self.symbols)?;

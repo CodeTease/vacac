@@ -202,8 +202,15 @@ impl Specializer {
             None => None,
         };
         let inferred_before_processing = if explicit_self.is_none() {
-            self.infer_call_self(&trait_info, &function, args, variables, call_span)
-                .ok()
+            self.infer_call_self(
+                &trait_info,
+                &function,
+                args,
+                variables,
+                substitutions,
+                call_span,
+            )
+            .ok()
         } else {
             None
         };
@@ -230,10 +237,14 @@ impl Specializer {
 
         let self_type = match explicit_self {
             Some(self_type) => self_type,
-            None => match inferred_before_processing {
-                Some(self_type) => self_type,
-                None => self.infer_call_self(&trait_info, &function, args, variables, call_span)?,
-            },
+            None => self.infer_call_self(
+                &trait_info,
+                &function,
+                args,
+                variables,
+                substitutions,
+                call_span,
+            )?,
         };
         let (impl_id, impl_substitutions) =
             self.prove_trait_bound_selection(&self_type, trait_info.id, call_span)?;
@@ -293,9 +304,11 @@ impl Specializer {
             let Some(actual) = self.infer_expr_type(argument, variables) else {
                 continue;
             };
+            let expected = self.normalize_type(expected.clone(), substitutions, call_span)?;
+            let actual = self.normalize_type(actual, substitutions, call_span)?;
             let mut checked = Substitution::new();
             if self
-                .unify(expected, &actual, &mut checked, call_span)
+                .unify(&expected, &actual, &mut checked, call_span)
                 .is_err()
             {
                 return Err(Diagnostic::at(
@@ -306,7 +319,7 @@ impl Specializer {
                         trait_name,
                         function_name,
                         type_name(&actual),
-                        type_name(expected)
+                        type_name(&expected)
                     ),
                 ));
             }
@@ -323,11 +336,12 @@ impl Specializer {
     }
 
     fn infer_call_self(
-        &self,
+        &mut self,
         trait_info: &TraitInfo,
         function: &TraitFunction,
         args: &[Expr],
         variables: &HashMap<String, Type>,
+        substitutions: &Substitution,
         span: Span,
     ) -> Result<Type, Diagnostic> {
         if args.len() != function.params.len() {
@@ -346,6 +360,7 @@ impl Specializer {
         let mut inferred = Substitution::new();
         for (parameter, argument) in function.params.iter().zip(args) {
             if let Some(actual) = self.infer_trait_argument_type(argument, variables) {
+                let actual = self.normalize_type(actual, substitutions, span)?;
                 let expected = substitute_self(&parameter.ty, &marker);
                 self.unify(&expected, &actual, &mut inferred, span)
                     .map_err(|mut error| {
@@ -413,7 +428,10 @@ impl Specializer {
                 variant_name,
                 payload,
                 span,
-            } if type_arguments.is_empty() && self.generic_enums.contains_key(enum_name) => {
+            } if self.generic_enums.contains_key(enum_name) => {
+                if !type_arguments.is_empty() {
+                    return Some(Type::Applied(enum_name.clone(), type_arguments.clone()));
+                }
                 let template = self.generic_enums.get(enum_name)?;
                 let variant = template
                     .variants
