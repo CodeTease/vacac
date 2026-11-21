@@ -184,6 +184,195 @@ fn main() -> i64 {
 }
 
 #[test]
+fn explicit_self_works_with_generic_type_parameters() {
+    let result = compile_and_run(
+        r#"
+trait Zero { fn zero() -> Self; }
+impl Zero for i64 { fn zero() -> Self { 42 } }
+fn zero<T: Zero>() -> T { <T as Zero>::zero() }
+fn main() -> i64 { zero::<i64>() - 42 }
+"#,
+        "traits-generic-explicit-self",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn structural_generic_impl_targets_are_specialized() {
+    let result = compile_and_run(
+        r#"
+trait Length { fn length(value: Self) -> i64; }
+impl<T> Length for Vec<T> { fn length(value: Vec<T>) -> i64 { len(value) } }
+trait Second { fn second(value: Self) -> i64; }
+impl<T> Second for (T, i64) { fn second(value: (T, i64)) -> i64 { let (_, second) = value; second } }
+fn main() -> i64 {
+    let values: Vec<i64> = vec_new();
+    vec_push(values, 42);
+    Length::length(values) - 1 + Second::second((true, 42)) - 42
+}
+"#,
+        "traits-structural-targets",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn generic_selection_distinguishes_multiple_impls() {
+    let result = compile_and_run(
+        r#"
+trait Label { fn label(value: Self) -> str; }
+struct Left<T> { value: T }
+struct Right<T> { value: T }
+impl<T> Label for Left<T> { fn label(value: Self) -> str { "left" } }
+impl<T> Label for Right<T> { fn label(value: Self) -> str { "right" } }
+fn main() -> i64 {
+    println(Label::label(Left<i64> { value: 1 }));
+    println(Label::label(Right<i64> { value: 2 }));
+    0
+}
+"#,
+        "traits-multiple-generic-impls",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "left\nright\n");
+}
+
+#[test]
+fn unused_generic_bodies_defer_missing_impls_until_instantiation() {
+    let result = compile_and_run(
+        r#"
+trait Show { fn show(value: Self) -> str; }
+impl Show for i64 { fn show(value: Self) -> str { "integer" } }
+fn unused<T: Show>(value: T) -> str { Show::show(value) }
+fn main() -> i64 { 0 }
+"#,
+        "traits-unused-generic",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn generic_bodies_follow_instantiation_time_checking() {
+    let result = compile_and_run(
+        r#"
+trait Show { fn show(value: Self) -> str; }
+impl Show for i64 { fn show(value: Self) -> str { "integer" } }
+fn unbounded<T>(value: T) -> str { Show::show(value) }
+fn main() -> i64 { println(unbounded(42)); 0 }
+"#,
+        "traits-instantiation-checking",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "integer\n");
+}
+
+#[test]
+fn public_declarations_cannot_expose_private_trait_bounds() {
+    assert_compile_error(
+        "trait Hidden {} pub fn require<T: Hidden>(value: T) -> T { value } fn main() -> i64 { 0 }",
+        "traits-private-bound",
+        "private trait `Hidden` cannot appear in a public trait bound",
+    );
+}
+
+#[test]
+fn generic_bounds_reject_unknown_and_duplicate_traits() {
+    assert_compile_error(
+        "fn require<T: Missing>(value: T) -> T { value } fn main() -> i64 { 0 }",
+        "traits-unknown-bound",
+        "unknown trait `Missing` in bound for `T`",
+    );
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } fn require<T: Show + Show>(value: T) -> T { value } fn main() -> i64 { 0 }",
+        "traits-duplicate-bound",
+        "trait `Show` is listed more than once",
+    );
+}
+
+#[test]
+fn grammar_rejects_generic_traits_public_impls_and_method_generics() {
+    assert_compile_error(
+        "trait Convert<T> { fn convert(value: Self) -> T; } fn main() -> i64 { 0 }",
+        "traits-generic-trait",
+        "generic traits are not supported",
+    );
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } pub impl Show for i64 { fn show(value: i64) -> str { \"x\" } } fn main() -> i64 { 0 }",
+        "traits-public-impl",
+        "`pub impl` is not supported",
+    );
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show<U>(value: i64) -> str { \"x\" } } fn main() -> i64 { 0 }",
+        "traits-method-generics",
+        "impl functions cannot declare their own generic or lifetime parameters",
+    );
+}
+
+#[test]
+fn self_is_rejected_outside_trait_and_impl_signatures() {
+    assert_compile_error(
+        "fn main() -> i64 { let value: Self = 0; value }",
+        "traits-self-outside",
+        "`Self` is only available in trait and impl declarations",
+    );
+}
+
+#[test]
+fn trait_declarations_share_the_type_namespace() {
+    assert_compile_error(
+        "struct Show { value: i64 } trait Show { fn show(value: Self) -> i64; } fn main() -> i64 { 0 }",
+        "traits-type-namespace",
+        "trait `Show` is defined more than once",
+    );
+}
+
+#[test]
+fn unused_trait_and_impl_declarations_still_validate_their_types() {
+    assert_compile_error(
+        "trait Broken { fn broken(value: Missing) -> i64; } fn main() -> i64 { 0 }",
+        "traits-invalid-trait-type",
+        "unknown type `Missing`",
+    );
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> i64; } struct Box<T> { value: T } impl Show for Box { fn show(value: Box<T>) -> i64 { 0 } } fn main() -> i64 { 0 }",
+        "traits-invalid-target-type",
+        "generic type `Box` requires explicit type arguments",
+    );
+}
+
+#[test]
+fn generic_bounds_on_structs_are_checked_at_use_sites() {
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } struct Wrapper<T: Show> { value: T } fn main() -> i64 { let wrapper = Wrapper<bool> { value: true }; 0 }",
+        "traits-struct-bound-failure",
+        "type `bool` does not implement trait `Show`",
+    );
+}
+
+#[test]
+fn self_is_rejected_in_local_type_annotations_inside_impls() {
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show(value: Self) -> str { let copy: Self = value; \"x\" } } fn main() -> i64 { 0 }",
+        "traits-self-local",
+        "`Self` is only available in trait and impl declarations",
+    );
+}
+
+#[test]
+fn duplicate_and_unknown_trait_declarations_are_rejected() {
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } trait Show { fn other(value: Self) -> str; } fn main() -> i64 { 0 }",
+        "traits-duplicate-declaration",
+        "trait `Show` is defined more than once",
+    );
+    assert_compile_error(
+        "trait Empty {} impl Empty for bool {} fn main() -> i64 { Empty::missing(true); 0 }",
+        "traits-unknown-function",
+        "trait `Empty` has no function `missing`",
+    );
+}
+
+#[test]
 fn missing_implementations_report_the_instantiation_site() {
     assert_compile_error(
         "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show(value: Self) -> str { \"int\" } } fn show_it<T: Show>(value: T) -> str { Show::show(value) } fn main() -> i64 { println(show_it(\"no\")); 0 }",
@@ -284,10 +473,10 @@ fn bound_failures_on_public_declarations_are_reported() {
 fn public_traits_and_impls_work_across_modules() {
     let (directory, compile) = module_project(
         "public",
-        "mod common;\nfn main() -> i64 { println(common::Show::show(common::Counter { value: 42 })); 0 }\n",
+        "mod common;\nfn show_it<T: common::Show>(value: T) -> str { common::Show::show(value) }\nfn main() -> i64 { println(show_it(common::Counter { value: 42 })); 0 }\n",
         &[(
             "common.vca",
-            "pub trait Show { fn show(value: Self) -> str; }\npub struct Counter { value: i64 }\nimpl Show for Counter { fn show(value: Self) -> str { \"counter\" } }\n",
+            "fn helper() -> str { \"counter\" }\npub trait Show { fn show(value: Self) -> str; }\npub struct Counter { value: i64 }\nimpl Show for Counter { fn show(value: Self) -> str { helper() } }\n",
         )],
     );
     assert!(
@@ -330,6 +519,49 @@ fn trait_diagnostics_keep_child_module_source_locations() {
     let stderr = String::from_utf8_lossy(&compile.stderr);
     assert!(stderr.contains("common.vca:2:"), "{stderr}");
     assert!(stderr.contains("expected `bool`"), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn trait_diagnostics_have_structured_json_locations() {
+    let (directory, result) = run_compiler_with_args(
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show(value: i64) -> str { \"x\" } } fn show_it<T: Show>(value: T) -> str { Show::show(value) } fn main() -> i64 { println(show_it(true)); 0 }",
+        "traits-json",
+        &["--json"],
+    );
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(
+        stderr.starts_with("{\"severity\":\"error\",\"file\":"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\"line\":1"), "{stderr}");
+    assert!(stderr.contains("\"column\":"), "{stderr}");
+    assert!(
+        stderr.contains("does not implement trait `Show`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains('^'), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn trait_dispatch_is_erased_before_llvm_emission() {
+    let (directory, result) = run_compiler_with_args(
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show(value: i64) -> str { \"x\" } } fn main() -> i64 { println(Show::show(42)); 0 }",
+        "traits-llvm",
+        &["--emit-llvm", "program.ll", "--quiet"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let ir = fs::read_to_string(directory.join("program.ll")).unwrap();
+    assert!(ir.contains("define"), "{ir}");
+    assert!(ir.contains("call"), "{ir}");
+    assert!(!ir.contains("vtable"), "{ir}");
+    assert!(!ir.contains("trait.dispatch"), "{ir}");
     let _ = fs::remove_dir_all(directory);
 }
 

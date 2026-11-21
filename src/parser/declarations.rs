@@ -178,7 +178,11 @@ impl Parser {
             self.consume(&TokenKind::Arrow, "`->`")?;
             let return_type = self.parse_type()?;
             self.validate_lifetime_use(&return_type, &declared_lifetimes, Span::from(&start))?;
-            let body = self.parse_block()?;
+            let previous_self = self.self_type_allowed;
+            self.self_type_allowed = false;
+            let body = self.parse_block();
+            self.self_type_allowed = previous_self;
+            let body = body?;
             Ok(Function {
                 name,
                 generic_params,

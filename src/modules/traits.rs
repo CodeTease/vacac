@@ -85,13 +85,8 @@ pub(crate) fn prepare(program: &mut Program) -> Result<TraitRegistry, Diagnostic
         };
         validate_impl_target(&declaration)?;
         validate_impl_bounds(&declaration, &registry)?;
-        let info = validate_and_lower_impl(
-            id,
-            trait_id,
-            declaration,
-            &registry,
-            &mut synthetic_functions,
-        )?;
+        let info =
+            validate_and_lower_impl(trait_id, declaration, &registry, &mut synthetic_functions)?;
         registry.by_trait[trait_id].push(id);
         registry.impls.push(info);
     }
@@ -127,7 +122,20 @@ fn validate_declaration_types(
 
     for declaration in traits {
         for function in &declaration.functions {
+            let mut seen_params = HashSet::new();
             for param in &function.params {
+                if !seen_params.insert(param.name.as_str()) {
+                    return Err(at(
+                        param.span,
+                        format!(
+                            "parameter `{}` is defined more than once in trait function `{}::{}`",
+                            param.name, declaration.name, function.name
+                        ),
+                    ));
+                }
+                if param.ty == Type::Unit {
+                    return Err(at(param.span, "parameters cannot have type `unit`"));
+                }
                 validate_type_shape(&param.ty, &HashSet::new(), true, &shapes, param.span)?;
             }
             validate_type_shape(
@@ -394,7 +402,6 @@ fn collect_target_parameters(
 }
 
 fn validate_and_lower_impl(
-    id: usize,
     trait_id: usize,
     mut declaration: ImplDecl,
     registry: &TraitRegistry,
@@ -470,7 +477,12 @@ fn validate_and_lower_impl(
             ));
         }
 
-        let internal_name = format!("impl#{id}::{}", function.name);
+        let internal_name = format!(
+            "{} for {}::{}",
+            trait_info.name,
+            type_name(&declaration.target),
+            function.name
+        );
         methods.insert(function.name.clone(), internal_name.clone());
         function.name = internal_name;
         function.generic_params = declaration.generic_params.clone();

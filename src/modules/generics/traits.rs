@@ -262,7 +262,14 @@ impl Specializer {
         for (parameter, argument) in function.params.iter().zip(args) {
             if let Some(actual) = self.infer_expr_type(argument, variables) {
                 let expected = substitute_self(&parameter.ty, &marker);
-                self.unify(&expected, &actual, &mut inferred, span)?;
+                self.unify(&expected, &actual, &mut inferred, span)
+                    .map_err(|mut error| {
+                        error.message = error
+                            .message
+                            .replace("generic type parameter `#Self`", "trait `Self`")
+                            .replace("#Self", "Self");
+                        error
+                    })?;
             }
         }
         let self_type = inferred.remove("#Self").ok_or_else(|| {
