@@ -15,7 +15,7 @@
 * [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; mutable-reference returns/reborrows and NLL are deferred).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [ ] Interfaces / traits / protocols.
-* [ ] Object-oriented features such as methods, classes, inheritance, and polymorphism.
+* [ ] ~~Object-oriented features such as methods, classes, inheritance, and polymorphism.~~
 * [ ] Macros and compile-time metaprogramming.
 
 ## Runtime and libraries
