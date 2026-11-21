@@ -9,8 +9,8 @@ mod traits;
 
 pub(crate) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
     let mut program = loader::load(root)?;
-    program.modules.clear();
     resolve::resolve_names(&mut program).map_err(|error| with_source(&program, error))?;
+    program.modules.clear();
     let traits = traits::prepare(&mut program).map_err(|error| with_source(&program, error))?;
     generics::monomorphize(&mut program, &traits).map_err(|error| with_source(&program, error))?;
     program.functions_are_qualified = true;

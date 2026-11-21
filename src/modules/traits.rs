@@ -137,6 +137,13 @@ fn validate_declaration_types(
                     return Err(at(param.span, "parameters cannot have type `unit`"));
                 }
                 validate_type_shape(&param.ty, &HashSet::new(), true, &shapes, param.span)?;
+                validate_signature_type(&param.ty, true, false, param.span)?;
+            }
+            if is_reference(&function.return_type) {
+                return Err(at(
+                    function.span,
+                    "trait functions cannot return references until lifetime-generic trait functions are supported",
+                ));
             }
             validate_type_shape(
                 &function.return_type,
@@ -145,6 +152,7 @@ fn validate_declaration_types(
                 &shapes,
                 function.span,
             )?;
+            validate_signature_type(&function.return_type, false, true, function.span)?;
         }
     }
     for declaration in impls {
@@ -163,6 +171,13 @@ fn validate_declaration_types(
         for function in &declaration.functions {
             for param in &function.params {
                 validate_type_shape(&param.ty, &parameters, true, &shapes, param.span)?;
+                validate_signature_type(&param.ty, true, false, param.span)?;
+            }
+            if is_reference(&function.return_type) {
+                return Err(at(
+                    function.span,
+                    "impl functions cannot return references until lifetime-generic impl functions are supported",
+                ));
             }
             validate_type_shape(
                 &function.return_type,
@@ -171,6 +186,7 @@ fn validate_declaration_types(
                 &shapes,
                 function.span,
             )?;
+            validate_signature_type(&function.return_type, false, true, function.span)?;
         }
     }
     Ok(())
@@ -254,6 +270,70 @@ fn validate_type_shape(
                 return Err(at(span, "function types cannot return references"));
             }
             validate_type_shape(result, parameters, self_allowed, shapes, span)
+        }
+        Type::I64
+        | Type::F32
+        | Type::F64
+        | Type::Bool
+        | Type::Str
+        | Type::Unit
+        | Type::Named(_)
+        | Type::Parameter(_)
+        | Type::SelfType => Ok(()),
+    }
+}
+
+fn is_reference(ty: &Type) -> bool {
+    matches!(ty, Type::Reference(_, _) | Type::MutableReference(_, _))
+}
+
+fn validate_signature_type(
+    ty: &Type,
+    allow_root_reference: bool,
+    allow_unit: bool,
+    span: Span,
+) -> Result<(), Diagnostic> {
+    match ty {
+        Type::Unit if !allow_unit => Err(at(
+            span,
+            "type `unit` is not valid in this function type position",
+        )),
+        Type::Reference(element, _) | Type::MutableReference(element, _) => {
+            if !allow_root_reference {
+                return Err(at(
+                    span,
+                    "references cannot be stored in arrays, vectors, tuples, or generic arguments",
+                ));
+            }
+            validate_signature_type(element, false, false, span)
+        }
+        Type::Array(element, _) | Type::Vector(element) => {
+            validate_signature_type(element, false, false, span)
+        }
+        Type::Tuple(elements) => {
+            if elements.is_empty() {
+                return Err(at(span, "tuple types must contain at least one element"));
+            }
+            for element in elements {
+                validate_signature_type(element, false, false, span)?;
+            }
+            Ok(())
+        }
+        Type::Function(params, result) => {
+            for param in params {
+                validate_signature_type(param, true, false, span)?;
+            }
+            if is_reference(result) {
+                return Err(at(span, "function types cannot return references"));
+            }
+            validate_signature_type(result, false, true, span)
+        }
+        Type::RawPointer(element, _) => validate_signature_type(element, false, false, span),
+        Type::Applied(_, arguments) => {
+            for argument in arguments {
+                validate_signature_type(argument, false, false, span)?;
+            }
+            Ok(())
         }
         Type::I64
         | Type::F32
@@ -485,6 +565,17 @@ fn validate_and_lower_impl(
                 ),
             ));
         }
+        for param in &function.params {
+            let actual = substitute_self(&param.ty, &declaration.target);
+            validate_signature_type(&actual, true, false, param.span)?;
+        }
+        if is_reference(&actual_return) {
+            return Err(at(
+                function.span,
+                "impl functions cannot return references until lifetime-generic impl functions are supported",
+            ));
+        }
+        validate_signature_type(&actual_return, false, true, function.span)?;
 
         let internal_name = format!(
             "{} for {}::{}",

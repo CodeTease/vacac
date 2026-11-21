@@ -22,6 +22,11 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         ));
     }
     let mut symbols = HashMap::<String, Symbol>::new();
+    let module_names = program
+        .modules
+        .iter()
+        .map(|module| module.name.as_str())
+        .collect::<HashSet<_>>();
     for declaration in &program.enums {
         add_symbol(
             &mut symbols,
@@ -53,6 +58,16 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         )?;
     }
     for declaration in &program.traits {
+        let qualified = qualify(&declaration.module, &declaration.name);
+        if module_names.contains(qualified.as_str()) {
+            return Err(Diagnostic::at(
+                declaration.span.into(),
+                format!(
+                    "trait `{}` conflicts with a module of the same name",
+                    qualified
+                ),
+            ));
+        }
         add_symbol(
             &mut symbols,
             &declaration.name,
@@ -313,19 +328,7 @@ fn resolve_reference(
     if name == "Result" {
         return Ok("Result".into());
     }
-    if name == "Result" {
-        return Ok("Result".into());
-    }
-    let symbol = if name.contains("::") {
-        symbols.get(name).or_else(|| {
-            let local = qualify(module, name);
-            symbols.get(&local)
-        })
-    } else {
-        let local = qualify(module, name);
-        symbols.get(&local).or_else(|| symbols.get(name))
-    };
-    let Some(symbol) = symbol else {
+    let Some(symbol) = find_symbol(name, module, symbols) else {
         return Ok(if name.contains("::") {
             name.into()
         } else {
@@ -339,6 +342,22 @@ fn resolve_reference(
         ));
     }
     Ok(symbol.qualified.clone())
+}
+
+fn find_symbol<'a>(
+    name: &str,
+    module: &str,
+    symbols: &'a HashMap<String, Symbol>,
+) -> Option<&'a Symbol> {
+    if name.contains("::") {
+        symbols.get(name).or_else(|| {
+            let local = qualify(module, name);
+            symbols.get(&local)
+        })
+    } else {
+        let local = qualify(module, name);
+        symbols.get(&local).or_else(|| symbols.get(name))
+    }
 }
 
 fn resolve_type(
@@ -604,13 +623,11 @@ impl<'a> Resolver<'a> {
                 span,
             } => {
                 if let Some((trait_name, function_name)) = name.rsplit_once("::") {
-                    let resolved_trait =
-                        resolve_reference(trait_name, self.module, *span, self.symbols)?;
-                    if self
-                        .symbols
-                        .get(&resolved_trait)
-                        .is_some_and(|symbol| symbol.kind == "trait")
-                    {
+                    let is_trait = find_symbol(trait_name, self.module, self.symbols)
+                        .is_some_and(|symbol| symbol.kind == "trait");
+                    if is_trait {
+                        let resolved_trait =
+                            resolve_reference(trait_name, self.module, *span, self.symbols)?;
                         if !type_arguments.is_empty() {
                             return Err(Diagnostic::at(
                                 (*span).into(),

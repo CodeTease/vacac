@@ -614,6 +614,12 @@ impl Parser {
         loop {
             let token = self.peek().clone();
             let name = self.take_ident("generic parameter")?;
+            if name == "Self" {
+                return Err(Diagnostic::at(
+                    Span::from(&token).into(),
+                    "`Self` is reserved and cannot be a generic parameter",
+                ));
+            }
             if parameters
                 .iter()
                 .any(|parameter: &GenericParam| parameter.name == name)

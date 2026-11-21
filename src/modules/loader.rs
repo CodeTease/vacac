@@ -63,7 +63,7 @@ pub(super) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
             lambda_captures: HashMap::new(),
         },
     };
-    if let Err(error) = loader.visit(&root, String::new()) {
+    if let Err(error) = loader.visit(&root, String::new(), None) {
         loader.diagnostics.push(error);
     }
     if !loader.diagnostics.is_empty() {
@@ -80,7 +80,12 @@ struct Loader {
 }
 
 impl Loader {
-    fn visit(&mut self, path: &Path, module: String) -> Result<(), Diagnostic> {
+    fn visit(
+        &mut self,
+        path: &Path,
+        module: String,
+        declaration_span: Option<Span>,
+    ) -> Result<(), Diagnostic> {
         let path = std::fs::canonicalize(path).map_err(|error| {
             Diagnostic::new(format!("cannot load module source: {error}"))
                 .with_file(path.display().to_string())
@@ -100,6 +105,14 @@ impl Loader {
         }
         self.active.insert(path.clone());
         self.loaded.insert(path.clone(), module.clone());
+        if !module.is_empty()
+            && let Some(span) = declaration_span
+        {
+            self.program.modules.push(crate::ast::ModuleDecl {
+                name: module.clone(),
+                span,
+            });
+        }
 
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
@@ -152,7 +165,7 @@ impl Loader {
                 format!("{module}::{}", declaration.name)
             };
             let child = module_file_path(&path, &module, &declaration.name);
-            if let Err(error) = self.visit(&child, child_module) {
+            if let Err(error) = self.visit(&child, child_module, Some(declaration.span)) {
                 self.diagnostics.push(error);
             }
         }

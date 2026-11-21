@@ -506,6 +506,155 @@ fn private_traits_and_types_remain_private_across_modules() {
 }
 
 #[test]
+fn trait_calls_propagate_expected_types_to_arguments() {
+    let result = compile_and_run(
+        r#"
+trait Unwrap { fn unwrap(value: Self) -> i64; }
+trait Combine { fn combine(tag: i64, value: Self) -> i64; }
+struct Box<T> { value: T }
+impl Unwrap for Box<i64> { fn unwrap(value: Box<i64>) -> i64 { value.value } }
+impl Combine for Box<i64> {
+    fn combine(tag: i64, value: Box<i64>) -> i64 { tag + value.value }
+}
+fn main() -> i64 {
+    let explicit = <Box<i64> as Unwrap>::unwrap(Box { value: 20 });
+    let inferred = Combine::combine(1, Box { value: 21 });
+    explicit + inferred - 42
+}
+"#,
+        "traits-expected-arguments",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn explicit_self_errors_use_trait_function_names() {
+    assert_compile_error(
+        "trait Zero { fn zero() -> Self; } impl Zero for i64 { fn zero() -> Self { 0 } } fn main() -> i64 { <i64 as Zero>::zero(1); 0 }",
+        "traits-explicit-arity",
+        "trait function `Zero::zero` expects 0 argument(s), got 1",
+    );
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show(value: i64) -> str { \"x\" } } fn main() -> i64 { println(<i64 as Show>::show(\"bad\")); 0 }",
+        "traits-explicit-type",
+        "argument 1 to `Show::show` has type `str`, expected `i64`",
+    );
+}
+
+#[test]
+fn trait_calls_infer_generic_enum_arguments() {
+    let result = compile_and_run(
+        r#"
+trait Unwrap { fn unwrap(value: Self) -> i64; }
+enum Maybe<T> { Some(T), None }
+impl Unwrap for Maybe<i64> {
+    fn unwrap(value: Maybe<i64>) -> i64 {
+        match value {
+            Maybe::Some(number) => { number },
+            Maybe::None => { 0 },
+        }
+    }
+}
+fn main() -> i64 {
+    let explicit = <Maybe<i64> as Unwrap>::unwrap(Maybe::Some(20));
+    let inferred = Unwrap::unwrap(Maybe::Some(22));
+    explicit + inferred - 42
+}
+"#,
+        "traits-expected-enum",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn unrepresentable_trait_signatures_are_rejected() {
+    assert_compile_error(
+        "trait Borrow { fn borrow(value: &Self) -> &Self; } fn main() -> i64 { 0 }",
+        "traits-reference-return",
+        "trait functions cannot return references",
+    );
+    assert_compile_error(
+        "trait Store { fn store(value: Vec<&Self>) -> i64; } fn main() -> i64 { 0 }",
+        "traits-reference-aggregate",
+        "references cannot be stored in arrays, vectors, tuples, or generic arguments",
+    );
+    assert_compile_error(
+        "trait Store { fn store(value: Vec<unit>) -> i64; } fn main() -> i64 { 0 }",
+        "traits-unit-aggregate",
+        "type `unit` is not valid in this function type position",
+    );
+}
+
+#[test]
+fn self_cannot_be_a_generic_parameter_or_type_name() {
+    assert_compile_error(
+        "struct Box<Self> { value: i64 } fn main() -> i64 { 0 }",
+        "traits-self-generic-parameter",
+        "`Self` is reserved and cannot be a generic parameter",
+    );
+    assert_compile_error(
+        "enum Self { Value } fn main() -> i64 { 0 }",
+        "traits-self-type-name",
+        "`Self` is reserved and cannot name a type",
+    );
+}
+
+#[test]
+fn generic_impl_bound_failures_name_the_nested_requirement() {
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } struct Box<T> { value: T } impl Show for i64 { fn show(value: i64) -> str { \"int\" } } impl<T: Show> Show for Box<T> { fn show(value: Self) -> str { Show::show(value.value) } } fn main() -> i64 { println(Show::show(Box<bool> { value: true })); 0 }",
+        "traits-generic-impl-bound",
+        "type `bool` does not implement trait `Show`",
+    );
+}
+
+#[test]
+fn duplicate_trait_members_and_impl_functions_are_rejected() {
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; fn show(other: Self) -> str; } fn main() -> i64 { 0 }",
+        "traits-duplicate-function-declaration",
+        "trait function `Show::show` is defined more than once",
+    );
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show(value: i64) -> str { \"a\" } fn show(other: i64) -> str { \"b\" } } fn main() -> i64 { 0 }",
+        "traits-duplicate-impl-function",
+        "implementation of `Show` defines `show` more than once",
+    );
+}
+
+#[test]
+fn trait_names_cannot_collide_with_modules() {
+    let (directory, compile) = module_project(
+        "module-collision",
+        "mod util;\ntrait util {}\nfn main() -> i64 { util::f(1) }\n",
+        &[("util.vca", "pub fn f(value: i64) -> i64 { value }\n")],
+    );
+    assert!(!compile.status.success());
+    assert!(
+        String::from_utf8_lossy(&compile.stderr)
+            .contains("trait `util` conflicts with a module of the same name")
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn non_trait_names_do_not_shadow_module_function_calls() {
+    let (directory, compile) = module_project(
+        "module-shadow",
+        "mod util;\nstruct util { value: i64 }\nfn main() -> i64 { util::f(42) }\n",
+        &[("util.vca", "pub fn f(value: i64) -> i64 { value }\n")],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(42));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn trait_diagnostics_keep_child_module_source_locations() {
     let (directory, compile) = module_project(
         "diagnostic",
