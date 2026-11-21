@@ -238,6 +238,7 @@ impl Specializer {
                 ),
             ));
         }
+        self.check_generic_bounds(&template.generic_params, &arguments, span)?;
         let concrete_name = format!(
             "{template_name}::<{}>",
             arguments.iter().map(type_key).collect::<Vec<_>>().join(",")
@@ -288,6 +289,7 @@ impl Specializer {
                 ),
             ));
         }
+        self.check_generic_bounds(&template.generic_params, &arguments, span)?;
         let concrete_name = format!(
             "{template_name}::<{}>",
             arguments.iter().map(type_key).collect::<Vec<_>>().join(",")
@@ -344,6 +346,7 @@ impl Specializer {
                 ),
             ));
         }
+        self.check_generic_bounds(&template.generic_params, &arguments, span)?;
         let key = (
             template_name.to_owned(),
             arguments.iter().map(type_key).collect::<Vec<_>>(),

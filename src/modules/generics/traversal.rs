@@ -241,11 +241,8 @@ impl Specializer {
                     self.process_expr(arg, substitutions, variables)?;
                 }
             }
-            Expr::TraitCall { span, .. } => {
-                return Err(Diagnostic::at(
-                    (*span).into(),
-                    "trait call reached specialization before trait support was initialized",
-                ));
+            Expr::TraitCall { .. } => {
+                self.process_trait_call(expr, substitutions, variables)?;
             }
             Expr::Struct {
                 name,
