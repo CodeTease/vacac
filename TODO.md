@@ -10,20 +10,34 @@
 * [x] Capturing closures with immutable by-value environments retained until process exit.
 * [x] Function values and captured closures in fixed arrays and vectors.
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
+* [ ] Module imports and aliases with `use path::name [as alias];`, including collision, privacy, and parser-recovery checks across functions, globals, types, traits, and variants.
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
+* [ ] Make `unit` a zero-sized value with a `()` literal, locals, generic arguments, and enum payloads, enabling `Result<unit, E>` and `?` for fallible side-effect-only operations.
 * [x] Typed raw pointers (`*const T` / `*mut T`) with explicit raw address-taking and dereference; restricted lexical `&mut T` borrows.
 * [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; mutable-reference returns/reborrows and NLL are deferred).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [x] Interfaces / traits / protocols.
+* [ ] Default function bodies in traits, including inherited body specialization, visibility, and static-dispatch tests.
+* [ ] Generic traits and generic trait functions, including inference, coherence, visibility, and specialization-limit coverage.
+* [ ] Persistent mutable owned closure captures, with closure aliases sharing environment state and separately created closures remaining independent.
+* [ ] Unit-producing statement matches that skip result PHI construction.
+* [ ] Generalized aggregate and nested matching with multiple dispatch arms, nested variant and scalar patterns, and exhaustive/unreachable-arm analysis.
+* [ ] Mutable-reference reborrowing and named-lifetime returns, preserving overlap and local-escape checks.
+* [ ] Non-lexical lifetimes that end shared and mutable loans at last use across branches and loops.
 * [ ] ~~Object-oriented features such as methods, classes, inheritance, and polymorphism.~~
 * [ ] Macros and compile-time metaprogramming.
 
 ## Runtime and libraries
 
+* [ ] Practical raw-pointer and C-string interoperability: `str` and typed raw pointers in extern signatures, typed null pointers and pointer equality, and raw address-taking for aggregate and vector subplaces, with documented ABI and string-lifetime rules.
 * [ ] Automatic memory management (reference counting or garbage collection); currently heap-backed vectors and concatenated strings are retained until process exit.
 * [ ] Standard library beyond the current built-ins (`print_i64`, `print_f32`, `print_f64`, `print`, `println`, `read_i64`, `len`, `vec_new`, and `vec_push`).
 * [x] Recoverable error handling with the built-in generic `Result<T, E>` prelude enum and postfix `?` propagation; runtime faults still terminate the process.
 * [ ] Async/await and concurrency (threads / multithreading).
+
+## Compiler
+
+* [ ] User-selectable emitted-code optimization levels, with an LLVM module-pass pipeline and matching target-machine settings for executable, `--run`, and `--emit-llvm` modes.
 
 ## Diagnostic Engine
 
