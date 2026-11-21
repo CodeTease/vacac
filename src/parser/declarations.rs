@@ -30,6 +30,12 @@ impl Parser {
     pub(super) fn parse_enum(&mut self, is_public: bool) -> Result<EnumDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Enum, "`enum`")?;
         let name = self.take_ident("enum name")?;
+        if name == "Self" {
+            return Err(Diagnostic::at(
+                Span::from(self.previous()).into(),
+                "`Self` is reserved and cannot name a type",
+            ));
+        }
         let generic_params = self.parse_generic_parameters()?;
         let previous_type_parameters = std::mem::replace(
             &mut self.type_parameters,
@@ -87,6 +93,12 @@ impl Parser {
     pub(super) fn parse_struct(&mut self, is_public: bool) -> Result<StructDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Struct, "`struct`")?;
         let name = self.take_ident("struct name")?;
+        if name == "Self" {
+            return Err(Diagnostic::at(
+                Span::from(self.previous()).into(),
+                "`Self` is reserved and cannot name a type",
+            ));
+        }
         let generic_params = self.parse_generic_parameters()?;
         let previous_type_parameters = std::mem::replace(
             &mut self.type_parameters,
@@ -251,6 +263,12 @@ impl Parser {
     pub(super) fn parse_trait(&mut self, is_public: bool) -> Result<TraitDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Trait, "`trait`")?;
         let name = self.take_ident("trait name")?;
+        if name == "Self" {
+            return Err(Diagnostic::at(
+                Span::from(self.previous()).into(),
+                "`Self` is reserved and cannot name a type",
+            ));
+        }
         if self.at(&TokenKind::Less) {
             return Err(unexpected(
                 self.peek(),

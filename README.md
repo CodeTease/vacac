@@ -583,7 +583,7 @@ fn main() -> i64 {
 }
 ```
 
-Generic functions use the same declaration syntax. Type parameters are inferred from argument types when possible; use turbofish syntax `function::<Type, ...>(...)` when a parameter cannot be inferred. Explicit generic arguments must list every parameter. Generic functions and structs can be public module declarations and retain normal module visibility checks. The compiler specializes concrete instances, deduplicates repeated instances, and rejects programs requiring more than 512 concrete generic instances. Partial type-argument lists are not supported. Generic parameters may carry trait bounds as documented in [Traits and static dispatch](#traits-and-static-dispatch). Built-in `Vec<T>` remains supported as a generic function parameter and return type, with its existing built-in runtime behavior.
+Generic functions use the same declaration syntax. Type parameters are inferred from argument types when possible; use turbofish syntax `function::<Type, ...>(...)` when a parameter cannot be inferred. Explicit generic arguments must list every parameter. Generic functions, structs, and enums can be public module declarations and retain normal module visibility checks. The compiler specializes concrete instances, deduplicates repeated instances, and rejects programs requiring more than 512 concrete generic instances. Partial type-argument lists are not supported. Generic parameters may carry trait bounds as documented in [Traits and static dispatch](#traits-and-static-dispatch). Built-in `Vec<T>` remains supported as a generic function parameter and return type, with its existing built-in runtime behavior.
 
 ```vaca
 fn identity<T>(value: T) -> T { value }
