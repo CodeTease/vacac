@@ -5,7 +5,7 @@
 * [x] Define and test signed `i64` overflow semantics: addition, subtraction, multiplication, and negation trap at runtime; the minimum literal remains valid.
 * [x] Scalar `f32` / `f64` support, including suffixed literals, arithmetic, comparisons, functions, and printing.
 * [x] Floating-point values in arrays, vectors, structs, enums, and match patterns.
-* [x] User-defined generics / parametric polymorphism for functions and structs (monomorphized functions and structs; inferred arguments and full explicit turbofish arguments, without trait bounds or generic enums).
+* [x] User-defined generics / parametric polymorphism for functions, structs, and enums (monomorphized functions, structs, and enums; inferred arguments, full explicit turbofish arguments, and inline trait bounds).
 * [x] Non-capturing lambdas and first-class function values (locals, parameters, returns, indirect calls, and function types).
 * [x] Capturing closures with immutable by-value environments retained until process exit.
 * [x] Function values and captured closures in fixed arrays and vectors.
@@ -14,7 +14,7 @@
 * [x] Typed raw pointers (`*const T` / `*mut T`) with explicit raw address-taking and dereference; restricted lexical `&mut T` borrows.
 * [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; mutable-reference returns/reborrows and NLL are deferred).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
-* [ ] Interfaces / traits / protocols.
+* [x] Interfaces / traits / protocols.
 * [ ] ~~Object-oriented features such as methods, classes, inheritance, and polymorphism.~~
 * [ ] Macros and compile-time metaprogramming.
 

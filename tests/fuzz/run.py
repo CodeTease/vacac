@@ -188,6 +188,22 @@ def main():
         "generic specialization exceeded the limit of 512",
     ))
     record(diagnostic_case(
+        compiler, "generic impl overlap is rejected", "trait_impl_overlap.vca",
+        "conflicting implementations of trait `Show`",
+    ))
+    record(diagnostic_case(
+        compiler, "trait specialization hits the shared instance limit", "trait_specialization_limit.vca",
+        "generic specialization exceeded the limit of 512",
+    ))
+    record(diagnostic_case(
+        compiler, "missing trait implementation reports the instantiation", "trait_missing_impl.vca",
+        "type `bool` does not implement trait `Show`",
+    ))
+    record(diagnostic_case(
+        compiler, "malformed trait declarations report syntax errors", "trait_parser_recovery.vca",
+        "expected `;` after required trait function",
+    ))
+    record(diagnostic_case(
         compiler, "raw NUL byte in a string literal is rejected", "raw_nul_literal.vca",
         "NUL characters are not supported in string literals",
     ))

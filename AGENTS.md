@@ -21,14 +21,18 @@ and runs the adversarial corpus in `tests/fuzz/`.
 
 ## Architecture
 
-Four modules, one pipeline stage each:
+Pipeline stages:
 
 1. **lexer.rs** – tokenizes `.vca` source into `Vec<Token>` (line/column tracking)
 2. **parser.rs** – Pratt parser producing `Program` AST (expressions via precedence climbing)
-3. **sema.rs** – type checker (scopes, signatures, immutable bindings and loop vars, return-path analysis)
-4. **codegen.rs** – Inkwell/LLVM22 backend; emits object file, linked by external `cc`
+3. **modules/loader.rs** – loads root and nested module sources into one `Program`
+4. **modules/resolve.rs** – qualifies names and resolves module visibility
+5. **modules/traits.rs** – validates traits and impls, checks coherence, lowers impl functions
+6. **modules/generics/** – specializes generic functions, structs, and enums and dispatches trait bounds
+7. **sema.rs** – type checker (scopes, signatures, immutable bindings and loop vars, return-path analysis)
+8. **codegen.rs** – Inkwell/LLVM 23 backend; emits object file, linked by external `cc`
 
-All entry through `src/main.rs`. Checkers exist in **both** sema.rs and codegen.rs — if you add a rule, update both.
+All entry through `src/main.rs`. Traits are fully lowered to ordinary direct calls before sema; there are no trait objects or runtime vtables. Checkers exist in **both** sema.rs and codegen.rs — if you add a rule, update both.
 
 ## Compiler usage
 
@@ -42,7 +46,7 @@ Types: `i64`, `f32`, `f64`, `bool`, `str`, named enums, named structs, fixed-siz
 
 ## Testing
 
-Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `tests/compiler/` (`cli`, `runtime`, `language`, `strings`, `arrays`, `structs`, and `enums`). Shared compile/run helpers are in `tests/compiler/common/mod.rs`. Each test invokes the already-built binary via `env!("CARGO_BIN_EXE_vacac")`, writes temporary `.vca` to `$TMPDIR`, compiles, runs, and asserts stdout/status. Clean up temp dirs on completion.
+Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `tests/compiler/` (`cli`, `runtime`, `language`, `strings`, `arrays`, `structs`, `enums`, `generics`, and `traits`). Shared compile/run helpers are in `tests/compiler/common/mod.rs`. Each test invokes the already-built binary via `env!("CARGO_BIN_EXE_vacac")`, writes temporary `.vca` to `$TMPDIR`, compiles, runs, and asserts stdout/status. Clean up temp dirs on completion.
 
 `scripts/test-examples.sh` checks and runs all top-level `examples/*.vca` files and nested `main.vca` entry points (including module projects); nested module implementation files are not treated as independent programs. It supplies `42` to `read_number.vca` and accepts `VACAC=/path/to/vacac` to select another compiler binary. Hierarchical modules use `mod name;`; child source may be `name.vca` or `name/mod.vca`, relative to the declaring module file. Cross-module declarations must be `pub`, names are qualified with `::`, and only the root source defines `fn main() -> i64`.
 
@@ -55,5 +59,6 @@ Integration tests are rooted at `tests/compiler.rs` and grouped by feature in `t
 - Division/remainder by zero and `i64::MIN / -1` or `% -1` exit with status 1.
 - Structs support by-value fields containing arrays, enums, and other structs; recursive by-value struct layouts are rejected.
 - Reserved names: `print_i64`, `print`, `println`, `read_i64`, `len`, `printf`, `strcmp`, `vaca_main`, `getchar`, `exit`, `strlen`, `malloc`, `realloc`, `memcpy`, `vaca_alloc`, `vaca_str_concat`, `vaca_vec_new`, `vaca_vec_push`. User may not define these.
+- Traits use nominal `impl Trait for Type` blocks and static dispatch. Generic bounds are checked per concrete instantiation, and impl functions are rewritten to unspellable internal names before sema. Overlapping impl targets are rejected conservatively, and there is no `dyn Trait`, method syntax, or orphan rule yet.
 - `str` is lowered to an LLVM `ptr` to a NUL-terminated global constant (deduplicated per module); concatenation calls a generated runtime helper and returns a heap allocation retained until process exit. `==`/`!=` call `strcmp`; `\0` escapes and raw `0x00` bytes are rejected in the lexer for this reason. Other operators on `str` are type errors.
 - Object files land next to the output executable by default (`target/release/vacac foo.vca -o bar` → `bar.o`). Use `--emit-obj` to override. Output paths are checked for collisions before anything is written: the executable, object file, and `--emit-llvm` path may not resolve to the root source, a module source, or a `--link-object` input, and the executable and object paths must differ. Collisions are rejected rather than silently overwriting inputs.

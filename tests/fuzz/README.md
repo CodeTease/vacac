@@ -1,10 +1,11 @@
 # Deterministic adversarial compiler corpus
 
 This directory contains small Vaca v0.1 reproducers for reference/lifetime
-checking, generic specialization limits, parser diagnostics, code generation,
-runtime traps, closures, modules, and the scalar C ABI. Expected rejection and
-runtime-trap cases are intentional; `run.py` checks their diagnostics/statuses
-so that they are distinct from a compiler crash or unexpected success.
+checking, generic specialization limits, trait coherence and bounds, parser
+diagnostics, code generation, runtime traps, closures, modules, and the scalar C
+ABI. Expected rejection and runtime-trap cases are intentional; `run.py` checks
+their diagnostics/statuses so that they are distinct from a compiler crash or
+unexpected success.
 
 Run against the release compiler from the repository root:
 
@@ -31,8 +32,8 @@ additionally exercised with `--emit-llvm`.
   Place tracking permits simultaneous work on known disjoint array indexes,
   but an unknown index is treated as possibly overlapping an active loan.
 - The generic reproducer grows `Vec<T>` recursively until the documented
-  512-concrete-instance limit is reached. The language has neither generic
-  enums nor trait bounds.
+  512-concrete-instance limit is reached. Trait impls share that limit and
+  overlapping impl targets are rejected before specialization.
 - Parser cases exercise multiple malformed top-level/body constructs and a
   malformed match arm under `--check --json`. Diagnostics are valid JSON and
   recovery terminates; multiple diagnostics currently appear in recovery order,

@@ -1,0 +1,5 @@
+trait Show { fn show(value: Self) -> str; }
+struct Box<T> { value: T }
+impl<T> Show for Box<T> { fn show(value: Self) -> str { "box" } }
+impl Show for Box<i64> { fn show(value: Self) -> str { "int box" } }
+fn main() -> i64 { 0 }
