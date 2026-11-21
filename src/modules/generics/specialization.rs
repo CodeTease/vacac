@@ -238,6 +238,7 @@ impl Specializer {
                 ),
             ));
         }
+        self.check_generic_bounds(&template.generic_params, &arguments, span)?;
         let concrete_name = format!(
             "{template_name}::<{}>",
             arguments.iter().map(type_key).collect::<Vec<_>>().join(",")
@@ -253,7 +254,7 @@ impl Specializer {
         let substitutions = template
             .generic_params
             .iter()
-            .cloned()
+            .map(|parameter| parameter.name.clone())
             .zip(arguments.clone())
             .collect::<Substitution>();
         let mut concrete = template;
@@ -288,6 +289,7 @@ impl Specializer {
                 ),
             ));
         }
+        self.check_generic_bounds(&template.generic_params, &arguments, span)?;
         let concrete_name = format!(
             "{template_name}::<{}>",
             arguments.iter().map(type_key).collect::<Vec<_>>().join(",")
@@ -303,7 +305,7 @@ impl Specializer {
         let substitutions = template
             .generic_params
             .iter()
-            .cloned()
+            .map(|parameter| parameter.name.clone())
             .zip(arguments)
             .collect::<Substitution>();
         let mut concrete = template;
@@ -344,6 +346,7 @@ impl Specializer {
                 ),
             ));
         }
+        self.check_generic_bounds(&template.generic_params, &arguments, span)?;
         let key = (
             template_name.to_owned(),
             arguments.iter().map(type_key).collect::<Vec<_>>(),
@@ -360,7 +363,7 @@ impl Specializer {
         let substitutions = template
             .generic_params
             .iter()
-            .cloned()
+            .map(|parameter| parameter.name.clone())
             .zip(arguments)
             .collect::<Substitution>();
         let mut concrete = template;

@@ -30,10 +30,19 @@ impl Parser {
     pub(super) fn parse_enum(&mut self, is_public: bool) -> Result<EnumDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Enum, "`enum`")?;
         let name = self.take_ident("enum name")?;
+        if name == "Self" {
+            return Err(Diagnostic::at(
+                Span::from(self.previous()).into(),
+                "`Self` is reserved and cannot name a type",
+            ));
+        }
         let generic_params = self.parse_generic_parameters()?;
         let previous_type_parameters = std::mem::replace(
             &mut self.type_parameters,
-            generic_params.iter().cloned().collect(),
+            generic_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect(),
         );
         self.consume(&TokenKind::LBrace, "`{` after enum name")?;
         let mut variants = Vec::new();
@@ -84,10 +93,19 @@ impl Parser {
     pub(super) fn parse_struct(&mut self, is_public: bool) -> Result<StructDecl, Diagnostic> {
         let start = self.consume(&TokenKind::Struct, "`struct`")?;
         let name = self.take_ident("struct name")?;
+        if name == "Self" {
+            return Err(Diagnostic::at(
+                Span::from(self.previous()).into(),
+                "`Self` is reserved and cannot name a type",
+            ));
+        }
         let generic_params = self.parse_generic_parameters()?;
         let previous_type_parameters = std::mem::replace(
             &mut self.type_parameters,
-            generic_params.iter().cloned().collect(),
+            generic_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect(),
         );
         self.consume(&TokenKind::LBrace, "`{` after struct name")?;
         let mut fields = Vec::new();
@@ -125,7 +143,10 @@ impl Parser {
         let start = self.consume(&TokenKind::Fn, "`fn`")?;
         let name = self.take_ident("function name")?;
         let (generic_params, lifetime_params) = self.parse_function_generics()?;
-        let type_parameter_names: HashSet<String> = generic_params.iter().cloned().collect();
+        let type_parameter_names: HashSet<String> = generic_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect();
         if let Some(duplicate) = lifetime_params
             .iter()
             .find(|name| type_parameter_names.contains(*name))
@@ -169,7 +190,11 @@ impl Parser {
             self.consume(&TokenKind::Arrow, "`->`")?;
             let return_type = self.parse_type()?;
             self.validate_lifetime_use(&return_type, &declared_lifetimes, Span::from(&start))?;
-            let body = self.parse_block()?;
+            let previous_self = self.self_type_allowed;
+            self.self_type_allowed = false;
+            let body = self.parse_block();
+            self.self_type_allowed = previous_self;
+            let body = body?;
             Ok(Function {
                 name,
                 generic_params,
@@ -233,6 +258,151 @@ impl Parser {
             is_public,
             module: self.module.clone(),
         })
+    }
+
+    pub(super) fn parse_trait(&mut self, is_public: bool) -> Result<TraitDecl, Diagnostic> {
+        let start = self.consume(&TokenKind::Trait, "`trait`")?;
+        let name = self.take_ident("trait name")?;
+        if name == "Self" {
+            return Err(Diagnostic::at(
+                Span::from(self.previous()).into(),
+                "`Self` is reserved and cannot name a type",
+            ));
+        }
+        if self.at(&TokenKind::Less) {
+            return Err(unexpected(
+                self.peek(),
+                "`{` after trait name (generic traits are not supported)",
+            ));
+        }
+        let previous_type_parameters = std::mem::take(&mut self.type_parameters);
+        let previous_lifetimes = std::mem::take(&mut self.lifetime_parameters);
+        let previous_self = std::mem::replace(&mut self.self_type_allowed, true);
+        let result = (|| {
+            self.consume(&TokenKind::LBrace, "`{` after trait name")?;
+            let mut functions = Vec::new();
+            while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+                functions.push(self.parse_trait_function()?);
+            }
+            self.consume(&TokenKind::RBrace, "`}` after trait functions")?;
+            Ok(TraitDecl {
+                name,
+                functions,
+                span: Span::from(&start),
+                is_public,
+                module: self.module.clone(),
+            })
+        })();
+        self.type_parameters = previous_type_parameters;
+        self.lifetime_parameters = previous_lifetimes;
+        self.self_type_allowed = previous_self;
+        result
+    }
+
+    fn parse_trait_function(&mut self) -> Result<TraitFunction, Diagnostic> {
+        let start = self.consume(&TokenKind::Fn, "`fn` in trait declaration")?;
+        let name = self.take_ident("trait function name")?;
+        if self.at(&TokenKind::Less) {
+            return Err(unexpected(
+                self.peek(),
+                "`(` after trait function name (trait functions cannot declare their own generics)",
+            ));
+        }
+        self.consume(&TokenKind::LParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.at(&TokenKind::RParen) {
+            loop {
+                let param_name = self.take_ident("parameter name")?;
+                let param_span = Span::from(self.previous());
+                self.consume(&TokenKind::Colon, "`:`")?;
+                let ty = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                    span: param_span,
+                });
+                if !self.take(&TokenKind::Comma) {
+                    break;
+                }
+                if self.at(&TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+        self.consume(&TokenKind::RParen, "`)`")?;
+        self.consume(&TokenKind::Arrow, "`->`")?;
+        let return_type = self.parse_type()?;
+        self.consume(&TokenKind::Semicolon, "`;` after required trait function")?;
+        Ok(TraitFunction {
+            name,
+            params,
+            return_type,
+            span: Span::from(&start),
+        })
+    }
+
+    pub(super) fn parse_impl(&mut self, is_public: bool) -> Result<ImplDecl, Diagnostic> {
+        let start = self.consume(&TokenKind::Impl, "`impl`")?;
+        if is_public {
+            return Err(Diagnostic::at(
+                Span::from(&start).into(),
+                "`pub impl` is not supported; impls are globally coherent and have no visibility",
+            ));
+        }
+        let generic_params = self.parse_generic_parameters()?;
+        let previous_type_parameters = std::mem::replace(
+            &mut self.type_parameters,
+            generic_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect(),
+        );
+        let previous_lifetimes = std::mem::take(&mut self.lifetime_parameters);
+        let previous_self = std::mem::replace(&mut self.self_type_allowed, false);
+        let result = (|| {
+            let trait_ref = self.parse_trait_ref()?;
+            self.consume(&TokenKind::For, "`for` after trait name")?;
+            let target_span = Span::from(self.peek());
+            self.self_type_allowed = false;
+            let target = self.parse_type()?;
+            if target == Type::Unit {
+                return Err(Diagnostic::at(
+                    target_span.into(),
+                    "traits cannot be implemented for type `unit`",
+                ));
+            }
+            self.self_type_allowed = true;
+            self.consume(&TokenKind::LBrace, "`{` after impl target")?;
+            let mut functions = Vec::new();
+            while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
+                if self.at(&TokenKind::Pub) {
+                    return Err(unexpected(self.peek(), "an impl function without `pub`"));
+                }
+                let function = self.parse_function(false)?;
+                if !function.generic_params.is_empty() || !function.lifetime_params.is_empty() {
+                    return Err(Diagnostic::at(
+                        function.span.into(),
+                        "impl functions cannot declare their own generic or lifetime parameters",
+                    ));
+                }
+                functions.push(function);
+            }
+            self.consume(&TokenKind::RBrace, "`}` after impl functions")?;
+            Ok(ImplDecl {
+                trait_name: trait_ref.name,
+                target,
+                generic_params,
+                functions,
+                span: Span::from(&start),
+                trait_span: trait_ref.span,
+                target_span,
+                module: self.module.clone(),
+            })
+        })();
+        self.type_parameters = previous_type_parameters;
+        self.lifetime_parameters = previous_lifetimes;
+        self.self_type_allowed = previous_self;
+        result
     }
 
     pub(super) fn parse_type(&mut self) -> Result<Type, Diagnostic> {
@@ -338,6 +508,15 @@ impl Parser {
             Ok(Type::Array(Box::new(element), length))
         } else if matches!(&self.peek().kind, TokenKind::Ident(_)) {
             let first = self.take_ident("type name")?;
+            if first == "Self" {
+                if !self.self_type_allowed {
+                    return Err(Diagnostic::at(
+                        Span::from(self.previous()).into(),
+                        "`Self` is only available in trait and impl declarations",
+                    ));
+                }
+                return Ok(Type::SelfType);
+            }
             if self.type_parameters.contains(&first) {
                 return Ok(Type::Parameter(first));
             }
@@ -427,21 +606,39 @@ impl Parser {
         visit(ty, declared, span)
     }
 
-    fn parse_generic_parameters(&mut self) -> Result<Vec<String>, Diagnostic> {
+    fn parse_generic_parameters(&mut self) -> Result<Vec<GenericParam>, Diagnostic> {
         if !self.take(&TokenKind::Less) {
             return Ok(Vec::new());
         }
         let mut parameters = Vec::new();
         loop {
             let token = self.peek().clone();
-            let parameter = self.take_ident("generic parameter")?;
-            if parameters.contains(&parameter) {
+            let name = self.take_ident("generic parameter")?;
+            if name == "Self" {
                 return Err(Diagnostic::at(
                     Span::from(&token).into(),
-                    format!("generic parameter `{parameter}` is defined more than once"),
+                    "`Self` is reserved and cannot be a generic parameter",
                 ));
             }
-            parameters.push(parameter);
+            if parameters
+                .iter()
+                .any(|parameter: &GenericParam| parameter.name == name)
+            {
+                return Err(Diagnostic::at(
+                    Span::from(&token).into(),
+                    format!("generic parameter `{name}` is defined more than once"),
+                ));
+            }
+            let bounds = if self.take(&TokenKind::Colon) {
+                self.parse_trait_bounds()?
+            } else {
+                Vec::new()
+            };
+            parameters.push(GenericParam {
+                name,
+                bounds,
+                span: Span::from(&token),
+            });
             if !self.take(&TokenKind::Comma) {
                 break;
             }
@@ -453,11 +650,37 @@ impl Parser {
         Ok(parameters)
     }
 
-    fn parse_function_generics(&mut self) -> Result<(Vec<String>, Vec<String>), Diagnostic> {
+    fn parse_trait_bounds(&mut self) -> Result<Vec<TraitRef>, Diagnostic> {
+        let mut bounds = Vec::new();
+        loop {
+            bounds.push(self.parse_trait_ref()?);
+            if !self.take(&TokenKind::Plus) {
+                break;
+            }
+            if self.at(&TokenKind::Greater) {
+                return Err(unexpected(self.peek(), "trait bound after `+`"));
+            }
+        }
+        Ok(bounds)
+    }
+
+    pub(super) fn parse_trait_ref(&mut self) -> Result<TraitRef, Diagnostic> {
+        let token = self.peek().clone();
+        let mut segments = vec![self.take_ident("trait name")?];
+        while self.take(&TokenKind::DoubleColon) {
+            segments.push(self.take_ident("trait name after `::`")?);
+        }
+        Ok(TraitRef {
+            name: segments.join("::"),
+            span: Span::from(&token),
+        })
+    }
+
+    fn parse_function_generics(&mut self) -> Result<(Vec<GenericParam>, Vec<String>), Diagnostic> {
         if !self.take(&TokenKind::Less) {
             return Ok((Vec::new(), Vec::new()));
         }
-        let mut type_parameters = Vec::new();
+        let mut type_parameters: Vec<GenericParam> = Vec::new();
         let mut lifetime_parameters = Vec::new();
         loop {
             match self.peek().kind.clone() {
@@ -469,11 +692,29 @@ impl Parser {
                             format!("lifetime parameter `'{parameter}` is defined more than once"),
                         ));
                     }
+                    if type_parameters
+                        .iter()
+                        .any(|type_parameter| type_parameter.name == parameter)
+                    {
+                        return Err(Diagnostic::at(
+                            Span::from(&token).into(),
+                            format!("`{parameter}` cannot be both a type and lifetime parameter"),
+                        ));
+                    }
                     lifetime_parameters.push(parameter);
                 }
                 TokenKind::Ident(parameter) => {
                     let token = self.advance().clone();
-                    if type_parameters.contains(&parameter) {
+                    if parameter == "Self" {
+                        return Err(Diagnostic::at(
+                            Span::from(&token).into(),
+                            "`Self` is reserved and cannot be a generic parameter",
+                        ));
+                    }
+                    if type_parameters
+                        .iter()
+                        .any(|type_parameter| type_parameter.name == parameter)
+                    {
                         return Err(Diagnostic::at(
                             Span::from(&token).into(),
                             format!("generic parameter `{parameter}` is defined more than once"),
@@ -485,7 +726,16 @@ impl Parser {
                             format!("`{parameter}` cannot be both a type and lifetime parameter"),
                         ));
                     }
-                    type_parameters.push(parameter);
+                    let bounds = if self.take(&TokenKind::Colon) {
+                        self.parse_trait_bounds()?
+                    } else {
+                        Vec::new()
+                    };
+                    type_parameters.push(GenericParam {
+                        name: parameter,
+                        bounds,
+                        span: Span::from(&token),
+                    });
                 }
                 TokenKind::Less => {
                     return Err(unexpected(

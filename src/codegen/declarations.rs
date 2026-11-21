@@ -238,6 +238,12 @@ impl<'ctx> Codegen<'ctx> {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
+            Type::SelfType => {
+                return Err(Diagnostic::at(
+                    span.into(),
+                    "unresolved `Self` type reached code generation".to_string(),
+                ));
+            }
             Type::Reference(element, _) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
@@ -795,6 +801,12 @@ impl<'ctx> Codegen<'ctx> {
                         return Err(Diagnostic::at(
                             field.span.into(),
                             "struct fields cannot have type `unit`".to_string(),
+                        ));
+                    }
+                    Type::SelfType => {
+                        return Err(Diagnostic::at(
+                            field.span.into(),
+                            "unresolved `Self` type reached code generation".to_string(),
                         ));
                     }
                     Type::Reference(_, _) | Type::MutableReference(_, _) => {

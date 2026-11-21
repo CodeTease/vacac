@@ -12,6 +12,9 @@ struct PendingFunction {
 }
 
 struct Specializer {
+    traits: crate::modules::traits::TraitRegistry,
+    trait_selections: HashMap<(usize, String), (usize, Substitution)>,
+    active_trait_selections: std::collections::HashSet<(usize, String)>,
     global_declarations: HashMap<String, GlobalDecl>,
     module_context: String,
     current_return_type: Option<Type>,
@@ -33,7 +36,10 @@ struct Specializer {
 
 const MAX_INSTANCES: usize = 512;
 
-pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
+pub(super) fn monomorphize(
+    program: &mut Program,
+    traits: &crate::modules::traits::TraitRegistry,
+) -> Result<(), Diagnostic> {
     if let Some(declaration) = program
         .enums
         .iter()
@@ -88,6 +94,9 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
         }
     }
     let mut specializer = Specializer {
+        traits: traits.clone(),
+        trait_selections: HashMap::new(),
+        active_trait_selections: std::collections::HashSet::new(),
         global_declarations: program
             .globals
             .iter()
@@ -250,5 +259,6 @@ pub(super) fn monomorphize(program: &mut Program) -> Result<(), Diagnostic> {
 
 mod inference;
 mod specialization;
+mod traits;
 mod traversal;
 mod validation;

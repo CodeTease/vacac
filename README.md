@@ -125,6 +125,8 @@ Some examples to explore:
   pass, and read named structs.
 - [`const_and_struct_fields.vca`](examples/const_and_struct_fields.vca) — use an
   immutable `const` value and update fields of a mutable local struct.
+- [`traits.vca`](examples/traits.vca) — define traits, implement them for
+  primitives and generic structs, and dispatch through a trait bound.
 - [`pointers.rs`](tests/compiler/pointers.rs) — checked mutable references and
   explicitly raw pointer reads/writes.
 - [`modules/`](examples/modules/) — split a program across nested source files
@@ -348,6 +350,75 @@ complete closure value, so captured environments remain available when values
 are indexed, copied, or iterated. Global function-value initializers are not
 supported.
 
+## Traits and static dispatch
+
+Traits are nominal interfaces with required functions and explicit
+implementations. A trait function writes `Self` where the implementing type
+belongs; call trait functions through the trait name:
+
+```vaca
+trait Show {
+    fn show(value: Self) -> str;
+}
+
+trait Zero {
+    fn zero() -> Self;
+}
+
+struct Box<T> {
+    value: T,
+}
+
+impl Show for i64 {
+    fn show(value: Self) -> str { "integer" }
+}
+
+impl<T: Show> Show for Box<T> {
+    fn show(value: Self) -> str { Show::show(value.value) }
+}
+
+impl Zero for i64 {
+    fn zero() -> Self { 0 }
+}
+
+fn describe<T: Show>(value: T) -> str {
+    Show::show(value)
+}
+
+fn main() -> i64 {
+    println(describe(Box<i64> { value: 42 }));
+    <i64 as Zero>::zero()
+}
+```
+
+`Show::show(value)` infers the implementing type from the arguments. Use the
+explicit form `<Type as Trait>::function(...)` when inference is impossible,
+including functions whose only use of `Self` is their return type. Generic type
+parameters may carry inline bounds such as `T: Show + Other`, and the same
+bounds may be written on generic structs, enums, and impls. Bounds cannot expose
+a private trait from a public declaration.
+
+Trait implementations are nominal and global. Implementing the same trait twice
+for the same type is rejected, as are generic impls whose targets may overlap,
+such as `Box<T>` and `Box<i64>`. Generic impl parameters must all be constrained
+by the impl target. Traits and their functions obey normal module visibility,
+while impls have no separate visibility. There is currently no orphan rule.
+
+Trait dispatch is fully static. The compiler selects the unique implementation
+while specializing concrete generic instances and rewrites each trait call to an
+ordinary direct call to the specialized impl function. No vtable, dictionary, or
+runtime metadata is emitted. Trait calls and bounds are checked per concrete
+instantiation, consistent with the rest of Vaca's generic checking; an unused
+generic function body is not rejected merely because no implementation exists
+for a type it is never instantiated with.
+
+Traits are not value types. Vaca does not currently support `dyn Trait`, trait
+objects, dot-method syntax, default function bodies, supertraits, associated
+types or constants, generic traits, per-function generics, operator overloading,
+or trait functions used as function values. `Self` is permitted in trait and
+impl function signatures, but not in local type annotations inside function
+bodies. Marker traits with no required functions are allowed.
+
 ## Scalar matching and value-producing loops
 
 `match` also accepts `bool` and `i64` values. Boolean matches must cover both
@@ -512,7 +583,7 @@ fn main() -> i64 {
 }
 ```
 
-Generic functions use the same declaration syntax. Type parameters are inferred from argument types when possible; use turbofish syntax `function::<Type, ...>(...)` when a parameter cannot be inferred. Explicit generic arguments must list every parameter. Generic functions and structs can be public module declarations and retain normal module visibility checks. The compiler specializes concrete instances, deduplicates repeated instances, and rejects programs requiring more than 512 concrete generic function/struct instances. Generic enums, trait bounds, and partial type-argument lists are not supported. Built-in `Vec<T>` remains supported as a generic function parameter and return type, with its existing built-in runtime behavior.
+Generic functions use the same declaration syntax. Type parameters are inferred from argument types when possible; use turbofish syntax `function::<Type, ...>(...)` when a parameter cannot be inferred. Explicit generic arguments must list every parameter. Generic functions, structs, and enums can be public module declarations and retain normal module visibility checks. The compiler specializes concrete instances, deduplicates repeated instances, and rejects programs requiring more than 512 concrete generic instances. Partial type-argument lists are not supported. Generic parameters may carry trait bounds as documented in [Traits and static dispatch](#traits-and-static-dispatch). Built-in `Vec<T>` remains supported as a generic function parameter and return type, with its existing built-in runtime behavior.
 
 ```vaca
 fn identity<T>(value: T) -> T { value }
@@ -581,7 +652,7 @@ fn main() -> i64 {
 }
 ```
 
-Value types are `i64`, `f32`, `f64`, `bool`, `str`, named enums, named structs, recursively nested fixed-size arrays `[element_type; length]`, and heap-backed vectors `Vec<element_type>`; functions may also return `unit`. Floating-point literals use decimal notation with at least one digit before the decimal point; a fractional part and/or exponent are optional (for example, `3.125`, `2e-3`, `1.0e+4`). Unsuffixed floating-point literals have type `f64`; append `f32` to a numeric literal (for example, `3.125f32`, `2e-3f32`) to create a rounded `f32` literal. Bindings, function parameters and results, unary negation, `+`, `-`, `*`, `/`, `%`, comparisons, and aggregate elements/payloads are supported for both types. They use IEEE 754 behavior, including infinities, NaN, and unordered comparisons; integers, `f32`, and `f64` are never converted implicitly. Float `match` patterns use IEEE equality, treat signed zeros as equal for duplicate detection, and require a wildcard arm. Non-finite or out-of-range literal spellings are rejected; infinities and NaN can still result from arithmetic. `print_f32(value)` prints a scalar `f32` followed by a newline using 9 significant digits; `print_f64(value)` writes the value followed by a newline using 17 significant digits. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. Signed `i64` addition, subtraction, multiplication, and negation trap on overflow and terminate with status 1; the direct minimum-literal spelling remains valid. A `let` type annotation is optional and inferred from its initializer. `let` bindings are mutable; `const` creates an immutable binding. Assignment uses `name = expression;`, array and vector elements may be assigned with `array[index] = expression;`, and fields of mutable local structs may be updated with `name.field = expression;`. Immutable bindings cannot be reassigned or mutated through an array element or struct field. `if`/`else`, `while`, and `for` loops are statements; `loop { ... }` [line truncated]
+Value types are `i64`, `f32`, `f64`, `bool`, `str`, named enums, named structs, recursively nested fixed-size arrays `[element_type; length]`, and heap-backed vectors `Vec<element_type>`; functions may also return `unit`. Traits are top-level declarations and are not value types; generic parameters may use inline trait bounds. Floating-point literals use decimal notation with at least one digit before the decimal point; a fractional part and/or exponent are optional (for example, `3.125`, `2e-3`, `1.0e+4`). Unsuffixed floating-point literals have type `f64`; append `f32` to a numeric literal (for example, `3.125f32`, `2e-3f32`) to create a rounded `f32` literal. Bindings, function parameters and results, unary negation, `+`, `-`, `*`, `/`, `%`, comparisons, and aggregate elements/payloads are supported for both types. They use IEEE 754 behavior, including infinities, NaN, and unordered comparisons; integers, `f32`, and `f64` are never converted implicitly. Float `match` patterns use IEEE equality, treat signed zeros as equal for duplicate detection, and require a wildcard arm. Non-finite or out-of-range literal spellings are rejected; infinities and NaN can still result from arithmetic. `print_f32(value)` prints a scalar `f32` followed by a newline using 9 significant digits; `print_f64(value)` writes the value followed by a newline using 17 significant digits. Unit-returning functions can finish without a value or use `return;`, and their results may be used as expression statements but not bound or used as values. Unit parameters are not supported. Integer literals must fit in `i64`; the magnitude `9223372036854775808` is accepted only as the operand of unary minus, allowing `-9223372036854775808` to spell `i64::MIN`. Signed `i64` addition, subtraction, multiplication, and negation trap on overflow and terminate with status 1; the direct minimum-literal spelling remains valid. A `let` type annotation is optional and inferred from its initializer. `let` bindings are mutable; `const` creates an immutable binding. Assignment uses `name = expression;`, array and vector elements may be assigned with `array[index] = expression;`, and fields of mutable local structs may be updated with `name.field = expression;`. Immutable bindings cannot be reassigned or mutated through an array element or struct field. `if`/`else`, `while`, and `for` loops are statements; `loop { ... }` [line truncated]
 
 Strings are immutable; they can be bound, assigned, passed, returned, and compared by content with `==` and `!=`. The `+` operator concatenates two strings. Concatenation copies both inputs into a newly allocated NUL-terminated string; these allocations remain alive until the process exits. Concatenation uses UTF-8 bytes without changing their encoding. Other arithmetic and ordering comparisons are not supported for `str`. `\0` is rejected because strings are NUL-terminated at runtime, and raw `0x00` bytes inside a string literal are rejected for the same reason, so an embedded NUL can never make compile-time constant comparison disagree with runtime comparison. `print(str)` writes a string to stdout as-is, and `println(str)` writes it followed by a newline; `print("x = "); print_i64(x);` prints a labelled integer, while `print_f32(x);` and `print_f64(y);` print floating-point values.
 

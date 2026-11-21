@@ -1,0 +1,8 @@
+trait Show { fn show(value: Self) -> str; }
+impl Show for i64 { fn show(value: i64) -> str { "int" } }
+impl<T: Show> Show for Vec<T> { fn show(value: Vec<T>) -> str { "vec" } }
+fn grow<T: Show>(value: T) -> i64 {
+    let next: Vec<T> = vec_new();
+    grow(next)
+}
+fn main() -> i64 { grow(1) }

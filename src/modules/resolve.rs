@@ -22,6 +22,11 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         ));
     }
     let mut symbols = HashMap::<String, Symbol>::new();
+    let module_names = program
+        .modules
+        .iter()
+        .map(|module| module.name.as_str())
+        .collect::<HashSet<_>>();
     for declaration in &program.enums {
         add_symbol(
             &mut symbols,
@@ -49,6 +54,26 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             &declaration.module,
             declaration.is_public,
             "type",
+            declaration.span,
+        )?;
+    }
+    for declaration in &program.traits {
+        let qualified = qualify(&declaration.module, &declaration.name);
+        if module_names.contains(qualified.as_str()) {
+            return Err(Diagnostic::at(
+                declaration.span.into(),
+                format!(
+                    "trait `{}` conflicts with a module of the same name",
+                    qualified
+                ),
+            ));
+        }
+        add_symbol(
+            &mut symbols,
+            &declaration.name,
+            &declaration.module,
+            declaration.is_public,
+            "trait",
             declaration.span,
         )?;
     }
@@ -85,6 +110,11 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
 
     for declaration in &mut program.enums {
         declaration.name = qualify(&declaration.module, &declaration.name);
+        resolve_generic_bounds(
+            &mut declaration.generic_params,
+            &declaration.module,
+            &symbols,
+        )?;
         for variant in &mut declaration.variants {
             for ty in &mut variant.payload {
                 resolve_type(ty, &declaration.module, variant.span, &symbols)?;
@@ -93,8 +123,35 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
     }
     for declaration in &mut program.structs {
         declaration.name = qualify(&declaration.module, &declaration.name);
+        resolve_generic_bounds(
+            &mut declaration.generic_params,
+            &declaration.module,
+            &symbols,
+        )?;
         for field in &mut declaration.fields {
             resolve_type(&mut field.ty, &declaration.module, field.span, &symbols)?;
+        }
+    }
+    for declaration in &mut program.traits {
+        declaration.name = qualify(&declaration.module, &declaration.name);
+        let mut seen = HashSet::new();
+        for function in &mut declaration.functions {
+            if !seen.insert(function.name.clone()) {
+                return Err(Diagnostic::at(
+                    function.span.into(),
+                    format!(
+                        "trait function `{}::{}` is defined more than once",
+                        declaration.name, function.name
+                    ),
+                ));
+            }
+            resolve_function_signature(
+                &mut function.params,
+                &mut function.return_type,
+                &declaration.module,
+                function.span,
+                &symbols,
+            )?;
         }
     }
     let enum_names = program
@@ -130,6 +187,7 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         for param in &mut function.params {
             resolve_type(&mut param.ty, &function.module, param.span, &symbols)?;
         }
+        resolve_generic_bounds(&mut function.generic_params, &function.module, &symbols)?;
         resolve_type(
             &mut function.return_type,
             &function.module,
@@ -162,7 +220,68 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         )?;
         function.name = qualify(&function.module, &original_name);
     }
+    for declaration in &mut program.impls {
+        declaration.trait_name = resolve_reference(
+            &declaration.trait_name,
+            &declaration.module,
+            declaration.trait_span,
+            &symbols,
+        )?;
+        resolve_generic_bounds(
+            &mut declaration.generic_params,
+            &declaration.module,
+            &symbols,
+        )?;
+        resolve_type(
+            &mut declaration.target,
+            &declaration.module,
+            declaration.target_span,
+            &symbols,
+        )?;
+        for function in &mut declaration.functions {
+            resolve_function_signature(
+                &mut function.params,
+                &mut function.return_type,
+                &declaration.module,
+                function.span,
+                &symbols,
+            )?;
+            let mut resolver = Resolver::new(&declaration.module, &symbols, &enum_names);
+            resolver.push_scope();
+            for param in &function.params {
+                resolver.bind(&param.name);
+            }
+            resolver.resolve_block(&mut function.body, function.span)?;
+            resolver.pop_scope();
+        }
+    }
     Ok(())
+}
+
+fn resolve_generic_bounds(
+    parameters: &mut [GenericParam],
+    module: &str,
+    symbols: &HashMap<String, Symbol>,
+) -> Result<(), Diagnostic> {
+    for parameter in parameters {
+        for bound in &mut parameter.bounds {
+            bound.name = resolve_reference(&bound.name, module, bound.span, symbols)?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_function_signature(
+    params: &mut [Param],
+    return_type: &mut Type,
+    module: &str,
+    span: Span,
+    symbols: &HashMap<String, Symbol>,
+) -> Result<(), Diagnostic> {
+    for param in params {
+        resolve_type(&mut param.ty, module, param.span, symbols)?;
+    }
+    resolve_type(return_type, module, span, symbols)
 }
 
 fn add_symbol(
@@ -209,19 +328,7 @@ fn resolve_reference(
     if name == "Result" {
         return Ok("Result".into());
     }
-    if name == "Result" {
-        return Ok("Result".into());
-    }
-    let symbol = if name.contains("::") {
-        symbols.get(name).or_else(|| {
-            let local = qualify(module, name);
-            symbols.get(&local)
-        })
-    } else {
-        let local = qualify(module, name);
-        symbols.get(&local).or_else(|| symbols.get(name))
-    };
-    let Some(symbol) = symbol else {
+    let Some(symbol) = find_symbol(name, module, symbols) else {
         return Ok(if name.contains("::") {
             name.into()
         } else {
@@ -235,6 +342,22 @@ fn resolve_reference(
         ));
     }
     Ok(symbol.qualified.clone())
+}
+
+fn find_symbol<'a>(
+    name: &str,
+    module: &str,
+    symbols: &'a HashMap<String, Symbol>,
+) -> Option<&'a Symbol> {
+    if name.contains("::") {
+        symbols.get(name).or_else(|| {
+            let local = qualify(module, name);
+            symbols.get(&local)
+        })
+    } else {
+        let local = qualify(module, name);
+        symbols.get(&local).or_else(|| symbols.get(name))
+    }
 }
 
 fn resolve_type(
@@ -468,6 +591,21 @@ impl<'a> Resolver<'a> {
                 self.pop_scope();
                 result?;
             }
+            Expr::TraitCall {
+                trait_name,
+                self_type,
+                args,
+                span,
+                ..
+            } => {
+                *trait_name = resolve_reference(trait_name, self.module, *span, self.symbols)?;
+                if let Some(self_type) = self_type {
+                    resolve_type(self_type, self.module, *span, self.symbols)?;
+                }
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
             Expr::CallValue { callee, args, .. } => {
                 self.resolve_expr(callee)?;
                 for arg in args {
@@ -484,6 +622,32 @@ impl<'a> Resolver<'a> {
                 args,
                 span,
             } => {
+                if let Some((trait_name, function_name)) = name.rsplit_once("::") {
+                    let is_callable = find_symbol(name, self.module, self.symbols)
+                        .is_some_and(|symbol| symbol.kind == "function");
+                    let is_trait = !is_callable
+                        && find_symbol(trait_name, self.module, self.symbols)
+                            .is_some_and(|symbol| symbol.kind == "trait");
+                    if is_trait {
+                        let resolved_trait =
+                            resolve_reference(trait_name, self.module, *span, self.symbols)?;
+                        if !type_arguments.is_empty() {
+                            return Err(Diagnostic::at(
+                                (*span).into(),
+                                "trait calls do not accept turbofish arguments; use `<Type as Trait>::function(...)` to choose `Self`",
+                            ));
+                        }
+                        let payload = std::mem::take(args);
+                        *expr = Expr::TraitCall {
+                            trait_name: resolved_trait,
+                            self_type: None,
+                            function_name: function_name.to_owned(),
+                            args: payload,
+                            span: *span,
+                        };
+                        return self.resolve_expr(expr);
+                    }
+                }
                 let enum_constructor =
                     if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
                         let resolved_enum =

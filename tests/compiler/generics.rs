@@ -108,6 +108,32 @@ fn generic_structs_can_be_used_in_enum_payloads() {
 }
 
 #[test]
+fn expected_enum_payloads_use_specialized_formal_types() {
+    let result = compile_and_run(
+        r#"
+struct Box<T> { value: T }
+enum Maybe<T> { Some(T), None }
+const VALUE: Box<i64> = Box<i64> { value: 42 };
+fn main() -> i64 {
+    let maybe: Maybe<Box<i64>> = Maybe::Some(VALUE);
+    match maybe {
+        Maybe::Some(boxed) => { boxed.value - 42 },
+        Maybe::None => { 1 },
+    }
+}
+"#,
+        "generics-specialized-enum-payload",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "struct Box<T> { value: T } enum Maybe<T> { Some(T), None } fn main() -> i64 { let maybe: Maybe<Box<i64>> = Maybe::Some(Box<bool> { value: true }); 0 }",
+        "generics-conflicting-specialized-enum-payload",
+        "expected `Box::<i64>`",
+    );
+}
+
+#[test]
 fn generic_inference_uses_enum_payload_bindings() {
     let result = compile_and_run(
         r#"
@@ -228,6 +254,27 @@ fn generic_calls_inside_lambdas_see_captured_locals() {
         }
         "#,
         "generics-lambda-capture-inference",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn expected_if_branches_keep_independent_binding_scopes() {
+    let result = compile_and_run(
+        r#"
+fn identity<T>(value: T) -> T { value }
+fn main() -> i64 {
+    let value = 42;
+    let result: i64 = if false {
+        let value = true;
+        0
+    } else {
+        identity(value)
+    };
+    result - 42
+}
+"#,
+        "generics-expected-if-scope",
     );
     assert_eq!(result.status.code(), Some(0));
 }

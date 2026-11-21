@@ -382,6 +382,10 @@ impl<'ctx> Codegen<'ctx> {
                 span.into(),
                 "array elements cannot have type `unit`".to_string(),
             )),
+            Type::SelfType => Err(Diagnostic::at(
+                span.into(),
+                "unresolved `Self` type reached code generation".to_string(),
+            )),
             Type::Reference(_, _) => Err(Diagnostic::at(
                 span.into(),
                 "references cannot be stored in arrays or vectors".to_string(),

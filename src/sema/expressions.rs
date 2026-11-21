@@ -20,6 +20,10 @@ impl Checker {
             Expr::Float(_, _) => Ok(ValueType::F64),
             Expr::Bool(_, _) => Ok(ValueType::Bool),
             Expr::String(_, _) => Ok(ValueType::Str),
+            Expr::TraitCall { span, .. } => Err(at(
+                *span,
+                "trait call reached semantic analysis without being resolved",
+            )),
             Expr::Array(elements, span) => {
                 if elements.is_empty() {
                     return Err(at(

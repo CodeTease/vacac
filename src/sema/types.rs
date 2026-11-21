@@ -177,6 +177,9 @@ impl Checker {
             Type::Bool => ValueType::Bool,
             Type::Str => ValueType::Str,
             Type::Unit => ValueType::Unit,
+            Type::SelfType => {
+                return Err(at(span, "unresolved `Self` type reached semantic analysis"));
+            }
             Type::Reference(element, _) => {
                 let element = self.resolve_type(element, span)?;
                 if element == ValueType::Unit {
@@ -457,6 +460,9 @@ impl Checker {
             Type::F64 => ArrayElementType::F64,
             Type::Bool => ArrayElementType::Bool,
             Type::Str => ArrayElementType::Str,
+            Type::SelfType => {
+                return Err(at(span, "unresolved `Self` type reached semantic analysis"));
+            }
             Type::Named(name) => {
                 if let Some(index) = self.enum_ids.get(name) {
                     ArrayElementType::Enum(*index)
@@ -1334,6 +1340,7 @@ pub(super) fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Float(_, span)
         | Expr::Variable(_, span)
         | Expr::Call { span, .. }
+        | Expr::TraitCall { span, .. }
         | Expr::CallValue { span, .. }
         | Expr::Lambda { span, .. }
         | Expr::Unary { span, .. }

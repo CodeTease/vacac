@@ -1,0 +1,4 @@
+trait Show { fn show(value: Self) -> str; }
+impl Show for i64 { fn show(value: i64) -> str { "int" } }
+fn show_it<T: Show>(value: T) -> str { Show::show(value) }
+fn main() -> i64 { println(show_it(true)); 0 }

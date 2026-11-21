@@ -1,0 +1,40 @@
+// Traits are nominal interfaces with explicit implementations and static dispatch.
+trait Show {
+    fn show(value: Self) -> str;
+}
+
+trait Zero {
+    fn zero() -> Self;
+}
+
+struct Box<T> {
+    value: T,
+}
+
+impl Show for i64 {
+    fn show(value: Self) -> str { "integer" }
+}
+
+impl Show for str {
+    fn show(value: Self) -> str { value }
+}
+
+impl<T: Show> Show for Box<T> {
+    fn show(value: Self) -> str { Show::show(value.value) }
+}
+
+impl Zero for i64 {
+    fn zero() -> Self { 0 }
+}
+
+// The bound enables trait calls inside a specialized generic function.
+fn describe<T: Show>(value: T) -> str {
+    Show::show(value)
+}
+
+fn main() -> i64 {
+    println(describe(42));
+    println(describe(Box<str> { value: "boxed text" }));
+    println(describe(Box<i64> { value: 7 }));
+    <i64 as Zero>::zero()
+}

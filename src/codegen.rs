@@ -231,6 +231,7 @@ fn codegen_span_of_expr(expr: &Expr) -> Span {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
+        | Expr::TraitCall { span, .. }
         | Expr::CallValue { span, .. }
         | Expr::Lambda { span, .. }
         | Expr::If { span, .. }

@@ -503,6 +503,8 @@ mod tests {
             globals: Vec::new(),
             functions: Vec::new(),
             extern_functions: Vec::new(),
+            traits: Vec::new(),
+            impls: Vec::new(),
             modules: Vec::new(),
             source_files: vec!["root.vca".into(), "nested/child.vca".into()],
             source_texts: vec![
