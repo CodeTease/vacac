@@ -80,6 +80,10 @@ impl<'ctx> Codegen<'ctx> {
                 value: Some(self.i64_type().const_int(*n, false).into()),
                 ty: ValueType::I64,
             }),
+            Expr::TraitCall { span, .. } => Err(Diagnostic::at(
+                (*span).into(),
+                "trait call reached code generation without being resolved",
+            )),
             Expr::Float32(n, _) => Ok(TypedValue {
                 value: Some(self.context.f32_type().const_float(f64::from(*n)).into()),
                 ty: ValueType::F32,

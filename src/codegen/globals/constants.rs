@@ -58,6 +58,12 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<ConstantValue, Diagnostic> {
         let fail = |span: Span, message: &str| Diagnostic::at(span.into(), message.to_string());
         let value = match expr {
+            Expr::TraitCall { span, .. } => {
+                return Err(fail(
+                    *span,
+                    "trait calls are not compile-time constant expressions",
+                ));
+            }
             Expr::Integer(value, span) => {
                 let value = if let Some(value) = value.checked_into_i64() {
                     value
@@ -743,6 +749,7 @@ fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
+        | Expr::TraitCall { span, .. }
         | Expr::CallValue { span, .. }
         | Expr::Lambda { span, .. }
         | Expr::If { span, .. }

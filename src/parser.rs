@@ -30,6 +30,7 @@ pub struct Parser {
     type_close_debt: usize,
     type_parameters: HashSet<String>,
     lifetime_parameters: HashSet<String>,
+    self_type_allowed: bool,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -66,6 +67,7 @@ impl Parser {
             type_close_debt: 0,
             type_parameters: HashSet::new(),
             lifetime_parameters: HashSet::new(),
+            self_type_allowed: false,
             diagnostics: Vec::new(),
         }
     }
@@ -76,6 +78,8 @@ impl Parser {
         let mut globals = Vec::new();
         let mut functions = Vec::new();
         let mut extern_functions = Vec::new();
+        let mut traits = Vec::new();
+        let mut impls = Vec::new();
         let mut modules = Vec::new();
         let mut diagnostics = Vec::new();
         while !self.at(&TokenKind::Eof) {
@@ -89,6 +93,8 @@ impl Parser {
                 &mut globals,
                 &mut functions,
                 &mut extern_functions,
+                &mut traits,
+                &mut impls,
                 &mut modules,
             );
             match declaration_result {
@@ -130,6 +136,8 @@ impl Parser {
             && extern_functions.is_empty()
             && enums.is_empty()
             && structs.is_empty()
+            && traits.is_empty()
+            && impls.is_empty()
             && globals.is_empty()
             && modules.is_empty()
             && diagnostics.is_empty()
@@ -145,6 +153,8 @@ impl Parser {
                 globals,
                 functions,
                 extern_functions,
+                traits,
+                impls,
                 modules,
                 source_files: Vec::new(),
                 source_texts: Vec::new(),
@@ -163,6 +173,8 @@ impl Parser {
         globals: &mut Vec<GlobalDecl>,
         functions: &mut Vec<Function>,
         extern_functions: &mut Vec<ExternFunction>,
+        traits: &mut Vec<TraitDecl>,
+        impls: &mut Vec<ImplDecl>,
         modules: &mut Vec<ModuleDecl>,
     ) -> Result<(), Diagnostic> {
         if self.take(&TokenKind::Mod) {
@@ -190,10 +202,14 @@ impl Parser {
             extern_functions.push(self.parse_extern_function(is_public)?);
         } else if self.at(&TokenKind::Fn) {
             functions.push(self.parse_function(is_public)?);
+        } else if self.at(&TokenKind::Trait) {
+            traits.push(self.parse_trait(is_public)?);
+        } else if self.at(&TokenKind::Impl) {
+            impls.push(self.parse_impl(is_public)?);
         } else {
             return Err(unexpected(
                 self.peek(),
-                "`fn`, `extern`, `struct`, `enum`, `const`, `let`, or `mod` declaration",
+                "`fn`, `extern`, `struct`, `enum`, `trait`, `impl`, `const`, `let`, or `mod` declaration",
             ));
         }
         Ok(())
@@ -222,6 +238,7 @@ impl Parser {
                 self.current = index;
                 self.type_parameters.clear();
                 self.lifetime_parameters.clear();
+                self.self_type_allowed = false;
                 self.type_close_debt = 0;
                 return;
             }
@@ -240,6 +257,7 @@ impl Parser {
         self.current = self.tokens.len().saturating_sub(1);
         self.type_parameters.clear();
         self.lifetime_parameters.clear();
+        self.self_type_allowed = false;
         self.type_close_debt = 0;
     }
 
@@ -409,6 +427,8 @@ fn is_top_level_start(kind: &TokenKind) -> bool {
             | TokenKind::Extern
             | TokenKind::Struct
             | TokenKind::Enum
+            | TokenKind::Trait
+            | TokenKind::Impl
             | TokenKind::Const
             | TokenKind::Let
             | TokenKind::Mod
@@ -536,6 +556,7 @@ fn span_of_expr_parser(expr: &Expr) -> Span {
         | Expr::Unary { span, .. }
         | Expr::Binary { span, .. }
         | Expr::Call { span, .. }
+        | Expr::TraitCall { span, .. }
         | Expr::CallValue { span, .. }
         | Expr::Lambda { span, .. }
         | Expr::If { span, .. }

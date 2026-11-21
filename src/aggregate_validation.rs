@@ -51,6 +51,7 @@ pub(crate) fn validate_aggregate_cycles(
             | Type::Str
             | Type::Unit => {}
             Type::Parameter(_) => {}
+            Type::SelfType => {}
         }
     }
 

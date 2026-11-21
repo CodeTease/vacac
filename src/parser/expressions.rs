@@ -85,6 +85,27 @@ impl Parser {
     }
 
     pub(super) fn parse_prefix(&mut self) -> Result<Expr, Diagnostic> {
+        if self.at(&TokenKind::Less) {
+            let start = self.advance().clone();
+            let self_type = self.parse_type()?;
+            if !matches!(&self.peek().kind, TokenKind::Ident(name) if name == "as") {
+                return Err(unexpected(self.peek(), "`as` in qualified trait call"));
+            }
+            self.advance();
+            let trait_ref = self.parse_trait_ref()?;
+            self.consume(&TokenKind::Greater, "`>` after qualified trait call target")?;
+            self.consume(&TokenKind::DoubleColon, "`::` after qualified trait")?;
+            let function_name = self.take_ident("trait function name")?;
+            self.consume(&TokenKind::LParen, "`(` after trait function name")?;
+            let args = self.parse_call_arguments()?;
+            return Ok(Expr::TraitCall {
+                trait_name: trait_ref.name,
+                self_type: Some(self_type),
+                function_name,
+                args,
+                span: Span::from(&start),
+            });
+        }
         if self.at(&TokenKind::Minus) {
             let operator = self.advance().clone();
             return Ok(Expr::Unary {

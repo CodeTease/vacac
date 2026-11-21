@@ -242,6 +242,7 @@ impl Specializer {
                 Some(Type::Function(_, result)) => Some((**result).clone()),
                 _ => self.signatures.get(name).map(|(_, result)| result.clone()),
             },
+            Expr::TraitCall { .. } => None,
             Expr::Lambda {
                 params,
                 return_type,
@@ -366,6 +367,7 @@ pub(super) fn type_key(ty: &Type) -> String {
         Type::Str => "str".into(),
         Type::Unit => "unit".into(),
         Type::Named(name) | Type::Parameter(name) => name.clone(),
+        Type::SelfType => "Self".into(),
         Type::Applied(name, arguments) => format!(
             "{name}<{}>",
             arguments.iter().map(type_key).collect::<Vec<_>>().join(",")

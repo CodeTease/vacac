@@ -286,13 +286,14 @@ impl Specializer {
                     for (parameter, argument) in
                         template.generic_params.iter().zip(&mut resolved_arguments)
                     {
-                        if let Some(inferred) = inferred.get(parameter)
+                        if let Some(inferred) = inferred.get(&parameter.name)
                             && argument != inferred
                         {
                             return Err(Diagnostic::at(
                                 (*variant_span).into(),
                                 format!(
-                                    "generic enum argument for `{parameter}` conflicts with inferred type"
+                                    "generic enum argument for `{}` conflicts with inferred type",
+                                    parameter.name
                                 ),
                             ));
                         }

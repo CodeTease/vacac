@@ -16,6 +16,20 @@ pub enum Type {
     Named(String),
     Applied(String, Vec<Type>),
     Parameter(String),
+    SelfType,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitRef {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct GenericParam {
+    pub name: String,
+    pub bounds: Vec<TraitRef>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +63,8 @@ pub struct Program {
     pub globals: Vec<GlobalDecl>,
     pub functions: Vec<Function>,
     pub extern_functions: Vec<ExternFunction>,
+    pub traits: Vec<TraitDecl>,
+    pub impls: Vec<ImplDecl>,
     pub modules: Vec<ModuleDecl>,
     pub source_files: Vec<String>,
     pub source_texts: Vec<String>,
@@ -75,9 +91,38 @@ pub struct ModuleDecl {
 }
 
 #[derive(Debug, Clone)]
+pub struct TraitDecl {
+    pub name: String,
+    pub functions: Vec<TraitFunction>,
+    pub span: Span,
+    pub is_public: bool,
+    pub module: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitFunction {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Type,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplDecl {
+    pub trait_name: String,
+    pub target: Type,
+    pub generic_params: Vec<GenericParam>,
+    pub functions: Vec<Function>,
+    pub span: Span,
+    pub trait_span: Span,
+    pub target_span: Span,
+    pub module: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct StructDecl {
     pub name: String,
-    pub generic_params: Vec<String>,
+    pub generic_params: Vec<GenericParam>,
     pub fields: Vec<StructField>,
     pub span: Span,
     pub is_public: bool,
@@ -94,7 +139,7 @@ pub struct StructField {
 #[derive(Debug, Clone)]
 pub struct EnumDecl {
     pub name: String,
-    pub generic_params: Vec<String>,
+    pub generic_params: Vec<GenericParam>,
     pub variants: Vec<EnumVariant>,
     pub span: Span,
     pub is_public: bool,
@@ -111,7 +156,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: String,
-    pub generic_params: Vec<String>,
+    pub generic_params: Vec<GenericParam>,
     pub lifetime_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: Type,
@@ -241,6 +286,13 @@ pub enum Expr {
     Call {
         name: String,
         type_arguments: Vec<Type>,
+        args: Vec<Expr>,
+        span: Span,
+    },
+    TraitCall {
+        trait_name: String,
+        self_type: Option<Type>,
+        function_name: String,
         args: Vec<Expr>,
         span: Span,
     },

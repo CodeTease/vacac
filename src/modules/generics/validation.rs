@@ -176,6 +176,10 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
             | Type::Bool
             | Type::Str
             | Type::Unit => Ok(()),
+            Type::SelfType => Err(Diagnostic::at(
+                span.into(),
+                "unresolved `Self` type reached generic validation",
+            )),
         }
     }
 
@@ -187,7 +191,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
         let parameters = declaration
             .generic_params
             .iter()
-            .map(String::as_str)
+            .map(|parameter| parameter.name.as_str())
             .collect::<std::collections::HashSet<_>>();
         let mut seen = std::collections::HashSet::new();
         for field in &declaration.fields {
@@ -221,7 +225,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
         let parameters = declaration
             .generic_params
             .iter()
-            .map(String::as_str)
+            .map(|parameter| parameter.name.as_str())
             .collect::<std::collections::HashSet<_>>();
         let mut variants = std::collections::HashSet::new();
         for variant in &declaration.variants {
@@ -257,7 +261,7 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
         let parameters = function
             .generic_params
             .iter()
-            .map(String::as_str)
+            .map(|parameter| parameter.name.as_str())
             .collect::<std::collections::HashSet<_>>();
         let mut seen = std::collections::HashSet::new();
         for param in &function.params {

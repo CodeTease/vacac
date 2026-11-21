@@ -570,6 +570,12 @@ impl Checker {
             | Expr::Float(..)
             | Expr::Bool(..)
             | Expr::String(..) => {}
+            Expr::TraitCall { span, .. } => {
+                return Err(at(
+                    *span,
+                    "trait call reached semantic analysis without being resolved",
+                ));
+            }
             Expr::Variable(name, span) => {
                 if self.lookup_local(name).is_some() {
                     return Err(at(

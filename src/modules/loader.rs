@@ -22,7 +22,18 @@ pub(super) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
         program: Program {
             enums: vec![EnumDecl {
                 name: "Result".into(),
-                generic_params: vec!["T".into(), "E".into()],
+                generic_params: vec![
+                    crate::ast::GenericParam {
+                        name: "T".into(),
+                        bounds: Vec::new(),
+                        span: result_span,
+                    },
+                    crate::ast::GenericParam {
+                        name: "E".into(),
+                        bounds: Vec::new(),
+                        span: result_span,
+                    },
+                ],
                 variants: vec![
                     EnumVariant {
                         name: "Ok".into(),
@@ -43,6 +54,8 @@ pub(super) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
             globals: Vec::new(),
             functions: Vec::new(),
             extern_functions: Vec::new(),
+            traits: Vec::new(),
+            impls: Vec::new(),
             modules: Vec::new(),
             source_files: Vec::new(),
             source_texts: Vec::new(),
@@ -123,6 +136,8 @@ impl Loader {
         self.program
             .extern_functions
             .append(&mut parsed.extern_functions);
+        self.program.traits.append(&mut parsed.traits);
+        self.program.impls.append(&mut parsed.impls);
         for declaration in declarations {
             if declaration.name.is_empty() || declaration.name.contains("::") {
                 self.diagnostics.push(Diagnostic::at(

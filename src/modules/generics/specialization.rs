@@ -253,7 +253,7 @@ impl Specializer {
         let substitutions = template
             .generic_params
             .iter()
-            .cloned()
+            .map(|parameter| parameter.name.clone())
             .zip(arguments.clone())
             .collect::<Substitution>();
         let mut concrete = template;
@@ -303,7 +303,7 @@ impl Specializer {
         let substitutions = template
             .generic_params
             .iter()
-            .cloned()
+            .map(|parameter| parameter.name.clone())
             .zip(arguments)
             .collect::<Substitution>();
         let mut concrete = template;
@@ -360,7 +360,7 @@ impl Specializer {
         let substitutions = template
             .generic_params
             .iter()
-            .cloned()
+            .map(|parameter| parameter.name.clone())
             .zip(arguments)
             .collect::<Substitution>();
         let mut concrete = template;

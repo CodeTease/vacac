@@ -468,6 +468,19 @@ impl<'a> Resolver<'a> {
                 self.pop_scope();
                 result?;
             }
+            Expr::TraitCall {
+                self_type,
+                args,
+                span,
+                ..
+            } => {
+                if let Some(self_type) = self_type {
+                    resolve_type(self_type, self.module, *span, self.symbols)?;
+                }
+                for arg in args {
+                    self.resolve_expr(arg)?;
+                }
+            }
             Expr::CallValue { callee, args, .. } => {
                 self.resolve_expr(callee)?;
                 for arg in args {

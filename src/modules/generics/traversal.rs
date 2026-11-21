@@ -241,6 +241,12 @@ impl Specializer {
                     self.process_expr(arg, substitutions, variables)?;
                 }
             }
+            Expr::TraitCall { span, .. } => {
+                return Err(Diagnostic::at(
+                    (*span).into(),
+                    "trait call reached specialization before trait support was initialized",
+                ));
+            }
             Expr::Struct {
                 name,
                 type_arguments,
@@ -347,7 +353,7 @@ impl Specializer {
                             .iter()
                             .zip(explicit_arguments.iter())
                         {
-                            if let Some(inferred_type) = inferred.get(parameter)
+                            if let Some(inferred_type) = inferred.get(&parameter.name)
                                 && inferred_type != argument
                             {
                                 return Err(Diagnostic::at(
@@ -359,16 +365,17 @@ impl Specializer {
                                     ),
                                 ));
                             }
-                            inferred.insert(parameter.clone(), argument.clone());
+                            inferred.insert(parameter.name.clone(), argument.clone());
                         }
                     }
                     let mut resolved_arguments = Vec::new();
                     for parameter in &template.generic_params {
-                        resolved_arguments.push(inferred.get(parameter).cloned().ok_or_else(|| {
+                        resolved_arguments.push(inferred.get(&parameter.name).cloned().ok_or_else(|| {
                             Diagnostic::at(
                                 (*span).into(),
                                 format!(
-                                    "cannot infer generic type parameter `{parameter}` for `{name}`; provide explicit type arguments with `::<...>`"
+                                    "cannot infer generic type parameter `{}` for `{name}`; provide explicit type arguments with `::<...>`",
+                                    parameter.name
                                 ),
                             )
                         })?);
@@ -480,10 +487,10 @@ impl Specializer {
                         .generic_params
                         .iter()
                         .map(|parameter| {
-                            inferred.get(parameter).cloned().ok_or_else(|| {
+                            inferred.get(&parameter.name).cloned().ok_or_else(|| {
                                 Diagnostic::at(
                                     (*span).into(),
-                                    format!("cannot infer generic type parameter `{parameter}` for `{enum_name}`; provide an expected type or explicit type arguments"),
+                                    format!("cannot infer generic type parameter `{}` for `{enum_name}`; provide an expected type or explicit type arguments", parameter.name),
                                 )
                             })
                         })
