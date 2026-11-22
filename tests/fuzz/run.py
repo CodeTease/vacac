@@ -201,7 +201,7 @@ def main():
     ))
     record(diagnostic_case(
         compiler, "malformed trait declarations report syntax errors", "trait_parser_recovery.vca",
-        "expected `;` after required trait function",
+        "expected `;` or a `{` default body after trait function signature",
     ))
     record(diagnostic_case(
         compiler, "raw NUL byte in a string literal is rejected", "raw_nul_literal.vca",
@@ -214,6 +214,11 @@ def main():
     record(parser_json_case(compiler))
     record(malformed_match_json_case(compiler))
 
+    record(check_result(
+        "trait default bodies inherit and override through generic impls",
+        run([compiler, CORPUS / "trait_default_body.vca", "--run"]),
+        stdout="<int>\noverride\n",
+    ))
     record(check_result(
         "i64::MIN literal is valid",
         run([compiler, CORPUS / "i64_min_valid.vca", "--run"]),
