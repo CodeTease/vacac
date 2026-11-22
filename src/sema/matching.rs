@@ -60,9 +60,6 @@ impl Checker {
             self.shared_borrows.pop();
             self.mutable_reference_origins.pop();
             let (result, origin) = result?;
-            if result == ValueType::Unit {
-                return Err(at(arm.span, "match arms must produce a value"));
-            }
             self.record_reference_join(span, result, vec![origin], "`match`")?;
             return Ok(result);
         }
@@ -141,9 +138,6 @@ impl Checker {
                     self.mutable_reference_origins.pop();
                     let (actual, origin) = result?;
                     result_origins.push(origin);
-                    if actual == ValueType::Unit {
-                        return Err(at(arm.span, "match arms must produce a value"));
-                    }
                     if let Some(expected) = result_type {
                         self.expect_type(actual, expected, arm.span, "match arm result")?;
                     } else {
@@ -206,9 +200,6 @@ impl Checker {
             }
             let (actual, origin) = self.check_block_result(&arm.body, arm.span)?;
             result_origins.push(origin);
-            if actual == ValueType::Unit {
-                return Err(at(arm.span, "match arms must produce a value"));
-            }
             if let Some(expected) = result_type {
                 self.expect_type(actual, expected, arm.span, "match arm result")?;
             } else {
@@ -439,9 +430,6 @@ impl Checker {
             self.mutable_reference_origins.pop();
             let (result, origin) = arm_result?;
             result_origins.push(origin);
-            if result == ValueType::Unit {
-                return Err(at(arm.span, "match arms must produce a value"));
-            }
             if let Some(expected) = result_type {
                 self.expect_type(result, expected, arm.span, "match arm result")?;
             } else {

@@ -1,4 +1,5 @@
 use crate::common::*;
+use std::fs;
 
 #[test]
 fn match_scrutinee_shadowing_a_struct_name_is_not_a_struct_literal() {
@@ -105,6 +106,98 @@ fn match_scrutinees_parse_with_full_binary_operator_precedence() {
     );
     assert!(result.status.success());
     assert_eq!(String::from_utf8_lossy(&result.stdout), "42\n");
+}
+
+#[test]
+fn unit_producing_matches_are_usable_as_statements() {
+    let result = compile_and_run(
+        r#"
+        enum Color { Red, Green }
+        struct Point { x: i64, y: i64 }
+        fn report(value: i64) -> unit {
+            match value {
+                0 => { println("zero") },
+                _ => { println("other") },
+            }
+        }
+        fn main() -> i64 {
+            let color = Color::Green;
+            match color {
+                Color::Red => { print_i64(1) },
+                Color::Green => { print_i64(2) },
+            };
+            match 7 {
+                0 => { print_i64(3) },
+                _ => { print_i64(4) },
+            };
+            let point = Point { x: 5, y: 6 };
+            match point {
+                Point { x, y } => { print_i64(x + y) },
+            };
+            println("");
+            report(0);
+            report(9);
+            0
+        }
+        "#,
+        "unit-matches",
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "2\n4\n11\n\nzero\nother\n"
+    );
+}
+
+#[test]
+fn unit_matches_do_not_build_a_result_phi() {
+    let (dir, result) = run_compiler_with_args(
+        r#"
+        enum Flag { On, Off }
+        fn noop() -> unit { return; }
+        fn main() -> i64 {
+            let flag = Flag::On;
+            match flag {
+                Flag::On => { noop() },
+                Flag::Off => { noop() },
+            };
+            match 1 {
+                1 => { noop() },
+                _ => { noop() },
+            };
+            0
+        }
+        "#,
+        "unit-match-phi",
+        &["--emit-llvm", "unit-match.ll", "--quiet"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let ir = fs::read_to_string(dir.join("unit-match.ll")).unwrap();
+    assert!(!ir.contains("match.value"), "{ir}");
+    assert!(!ir.contains(" phi "), "{ir}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn match_arms_cannot_mix_unit_and_value_results() {
+    assert_compile_error(
+        "fn main() -> i64 { match 1 { 1 => { print_i64(1) }, _ => { 2 } }; 0 }\n",
+        "match-unit-mixed-arms",
+        "match arm result has type i64, expected unit",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { let x = match 1 { _ => { print_i64(1) } }; 0 }\n",
+        "match-unit-bound",
+        "cannot bind a value of type `unit`",
+    );
 }
 
 #[test]

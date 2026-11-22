@@ -194,12 +194,6 @@ impl<'ctx> Codegen<'ctx> {
             }
             let result = result
                 .ok_or_else(|| Diagnostic::at(arm.span.into(), "match arm must produce a value"))?;
-            if result.ty == ValueType::Unit {
-                return Err(Diagnostic::at(
-                    arm.span.into(),
-                    "match arms must produce a value",
-                ));
-            }
             if let Some(expected) = result_type {
                 if expected != result.ty {
                     return Err(Diagnostic::at(
@@ -214,7 +208,11 @@ impl<'ctx> Codegen<'ctx> {
             } else {
                 result_type = Some(result.ty);
             }
-            let result_value = result.value.ok_or("match arm has no LLVM value")?;
+            let result_value = if result.ty == ValueType::Unit {
+                None
+            } else {
+                Some(result.value.ok_or("match arm has no LLVM value")?)
+            };
             let result_end = self
                 .builder
                 .get_insert_block()
@@ -222,10 +220,18 @@ impl<'ctx> Codegen<'ctx> {
             self.builder
                 .build_unconditional_branch(end_bb)
                 .map_err(|e| e.to_string())?;
-            incoming.push((result_value, result_end));
+            if let Some(result_value) = result_value {
+                incoming.push((result_value, result_end));
+            }
         }
         self.builder.position_at_end(end_bb);
         let ty = result_type.ok_or("match expression has no arms")?;
+        if ty == ValueType::Unit {
+            return Ok(TypedValue {
+                value: None,
+                ty: ValueType::Unit,
+            });
+        }
         let phi = self
             .builder
             .build_phi(
@@ -504,12 +510,6 @@ impl<'ctx> Codegen<'ctx> {
             }
             let result = result
                 .ok_or_else(|| Diagnostic::at(arm.span.into(), "match arm must produce a value"))?;
-            if result.ty == ValueType::Unit {
-                return Err(Diagnostic::at(
-                    arm.span.into(),
-                    "match arms must produce a value",
-                ));
-            }
             if let Some(expected) = result_type {
                 if expected != result.ty {
                     return Err(Diagnostic::at(
@@ -524,6 +524,11 @@ impl<'ctx> Codegen<'ctx> {
             } else {
                 result_type = Some(result.ty);
             }
+            let result_value = if result.ty == ValueType::Unit {
+                None
+            } else {
+                Some(result.value.ok_or("match arm has no value")?)
+            };
             let result_end = self
                 .builder
                 .get_insert_block()
@@ -531,10 +536,18 @@ impl<'ctx> Codegen<'ctx> {
             self.builder
                 .build_unconditional_branch(end_bb)
                 .map_err(|error| error.to_string())?;
-            incoming.push((result.value.ok_or("match arm has no value")?, result_end));
+            if let Some(result_value) = result_value {
+                incoming.push((result_value, result_end));
+            }
         }
         self.builder.position_at_end(end_bb);
         let ty = result_type.ok_or("match expression has no arms")?;
+        if ty == ValueType::Unit {
+            return Ok(TypedValue {
+                value: None,
+                ty: ValueType::Unit,
+            });
+        }
         let phi = self
             .builder
             .build_phi(
