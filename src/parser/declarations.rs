@@ -1,6 +1,39 @@
 use super::*;
 
 impl Parser {
+    pub(super) fn parse_use(&mut self, is_public: bool) -> Result<UseDecl, Diagnostic> {
+        let start = self.consume(&TokenKind::Use, "`use`")?;
+        if is_public {
+            return Err(Diagnostic::at(
+                Span::from(&start).into(),
+                "`pub use` is not supported; imports are private to the declaring module",
+            ));
+        }
+        let mut path = vec![self.take_ident("imported name")?];
+        while self.take(&TokenKind::DoubleColon) {
+            path.push(self.take_ident("name after `::` in import")?);
+        }
+        let alias = if self.take(&TokenKind::As) {
+            let alias = self.take_ident("import alias after `as`")?;
+            if alias == "Self" {
+                return Err(Diagnostic::at(
+                    Span::from(self.previous()).into(),
+                    "`Self` is reserved and cannot name an import",
+                ));
+            }
+            Some(alias)
+        } else {
+            None
+        };
+        self.consume(&TokenKind::Semicolon, "`;` after import")?;
+        Ok(UseDecl {
+            path,
+            alias,
+            span: Span::from(&start),
+            module: self.module.clone(),
+        })
+    }
+
     pub(super) fn parse_global(
         &mut self,
         is_public: bool,

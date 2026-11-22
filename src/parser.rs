@@ -81,6 +81,7 @@ impl Parser {
         let mut traits = Vec::new();
         let mut impls = Vec::new();
         let mut modules = Vec::new();
+        let mut uses = Vec::new();
         let mut diagnostics = Vec::new();
         while !self.at(&TokenKind::Eof) {
             let parser_diagnostic_count = self.diagnostics.len();
@@ -96,6 +97,7 @@ impl Parser {
                 &mut traits,
                 &mut impls,
                 &mut modules,
+                &mut uses,
             );
             match declaration_result {
                 Ok(()) => {}
@@ -140,6 +142,7 @@ impl Parser {
             && impls.is_empty()
             && globals.is_empty()
             && modules.is_empty()
+            && uses.is_empty()
             && diagnostics.is_empty()
             && self.diagnostics.is_empty()
         {
@@ -156,6 +159,7 @@ impl Parser {
                 traits,
                 impls,
                 modules,
+                uses,
                 source_files: Vec::new(),
                 source_texts: Vec::new(),
                 functions_are_qualified: false,
@@ -176,6 +180,7 @@ impl Parser {
         traits: &mut Vec<TraitDecl>,
         impls: &mut Vec<ImplDecl>,
         modules: &mut Vec<ModuleDecl>,
+        uses: &mut Vec<UseDecl>,
     ) -> Result<(), Diagnostic> {
         if self.take(&TokenKind::Mod) {
             if is_public {
@@ -191,6 +196,8 @@ impl Parser {
                 name,
                 span: Span::from(&token),
             });
+        } else if self.at(&TokenKind::Use) {
+            uses.push(self.parse_use(is_public)?);
         } else if self.at(&TokenKind::Enum) {
             enums.push(self.parse_enum(is_public)?);
         } else if self.at(&TokenKind::Struct) {
@@ -209,7 +216,7 @@ impl Parser {
         } else {
             return Err(unexpected(
                 self.peek(),
-                "`fn`, `extern`, `struct`, `enum`, `trait`, `impl`, `const`, `let`, or `mod` declaration",
+                "`fn`, `extern`, `struct`, `enum`, `trait`, `impl`, `const`, `let`, `mod`, or `use` declaration",
             ));
         }
         Ok(())
@@ -432,6 +439,7 @@ fn is_top_level_start(kind: &TokenKind) -> bool {
             | TokenKind::Const
             | TokenKind::Let
             | TokenKind::Mod
+            | TokenKind::Use
     )
 }
 
@@ -568,6 +576,64 @@ mod trait_body_tests {
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert!(
             diagnostics[0].message.contains("`;` or a `{` default body"),
+            "{diagnostics:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod use_declaration_tests {
+    use super::Parser;
+    use crate::lexer;
+
+    #[test]
+    fn use_declarations_parse_paths_and_aliases() {
+        let source = "use geometry::point::Point;\nuse math as numbers;\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 0, "{diagnostics:?}");
+        assert_eq!(program.uses.len(), 2);
+        assert_eq!(program.uses[0].path, ["geometry", "point", "Point"]);
+        assert_eq!(program.uses[0].alias, None);
+        assert_eq!(program.uses[1].path, ["math"]);
+        assert_eq!(program.uses[1].alias.as_deref(), Some("numbers"));
+    }
+
+    #[test]
+    fn pub_use_is_rejected() {
+        let source = "pub use math::value;\nfn main() -> i64 { 0 }\n";
+        let (_program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("`pub use` is not supported"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn use_without_semicolon_recovers_to_later_declarations() {
+        let source = "use math::value\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains("expected `;` after import"),
+            "{diagnostics:?}"
+        );
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn use_declaration_requires_a_path() {
+        let source = "use ;\nfn main() -> i64 { 0 }\n";
+        let (_program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains("expected imported name"),
             "{diagnostics:?}"
         );
     }
