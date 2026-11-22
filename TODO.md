@@ -17,7 +17,7 @@
 * [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; mutable-reference returns/reborrows and NLL are deferred).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [x] Interfaces / traits / protocols.
-* [ ] Default function bodies in traits, including inherited body specialization, visibility, and static-dispatch tests.
+* [x] Default function bodies in traits, including inherited body specialization, visibility, and static-dispatch tests.
 * [ ] Generic traits and generic trait functions, including inference, coherence, visibility, and specialization-limit coverage.
 * [ ] Persistent mutable owned closure captures, with closure aliases sharing environment state and separately created closures remaining independent.
 * [x] Unit-producing statement matches that skip result PHI construction.

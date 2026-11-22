@@ -1,6 +1,8 @@
 // Traits are nominal interfaces with explicit implementations and static dispatch.
+// Trait functions may provide a default body that implementations inherit.
 trait Show {
     fn show(value: Self) -> str;
+    fn describe(value: Self) -> str { "value=" + <Self as Show>::show(value) }
 }
 
 trait Zero {
@@ -20,7 +22,7 @@ impl Show for str {
 }
 
 impl<T: Show> Show for Box<T> {
-    fn show(value: Self) -> str { Show::show(value.value) }
+    fn show(value: Self) -> str { "box(" + Show::show(value.value) + ")" }
 }
 
 impl Zero for i64 {
@@ -35,6 +37,7 @@ fn describe<T: Show>(value: T) -> str {
 fn main() -> i64 {
     println(describe(42));
     println(describe(Box<str> { value: "boxed text" }));
-    println(describe(Box<i64> { value: 7 }));
+    println(Show::describe(Box<i64> { value: 7 }));
+    println(Show::describe(1));
     <i64 as Zero>::zero()
 }

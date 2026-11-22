@@ -1,0 +1,31 @@
+trait Label {
+    fn name(value: Self) -> str;
+    fn describe(value: Self) -> str { "<" + <Self as Label>::name(value) + ">" }
+}
+
+struct Box<T> {
+    value: T,
+}
+
+impl Label for i64 {
+    fn name(value: Self) -> str { "int" }
+}
+
+impl<T: Label> Label for Box<T> {
+    fn name(value: Self) -> str { Label::name(value.value) }
+}
+
+impl Label for bool {
+    fn name(value: Self) -> str { "bool" }
+    fn describe(value: Self) -> str { "override" }
+}
+
+fn describe<T: Label>(value: T) -> str {
+    Label::describe(value)
+}
+
+fn main() -> i64 {
+    println(describe(Box<i64> { value: 1 }));
+    println(describe(true));
+    0
+}

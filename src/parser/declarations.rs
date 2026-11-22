@@ -332,11 +332,22 @@ impl Parser {
         self.consume(&TokenKind::RParen, "`)`")?;
         self.consume(&TokenKind::Arrow, "`->`")?;
         let return_type = self.parse_type()?;
-        self.consume(&TokenKind::Semicolon, "`;` after required trait function")?;
+        // Trait default bodies are parsed with `Self` still allowed, so inherited
+        // bodies may annotate locals and qualify sibling calls with `Self`.
+        let body = if self.at(&TokenKind::LBrace) {
+            Some(self.parse_block()?)
+        } else {
+            self.consume(
+                &TokenKind::Semicolon,
+                "`;` or a `{` default body after trait function signature",
+            )?;
+            None
+        };
         Ok(TraitFunction {
             name,
             params,
             return_type,
+            body,
             span: Span::from(&start),
         })
     }
