@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct TraitInfo {
     pub(crate) id: usize,
     pub(crate) name: String,
+    pub(crate) module: String,
     pub(crate) functions: Vec<TraitFunction>,
     pub(crate) is_public: bool,
 }
@@ -66,6 +67,7 @@ pub(crate) fn prepare(program: &mut Program) -> Result<TraitRegistry, Diagnostic
         registry.trait_names.insert(declaration.name.clone(), id);
         registry.traits.push(TraitInfo {
             id,
+            module: declaration.module,
             name: declaration.name,
             functions: declaration.functions,
             is_public: declaration.is_public,
@@ -595,7 +597,10 @@ fn validate_and_lower_impl(
         synthetic_functions.push(function.clone());
     }
     for required in &trait_info.functions {
-        if !seen.contains(&required.name) {
+        if seen.contains(&required.name) {
+            continue;
+        }
+        let Some(default_body) = &required.body else {
             return Err(at(
                 declaration.span,
                 format!(
@@ -605,7 +610,35 @@ fn validate_and_lower_impl(
                     required.name
                 ),
             ));
+        };
+        // Inherited bodies are cloned per impl and specialized like any other
+        // impl function, so dispatch stays fully static.
+        let internal_name = format!(
+            "{} for {}::{}",
+            trait_info.name,
+            type_name(&declaration.target),
+            required.name
+        );
+        let mut function = Function {
+            name: internal_name.clone(),
+            generic_params: declaration.generic_params.clone(),
+            lifetime_params: Vec::new(),
+            params: required.params.clone(),
+            return_type: required.return_type.clone(),
+            body: default_body.clone(),
+            span: required.span,
+            is_public: true,
+            // The body is lexically part of the trait declaration, so privacy
+            // checks inside it use the trait's module rather than the impl's.
+            module: trait_info.module.clone(),
+        };
+        substitute_self_in_function(&mut function, &declaration.target);
+        for param in &function.params {
+            validate_signature_type(&param.ty, true, false, param.span)?;
         }
+        validate_signature_type(&function.return_type, false, true, function.span)?;
+        methods.insert(required.name.clone(), internal_name);
+        synthetic_functions.push(function);
     }
     Ok(ImplInfo {
         target: declaration.target,
@@ -613,6 +646,187 @@ fn validate_and_lower_impl(
         methods,
         span: declaration.span,
     })
+}
+
+fn substitute_self_in_function(function: &mut Function, self_type: &Type) {
+    for param in &mut function.params {
+        param.ty = substitute_self(&param.ty, self_type);
+    }
+    function.return_type = substitute_self(&function.return_type, self_type);
+    substitute_self_in_block(&mut function.body, self_type);
+}
+
+fn substitute_self_in_block(block: &mut Block, self_type: &Type) {
+    for statement in &mut block.statements {
+        substitute_self_in_statement(statement, self_type);
+    }
+    if let Some(tail) = &mut block.tail {
+        substitute_self_in_expr(tail, self_type);
+    }
+}
+
+fn substitute_self_in_statement(statement: &mut Stmt, self_type: &Type) {
+    match statement {
+        Stmt::Let { ty, value, .. } => {
+            if let Some(ty) = ty {
+                *ty = substitute_self(ty, self_type);
+            }
+            substitute_self_in_expr(value, self_type);
+        }
+        Stmt::Assign { value, .. } | Stmt::Expr(value) => {
+            substitute_self_in_expr(value, self_type);
+        }
+        Stmt::If {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            substitute_self_in_expr(condition, self_type);
+            substitute_self_in_block(then_block, self_type);
+            if let Some(block) = else_block {
+                substitute_self_in_block(block, self_type);
+            }
+        }
+        Stmt::While { condition, body } => {
+            substitute_self_in_expr(condition, self_type);
+            substitute_self_in_block(body, self_type);
+        }
+        Stmt::For {
+            start, end, body, ..
+        } => {
+            substitute_self_in_expr(start, self_type);
+            substitute_self_in_expr(end, self_type);
+            substitute_self_in_block(body, self_type);
+        }
+        Stmt::ForArray { array, body, .. } => {
+            substitute_self_in_expr(array, self_type);
+            substitute_self_in_block(body, self_type);
+        }
+        Stmt::Break { value, .. } | Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                substitute_self_in_expr(value, self_type);
+            }
+        }
+        Stmt::Continue { .. } => {}
+        Stmt::AssignPlace { target, value, .. } => {
+            substitute_self_in_expr(target, self_type);
+            substitute_self_in_expr(value, self_type);
+        }
+    }
+}
+
+fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
+    match expr {
+        Expr::Integer(..)
+        | Expr::Float32(..)
+        | Expr::Float(..)
+        | Expr::Bool(..)
+        | Expr::String(..)
+        | Expr::Unit(..)
+        | Expr::Variable(..) => {}
+        Expr::Tuple(values, _) | Expr::Array(values, _) => {
+            for value in values {
+                substitute_self_in_expr(value, self_type);
+            }
+        }
+        Expr::Index { array, index, .. } => {
+            substitute_self_in_expr(array, self_type);
+            substitute_self_in_expr(index, self_type);
+        }
+        Expr::Field { value, .. } | Expr::Unary { value, .. } => {
+            substitute_self_in_expr(value, self_type);
+        }
+        Expr::Struct {
+            type_arguments,
+            fields,
+            ..
+        } => {
+            for argument in type_arguments {
+                *argument = substitute_self(argument, self_type);
+            }
+            for (_, value, _) in fields {
+                substitute_self_in_expr(value, self_type);
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            substitute_self_in_expr(left, self_type);
+            substitute_self_in_expr(right, self_type);
+        }
+        Expr::Call {
+            type_arguments,
+            args,
+            ..
+        } => {
+            for argument in type_arguments {
+                *argument = substitute_self(argument, self_type);
+            }
+            for arg in args {
+                substitute_self_in_expr(arg, self_type);
+            }
+        }
+        Expr::TraitCall {
+            self_type: call_self,
+            args,
+            ..
+        } => {
+            if let Some(call_self) = call_self {
+                *call_self = substitute_self(call_self, self_type);
+            }
+            for arg in args {
+                substitute_self_in_expr(arg, self_type);
+            }
+        }
+        Expr::CallValue { callee, args, .. } => {
+            substitute_self_in_expr(callee, self_type);
+            for arg in args {
+                substitute_self_in_expr(arg, self_type);
+            }
+        }
+        Expr::Lambda {
+            params,
+            return_type,
+            body,
+            ..
+        } => {
+            for param in params {
+                param.ty = substitute_self(&param.ty, self_type);
+            }
+            *return_type = substitute_self(return_type, self_type);
+            substitute_self_in_block(body, self_type);
+        }
+        Expr::If {
+            condition,
+            then_block,
+            else_block,
+            ..
+        } => {
+            substitute_self_in_expr(condition, self_type);
+            substitute_self_in_block(then_block, self_type);
+            substitute_self_in_block(else_block, self_type);
+        }
+        Expr::Match { value, arms, .. } => {
+            substitute_self_in_expr(value, self_type);
+            for arm in arms {
+                substitute_self_in_block(&mut arm.body, self_type);
+            }
+        }
+        Expr::Try { value, .. } => substitute_self_in_expr(value, self_type),
+        Expr::Loop { body, .. } => substitute_self_in_block(body, self_type),
+        Expr::Variant {
+            type_arguments,
+            payload,
+            ..
+        } => {
+            for argument in type_arguments {
+                *argument = substitute_self(argument, self_type);
+            }
+            if let Some(payload) = payload {
+                for value in payload {
+                    substitute_self_in_expr(value, self_type);
+                }
+            }
+        }
+    }
 }
 
 pub(crate) fn substitute_self(ty: &Type, target: &Type) -> Type {

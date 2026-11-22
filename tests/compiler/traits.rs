@@ -841,3 +841,66 @@ fn malformed_traits_and_impls_recover_to_later_declarations() {
     assert!(stderr.contains("test.vca:2:"), "{stderr}");
     let _ = fs::remove_dir_all(directory);
 }
+
+#[test]
+fn default_bodies_are_inherited_and_can_be_overridden() {
+    let result = compile_and_run(
+        r#"
+trait Twice {
+    fn twice(value: Self) -> i64 { value + value }
+}
+impl Twice for i64 {}
+impl Twice for bool {
+    fn twice(value: bool) -> i64 { 100 }
+}
+fn main() -> i64 { Twice::twice(21) - 42 + Twice::twice(true) - 100 }
+"#,
+        "traits-default-inherited",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn default_bodies_call_sibling_functions_and_annotate_self() {
+    let result = compile_and_run(
+        r#"
+trait Label {
+    fn name(value: Self) -> str;
+    fn shout(value: Self) -> str { <Self as Label>::name(value) + "!" }
+    fn copied(value: Self) -> Self { let same: Self = value; same }
+}
+impl Label for i64 { fn name(value: Self) -> str { "num" } }
+impl Label for str {
+    fn name(value: Self) -> str { "text" }
+    fn shout(value: Self) -> str { "loud" }
+}
+fn main() -> i64 {
+    println(Label::shout(1));
+    println(Label::shout("x"));
+    println(Label::name(Label::copied(7)));
+    0
+}
+"#,
+        "traits-default-sibling",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "num!\nloud\nnum\n");
+}
+
+#[test]
+fn default_bodies_specialize_for_generic_impls() {
+    let result = compile_and_run(
+        r#"
+trait Content { fn content(value: Self) -> i64; }
+trait Total { fn total(value: Self) -> i64 { <Self as Content>::content(value) + 1 } }
+struct Box<T> { value: T }
+impl Content for i64 { fn content(value: Self) -> i64 { value } }
+impl<T: Content> Content for Box<T> { fn content(value: Self) -> i64 { value.value } }
+impl<T: Content> Total for Box<T> {}
+fn summarize<T: Total>(value: T) -> i64 { Total::total(value) }
+fn main() -> i64 { summarize(Box<i64> { value: 41 }) - 42 }
+"#,
+        "traits-default-generic-impl",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
