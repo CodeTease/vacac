@@ -125,8 +125,9 @@ Some examples to explore:
   pass, and read named structs.
 - [`const_and_struct_fields.vca`](examples/const_and_struct_fields.vca) — use an
   immutable `const` value and update fields of a mutable local struct.
-- [`traits.vca`](examples/traits.vca) — define traits, implement them for
-  primitives and generic structs, and dispatch through a trait bound.
+- [`traits.vca`](examples/traits.vca) — define traits with default functions,
+  implement them for primitives and generic structs, and dispatch through a
+  trait bound.
 - [`pointers.rs`](tests/compiler/pointers.rs) — checked mutable references and
   explicitly raw pointer reads/writes.
 - [`modules/`](examples/modules/) — split a program across nested source files
@@ -352,13 +353,14 @@ supported.
 
 ## Traits and static dispatch
 
-Traits are nominal interfaces with required functions and explicit
-implementations. A trait function writes `Self` where the implementing type
-belongs; call trait functions through the trait name:
+Traits are nominal interfaces with required functions, optional default bodies,
+and explicit implementations. A trait function writes `Self` where the
+implementing type belongs; call trait functions through the trait name:
 
 ```vaca
 trait Show {
     fn show(value: Self) -> str;
+    fn describe(value: Self) -> str { "value=" + <Self as Show>::show(value) }
 }
 
 trait Zero {
@@ -387,6 +389,7 @@ fn describe<T: Show>(value: T) -> str {
 
 fn main() -> i64 {
     println(describe(Box<i64> { value: 42 }));
+    println(Show::describe(42));
     <i64 as Zero>::zero()
 }
 ```
@@ -397,6 +400,19 @@ including functions whose only use of `Self` is their return type. Generic type
 parameters may carry inline bounds such as `T: Show + Other`, and the same
 bounds may be written on generic structs, enums, and impls. Bounds cannot expose
 a private trait from a public declaration.
+
+A trait function that ends in a body instead of a semicolon is a default
+implementation. An impl may omit that function and inherit the body; omitting a
+function without a default is still an error. Inherited bodies are cloned per
+impl and specialized exactly like explicit methods: `Self` is replaced by the
+impl target, impl generic parameters carry over, and the body is checked once
+per implementation. Because the body is lexically part of the trait module, it
+may use that module's private items but not private items from the impl's
+module. Other trait functions are called with the qualified
+`<Self as Trait>::function(...)` form, which resolves to the same impl. An
+explicit implementation of a default function overrides the body and must match
+the trait signature. A default body in a trait with no implementations is
+resolved syntactically but not type-checked.
 
 Trait implementations are nominal and global. Implementing the same trait twice
 for the same type is rejected, as are generic impls whose targets may overlap,
@@ -413,11 +429,13 @@ generic function body is not rejected merely because no implementation exists
 for a type it is never instantiated with.
 
 Traits are not value types. Vaca does not currently support `dyn Trait`, trait
-objects, dot-method syntax, default function bodies, supertraits, associated
-types or constants, generic traits, per-function generics, operator overloading,
-or trait functions used as function values. `Self` is permitted in trait and
-impl function signatures, but not in local type annotations inside function
-bodies. Marker traits with no required functions are allowed.
+objects, dot-method syntax, supertraits, associated types or constants, generic
+traits, per-function generics, operator overloading, or trait functions used as
+function values. `Self` is permitted in trait and impl function signatures and
+inside trait default bodies, but not in local type annotations inside ordinary
+function bodies, including explicit impl functions. Marker traits with no
+functions are allowed, and functions with default bodies never have to be
+implemented.
 
 ## Scalar matching and value-producing loops
 
