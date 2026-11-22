@@ -10,7 +10,7 @@
 * [x] Capturing closures with immutable by-value environments retained until process exit.
 * [x] Function values and captured closures in fixed arrays and vectors.
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
-* [ ] Module imports and aliases with `use path::name [as alias];`, including collision, privacy, and parser-recovery checks across functions, globals, types, traits, and variants.
+* [x] Module imports and aliases with `use path::name [as alias];`, including collision, privacy, and parser-recovery checks across functions, globals, types, traits, and variants.
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [x] Make `unit` a zero-sized value with a `()` literal, locals, generic arguments, and enum payloads, enabling `Result<unit, E>` and `?` for fallible side-effect-only operations.
 * [x] Typed raw pointers (`*const T` / `*mut T`) with explicit raw address-taking and dereference; restricted lexical `&mut T` borrows.
