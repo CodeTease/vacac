@@ -539,6 +539,40 @@ mod recovery_tests {
     }
 }
 
+#[cfg(test)]
+mod trait_body_tests {
+    use super::Parser;
+    use crate::lexer;
+
+    #[test]
+    fn trait_functions_parse_required_and_default_signatures() {
+        let source = "trait Mixed {\n    fn required(value: Self) -> i64;\n    fn defaulted(value: Self) -> i64 { value + 1 }\n}\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 0, "{diagnostics:?}");
+        let functions = &program.traits[0].functions;
+        assert_eq!(functions.len(), 2);
+        assert!(functions[0].body.is_none());
+        let body = functions[1].body.as_ref().expect("default body");
+        assert!(
+            matches!(body.tail, Some(crate::ast::Expr::Binary { .. })),
+            "{body:?}"
+        );
+    }
+
+    #[test]
+    fn trait_function_without_terminator_is_rejected() {
+        let source = "trait Broken { fn value(value: Self) -> i64 }\nfn main() -> i64 { 0 }\n";
+        let (_program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            diagnostics[0].message.contains("`;` or a `{` default body"),
+            "{diagnostics:?}"
+        );
+    }
+}
+
 fn span_of_expr_parser(expr: &Expr) -> Span {
     match expr {
         Expr::Integer(_, span)

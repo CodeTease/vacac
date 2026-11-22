@@ -132,6 +132,18 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             resolve_type(&mut field.ty, &declaration.module, field.span, &symbols)?;
         }
     }
+    let enum_names = program
+        .enums
+        .iter()
+        .map(|declaration| {
+            declaration
+                .name
+                .rsplit("::")
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect::<HashSet<_>>();
     for declaration in &mut program.traits {
         declaration.name = qualify(&declaration.module, &declaration.name);
         let mut seen = HashSet::new();
@@ -152,20 +164,18 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
                 function.span,
                 &symbols,
             )?;
+            if let Some(body) = &mut function.body {
+                let mut resolver = Resolver::new(&declaration.module, &symbols, &enum_names);
+                resolver.push_scope();
+                for param in &function.params {
+                    resolver.bind(&param.name);
+                }
+                let result = resolver.resolve_block(body, function.span);
+                resolver.pop_scope();
+                result?;
+            }
         }
     }
-    let enum_names = program
-        .enums
-        .iter()
-        .map(|declaration| {
-            declaration
-                .name
-                .rsplit("::")
-                .next()
-                .unwrap_or_default()
-                .to_owned()
-        })
-        .collect::<HashSet<_>>();
     for declaration in &mut program.globals {
         let original_name = declaration.name.clone();
         declaration.name = qualify(&declaration.module, &original_name);

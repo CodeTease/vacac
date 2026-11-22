@@ -104,6 +104,8 @@ pub struct TraitFunction {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Type,
+    /// Default body inherited by implementations that omit this function.
+    pub body: Option<Block>,
     pub span: Span,
 }
 
