@@ -10,6 +10,235 @@ struct Symbol {
     kind: &'static str,
 }
 
+/// One `use` declaration, keyed in `Scope::imports` by declaring module and
+/// the local name it introduces.
+#[derive(Clone)]
+struct Import {
+    /// Fully qualified item or module the local name stands for.
+    target: String,
+    kind: &'static str,
+    /// `Some((enum, variant))` when the import names an enum variant directly.
+    variant: Option<(String, String)>,
+}
+
+/// Name lookup state for one program: declarations, module names, and the
+/// imports each module has brought into scope.
+struct Scope<'a> {
+    symbols: &'a HashMap<String, Symbol>,
+    module_names: &'a HashSet<String>,
+    imports: &'a HashMap<String, HashMap<String, Import>>,
+}
+
+impl<'a> Scope<'a> {
+    fn import(&self, module: &str, name: &str) -> Option<&'a Import> {
+        self.imports
+            .get(module)
+            .and_then(|imports| imports.get(name))
+    }
+
+    /// The enum and variant named by a direct variant import.
+    fn variant_import(&self, module: &str, name: &str) -> Option<(&'a str, &'a str)> {
+        self.import(module, name)
+            .and_then(|import| import.variant.as_ref())
+            .map(|(enum_name, variant)| (enum_name.as_str(), variant.as_str()))
+    }
+
+    /// Rewrite a leading imported name to its fully qualified target.
+    ///
+    /// Names that already resolve to a declaration or module are left alone, so
+    /// applying this to an already-canonical name is a no-op.
+    fn canonical(
+        &self,
+        module: &str,
+        name: &str,
+        span: crate::ast::Span,
+    ) -> Result<Option<String>, Diagnostic> {
+        if self.symbols.contains_key(name) || self.module_names.contains(name) {
+            return Ok(None);
+        }
+        let (head, rest) = match name.split_once("::") {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (name, None),
+        };
+        let Some(import) = self.import(module, head) else {
+            return Ok(None);
+        };
+        if let Some((enum_name, variant)) = &import.variant {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "`{head}` names enum variant `{enum_name}::{variant}`, not a module or type"
+                ),
+            ));
+        }
+        Ok(Some(match rest {
+            Some(rest) => format!("{}::{rest}", import.target),
+            None => import.target.clone(),
+        }))
+    }
+
+    fn find(&self, name: &str, module: &str) -> Option<&'a Symbol> {
+        if name.contains("::") {
+            self.symbols.get(name).or_else(|| {
+                let local = qualify(module, name);
+                self.symbols.get(&local)
+            })
+        } else {
+            let local = qualify(module, name);
+            self.symbols.get(&local).or_else(|| self.symbols.get(name))
+        }
+    }
+}
+
+fn collect_imports(
+    program: &Program,
+    symbols: &HashMap<String, Symbol>,
+    module_names: &HashSet<String>,
+) -> Result<HashMap<String, HashMap<String, Import>>, Diagnostic> {
+    let enum_variants = program
+        .enums
+        .iter()
+        .map(|declaration| {
+            (
+                qualify(&declaration.module, &declaration.name),
+                declaration
+                    .variants
+                    .iter()
+                    .map(|variant| variant.name.clone())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut imports: HashMap<String, HashMap<String, Import>> = HashMap::new();
+    for declaration in &program.uses {
+        let full = declaration.path.join("::");
+        let alias = declaration
+            .alias
+            .clone()
+            .unwrap_or_else(|| declaration.path.last().cloned().unwrap_or_default());
+        let span = declaration.span;
+        if let Some(reason) = reserved_import_reason(&alias) {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("cannot import `{full}` as `{alias}`: {reason}"),
+            ));
+        }
+        // Import paths are looked up like any other name: relative to the
+        // declaring module first, then from the root.
+        let mut candidates = Vec::new();
+        if !declaration.module.is_empty() {
+            candidates.push(qualify(&declaration.module, &full));
+        }
+        candidates.push(full.clone());
+        let mut resolved: Option<(String, &'static str, Option<(String, String)>)> = None;
+        for candidate in candidates {
+            if let Some(symbol) = symbols.get(&candidate) {
+                check_import_visibility(symbol, &declaration.module, &full, span)?;
+                resolved = Some((candidate, symbol.kind, None));
+                break;
+            }
+            if module_names.contains(&candidate) {
+                resolved = Some((candidate, "module", None));
+                break;
+            }
+            let variant = match candidate.rsplit_once("::") {
+                Some((enum_path, variant_name))
+                    if enum_variants.get(enum_path).is_some_and(|variants| {
+                        variants.iter().any(|name| name == variant_name)
+                    }) =>
+                {
+                    Some((enum_path.to_owned(), variant_name.to_owned()))
+                }
+                _ => None,
+            };
+            if let Some((enum_path, variant_name)) = variant {
+                if let Some(symbol) = symbols.get(&enum_path) {
+                    check_import_visibility(symbol, &declaration.module, &enum_path, span)?;
+                }
+                resolved = Some((candidate, "variant", Some((enum_path, variant_name))));
+                break;
+            }
+        }
+        let Some((target, kind, variant)) = resolved else {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("cannot import `{full}`: no module or declaration has that path"),
+            ));
+        };
+        let local = qualify(&declaration.module, &alias);
+        if let Some(symbol) = symbols.get(&local) {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "import name `{alias}` conflicts with {} `{local}` declared in this module",
+                    symbol.kind
+                ),
+            ));
+        }
+        if module_names.contains(&local) {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("import name `{alias}` conflicts with module `{local}`"),
+            ));
+        }
+        let module_imports = imports.entry(declaration.module.clone()).or_default();
+        if module_imports.contains_key(&alias) {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("import name `{alias}` is imported more than once"),
+            ));
+        }
+        module_imports.insert(
+            alias,
+            Import {
+                target,
+                kind,
+                variant,
+            },
+        );
+    }
+    Ok(imports)
+}
+
+/// Reject an import target that is private to another module.
+fn check_import_visibility(
+    symbol: &Symbol,
+    module: &str,
+    imported: &str,
+    span: crate::ast::Span,
+) -> Result<(), Diagnostic> {
+    if symbol.module == module || symbol.public {
+        return Ok(());
+    }
+    Err(Diagnostic::at(
+        span.into(),
+        format!("{} `{imported}` is private", symbol.kind),
+    ))
+}
+
+/// Import names that cannot be bound because the compiler already provides them.
+fn reserved_import_reason(name: &str) -> Option<&'static str> {
+    if name == "Result" {
+        return Some("`Result` is a reserved compiler-provided prelude enum");
+    }
+    is_builtin(name).then_some("the name is a compiler built-in")
+}
+
+fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "print_i64"
+            | "print_f32"
+            | "print_f64"
+            | "print"
+            | "println"
+            | "read_i64"
+            | "len"
+            | "vec_new"
+            | "vec_push"
+    )
+}
+
 pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
     if let Some(declaration) = program
         .enums
@@ -25,7 +254,7 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
     let module_names = program
         .modules
         .iter()
-        .map(|module| module.name.as_str())
+        .map(|module| module.name.clone())
         .collect::<HashSet<_>>();
     for declaration in &program.enums {
         add_symbol(
@@ -108,28 +337,27 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         )?;
     }
 
+    let imports = collect_imports(program, &symbols, &module_names)?;
+    let scope = Scope {
+        symbols: &symbols,
+        module_names: &module_names,
+        imports: &imports,
+    };
+
     for declaration in &mut program.enums {
         declaration.name = qualify(&declaration.module, &declaration.name);
-        resolve_generic_bounds(
-            &mut declaration.generic_params,
-            &declaration.module,
-            &symbols,
-        )?;
+        resolve_generic_bounds(&mut declaration.generic_params, &declaration.module, &scope)?;
         for variant in &mut declaration.variants {
             for ty in &mut variant.payload {
-                resolve_type(ty, &declaration.module, variant.span, &symbols)?;
+                resolve_type(ty, &declaration.module, variant.span, &scope)?;
             }
         }
     }
     for declaration in &mut program.structs {
         declaration.name = qualify(&declaration.module, &declaration.name);
-        resolve_generic_bounds(
-            &mut declaration.generic_params,
-            &declaration.module,
-            &symbols,
-        )?;
+        resolve_generic_bounds(&mut declaration.generic_params, &declaration.module, &scope)?;
         for field in &mut declaration.fields {
-            resolve_type(&mut field.ty, &declaration.module, field.span, &symbols)?;
+            resolve_type(&mut field.ty, &declaration.module, field.span, &scope)?;
         }
     }
     let enum_names = program
@@ -162,10 +390,10 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
                 &mut function.return_type,
                 &declaration.module,
                 function.span,
-                &symbols,
+                &scope,
             )?;
             if let Some(body) = &mut function.body {
-                let mut resolver = Resolver::new(&declaration.module, &symbols, &enum_names);
+                let mut resolver = Resolver::new(&declaration.module, &scope, &enum_names);
                 resolver.push_scope();
                 for param in &function.params {
                     resolver.bind(&param.name);
@@ -180,9 +408,9 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         let original_name = declaration.name.clone();
         declaration.name = qualify(&declaration.module, &original_name);
         if let Some(ty) = &mut declaration.ty {
-            resolve_type(ty, &declaration.module, declaration.span, &symbols)?;
+            resolve_type(ty, &declaration.module, declaration.span, &scope)?;
         }
-        let mut resolver = Resolver::new(&declaration.module, &symbols, &enum_names);
+        let mut resolver = Resolver::new(&declaration.module, &scope, &enum_names);
         resolver.resolve_expr(&mut declaration.value)?;
     }
     for function in &mut program.functions {
@@ -195,21 +423,21 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             ));
         }
         for param in &mut function.params {
-            resolve_type(&mut param.ty, &function.module, param.span, &symbols)?;
+            resolve_type(&mut param.ty, &function.module, param.span, &scope)?;
         }
-        resolve_generic_bounds(&mut function.generic_params, &function.module, &symbols)?;
+        resolve_generic_bounds(&mut function.generic_params, &function.module, &scope)?;
         resolve_type(
             &mut function.return_type,
             &function.module,
             function.span,
-            &symbols,
+            &scope,
         )?;
         function.name = if is_main {
             "main".into()
         } else {
             qualify(&function.module, &original_name)
         };
-        let mut resolver = Resolver::new(&function.module, &symbols, &enum_names);
+        let mut resolver = Resolver::new(&function.module, &scope, &enum_names);
         resolver.push_scope();
         for param in &function.params {
             resolver.bind(&param.name);
@@ -220,13 +448,13 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
     for function in &mut program.extern_functions {
         let original_name = function.name.clone();
         for param in &mut function.params {
-            resolve_type(&mut param.ty, &function.module, param.span, &symbols)?;
+            resolve_type(&mut param.ty, &function.module, param.span, &scope)?;
         }
         resolve_type(
             &mut function.return_type,
             &function.module,
             function.span,
-            &symbols,
+            &scope,
         )?;
         function.name = qualify(&function.module, &original_name);
     }
@@ -235,18 +463,14 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             &declaration.trait_name,
             &declaration.module,
             declaration.trait_span,
-            &symbols,
+            &scope,
         )?;
-        resolve_generic_bounds(
-            &mut declaration.generic_params,
-            &declaration.module,
-            &symbols,
-        )?;
+        resolve_generic_bounds(&mut declaration.generic_params, &declaration.module, &scope)?;
         resolve_type(
             &mut declaration.target,
             &declaration.module,
             declaration.target_span,
-            &symbols,
+            &scope,
         )?;
         for function in &mut declaration.functions {
             resolve_function_signature(
@@ -254,9 +478,9 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
                 &mut function.return_type,
                 &declaration.module,
                 function.span,
-                &symbols,
+                &scope,
             )?;
-            let mut resolver = Resolver::new(&declaration.module, &symbols, &enum_names);
+            let mut resolver = Resolver::new(&declaration.module, &scope, &enum_names);
             resolver.push_scope();
             for param in &function.params {
                 resolver.bind(&param.name);
@@ -271,11 +495,11 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
 fn resolve_generic_bounds(
     parameters: &mut [GenericParam],
     module: &str,
-    symbols: &HashMap<String, Symbol>,
+    scope: &Scope<'_>,
 ) -> Result<(), Diagnostic> {
     for parameter in parameters {
         for bound in &mut parameter.bounds {
-            bound.name = resolve_reference(&bound.name, module, bound.span, symbols)?;
+            bound.name = resolve_reference(&bound.name, module, bound.span, scope)?;
         }
     }
     Ok(())
@@ -286,12 +510,12 @@ fn resolve_function_signature(
     return_type: &mut Type,
     module: &str,
     span: Span,
-    symbols: &HashMap<String, Symbol>,
+    scope: &Scope<'_>,
 ) -> Result<(), Diagnostic> {
     for param in params {
-        resolve_type(&mut param.ty, module, param.span, symbols)?;
+        resolve_type(&mut param.ty, module, param.span, scope)?;
     }
-    resolve_type(return_type, module, span, symbols)
+    resolve_type(return_type, module, span, scope)
 }
 
 fn add_symbol(
@@ -333,16 +557,45 @@ fn resolve_reference(
     name: &str,
     module: &str,
     span: crate::ast::Span,
-    symbols: &HashMap<String, Symbol>,
+    scope: &Scope<'_>,
 ) -> Result<String, Diagnostic> {
     if name == "Result" {
         return Ok("Result".into());
     }
-    let Some(symbol) = find_symbol(name, module, symbols) else {
-        return Ok(if name.contains("::") {
-            name.into()
+    if let Some((enum_name, variant)) = scope.variant_import(module, name) {
+        return Err(Diagnostic::at(
+            span.into(),
+            format!("`{name}` names enum variant `{enum_name}::{variant}` and cannot be used here"),
+        ));
+    }
+    let canonical = scope.canonical(module, name, span)?;
+    let resolved = canonical.as_deref().unwrap_or(name);
+    let Some(symbol) = scope.find(resolved, module) else {
+        if canonical.is_some() {
+            let (head, rest) = match name.split_once("::") {
+                Some((head, rest)) => (head, Some(rest)),
+                None => (name, None),
+            };
+            if let Some(import) = scope.import(module, head) {
+                if let Some(member) = rest {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("module `{}` has no member `{member}`", import.target),
+                    ));
+                }
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "`{name}` names {} `{}`, which is not valid here",
+                        import.kind, import.target
+                    ),
+                ));
+            }
+        }
+        return Ok(if resolved.contains("::") {
+            resolved.into()
         } else {
-            qualify(module, name)
+            qualify(module, resolved)
         });
     };
     if symbol.module != module && !symbol.public {
@@ -354,53 +607,37 @@ fn resolve_reference(
     Ok(symbol.qualified.clone())
 }
 
-fn find_symbol<'a>(
-    name: &str,
-    module: &str,
-    symbols: &'a HashMap<String, Symbol>,
-) -> Option<&'a Symbol> {
-    if name.contains("::") {
-        symbols.get(name).or_else(|| {
-            let local = qualify(module, name);
-            symbols.get(&local)
-        })
-    } else {
-        let local = qualify(module, name);
-        symbols.get(&local).or_else(|| symbols.get(name))
-    }
-}
-
 fn resolve_type(
     ty: &mut crate::ast::Type,
     module: &str,
     span: crate::ast::Span,
-    symbols: &HashMap<String, Symbol>,
+    scope: &Scope<'_>,
 ) -> Result<(), Diagnostic> {
     match ty {
-        crate::ast::Type::Named(name) => *name = resolve_reference(name, module, span, symbols)?,
+        crate::ast::Type::Named(name) => *name = resolve_reference(name, module, span, scope)?,
         crate::ast::Type::Applied(name, arguments) => {
-            *name = resolve_reference(name, module, span, symbols)?;
+            *name = resolve_reference(name, module, span, scope)?;
             for argument in arguments {
-                resolve_type(argument, module, span, symbols)?;
+                resolve_type(argument, module, span, scope)?;
             }
         }
         crate::ast::Type::Parameter(_) => {}
         crate::ast::Type::Array(element, _) | crate::ast::Type::Vector(element) => {
-            resolve_type(element, module, span, symbols)?
+            resolve_type(element, module, span, scope)?
         }
         crate::ast::Type::Reference(element, _)
         | crate::ast::Type::MutableReference(element, _)
-        | crate::ast::Type::RawPointer(element, _) => resolve_type(element, module, span, symbols)?,
+        | crate::ast::Type::RawPointer(element, _) => resolve_type(element, module, span, scope)?,
         crate::ast::Type::Tuple(elements) => {
             for element in elements {
-                resolve_type(element, module, span, symbols)?;
+                resolve_type(element, module, span, scope)?;
             }
         }
         crate::ast::Type::Function(params, result) => {
             for param in params {
-                resolve_type(param, module, span, symbols)?;
+                resolve_type(param, module, span, scope)?;
             }
-            resolve_type(result, module, span, symbols)?;
+            resolve_type(result, module, span, scope)?;
         }
         _ => {}
     }
@@ -409,20 +646,16 @@ fn resolve_type(
 
 struct Resolver<'a> {
     module: &'a str,
-    symbols: &'a HashMap<String, Symbol>,
+    scope: &'a Scope<'a>,
     enum_names: &'a HashSet<String>,
     scopes: Vec<HashSet<String>>,
 }
 
 impl<'a> Resolver<'a> {
-    fn new(
-        module: &'a str,
-        symbols: &'a HashMap<String, Symbol>,
-        enum_names: &'a HashSet<String>,
-    ) -> Self {
+    fn new(module: &'a str, scope: &'a Scope<'a>, enum_names: &'a HashSet<String>) -> Self {
         Self {
             module,
-            symbols,
+            scope,
             enum_names,
             scopes: Vec::new(),
         }
@@ -463,6 +696,11 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
+            MatchPattern::ImportedVariant { bindings, .. } => {
+                for pattern in bindings {
+                    self.bind_pattern(pattern);
+                }
+            }
             MatchPattern::Wildcard
             | MatchPattern::Bool(_)
             | MatchPattern::I64(_)
@@ -489,13 +727,33 @@ impl<'a> Resolver<'a> {
                         pattern, ty, value, ..
                     } => {
                         if let Some(ty) = ty {
-                            resolve_type(ty, self.module, span, self.symbols)?;
+                            resolve_type(ty, self.module, span, self.scope)?;
                         }
-                        resolve_pattern(pattern, self.module, span, self.symbols)?;
+                        resolve_pattern(pattern, self.module, span, self.scope, false)?;
                         self.resolve_expr(value)?;
                         self.bind_pattern(pattern);
                     }
-                    Stmt::Assign { value, .. } | Stmt::Expr(value) => self.resolve_expr(value)?,
+                    Stmt::Assign { name, value, span } => {
+                        if !self.is_local(name) {
+                            if let Some((enum_name, variant_name)) =
+                                self.scope.variant_import(self.module, name)
+                            {
+                                return Err(Diagnostic::at(
+                                    (*span).into(),
+                                    format!(
+                                        "cannot assign to `{name}`: it names enum variant `{enum_name}::{variant_name}`"
+                                    ),
+                                ));
+                            }
+                            if let Some(canonical) =
+                                self.scope.canonical(self.module, name, *span)?
+                            {
+                                *name = canonical;
+                            }
+                        }
+                        self.resolve_expr(value)?;
+                    }
+                    Stmt::Expr(value) => self.resolve_expr(value)?,
                     Stmt::If {
                         condition,
                         then_block,
@@ -575,9 +833,9 @@ impl<'a> Resolver<'a> {
                 fields,
                 span,
             } => {
-                *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                *name = resolve_reference(name, self.module, *span, self.scope)?;
                 for argument in type_arguments {
-                    resolve_type(argument, self.module, *span, self.symbols)?;
+                    resolve_type(argument, self.module, *span, self.scope)?;
                 }
                 for (_, value, _) in fields {
                     self.resolve_expr(value)?;
@@ -590,9 +848,9 @@ impl<'a> Resolver<'a> {
                 span,
             } => {
                 for param in params.iter_mut() {
-                    resolve_type(&mut param.ty, self.module, param.span, self.symbols)?;
+                    resolve_type(&mut param.ty, self.module, param.span, self.scope)?;
                 }
-                resolve_type(return_type, self.module, *span, self.symbols)?;
+                resolve_type(return_type, self.module, *span, self.scope)?;
                 self.push_scope();
                 for param in params.iter() {
                     self.bind(&param.name);
@@ -608,9 +866,9 @@ impl<'a> Resolver<'a> {
                 span,
                 ..
             } => {
-                *trait_name = resolve_reference(trait_name, self.module, *span, self.symbols)?;
+                *trait_name = resolve_reference(trait_name, self.module, *span, self.scope)?;
                 if let Some(self_type) = self_type {
-                    resolve_type(self_type, self.module, *span, self.symbols)?;
+                    resolve_type(self_type, self.module, *span, self.scope)?;
                 }
                 for arg in args {
                     self.resolve_expr(arg)?;
@@ -632,15 +890,47 @@ impl<'a> Resolver<'a> {
                 args,
                 span,
             } => {
+                if !self.is_local(name) {
+                    if let Some((enum_name, variant_name)) =
+                        self.scope.variant_import(self.module, name)
+                    {
+                        let (enum_name, variant_name) =
+                            (enum_name.to_owned(), variant_name.to_owned());
+                        if args.is_empty() {
+                            return Err(Diagnostic::at(
+                                (*span).into(),
+                                "enum variant payload must contain at least one value",
+                            ));
+                        }
+                        let payload = std::mem::take(args);
+                        *expr = Expr::Variant {
+                            enum_name,
+                            type_arguments: std::mem::take(type_arguments),
+                            variant_name,
+                            payload: Some(payload),
+                            span: *span,
+                        };
+                        return self.resolve_expr(expr);
+                    }
+                    if !is_builtin(name)
+                        && let Some(canonical) = self.scope.canonical(self.module, name, *span)?
+                    {
+                        *name = canonical;
+                    }
+                }
                 if let Some((trait_name, function_name)) = name.rsplit_once("::") {
-                    let is_callable = find_symbol(name, self.module, self.symbols)
+                    let is_callable = self
+                        .scope
+                        .find(name, self.module)
                         .is_some_and(|symbol| symbol.kind == "function");
                     let is_trait = !is_callable
-                        && find_symbol(trait_name, self.module, self.symbols)
+                        && self
+                            .scope
+                            .find(trait_name, self.module)
                             .is_some_and(|symbol| symbol.kind == "trait");
                     if is_trait {
                         let resolved_trait =
-                            resolve_reference(trait_name, self.module, *span, self.symbols)?;
+                            resolve_reference(trait_name, self.module, *span, self.scope)?;
                         if !type_arguments.is_empty() {
                             return Err(Diagnostic::at(
                                 (*span).into(),
@@ -661,8 +951,9 @@ impl<'a> Resolver<'a> {
                 let enum_constructor =
                     if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
                         let resolved_enum =
-                            resolve_reference(enum_name, self.module, *span, self.symbols)?;
+                            resolve_reference(enum_name, self.module, *span, self.scope)?;
                         let is_enum = self
+                            .scope
                             .symbols
                             .get(&resolved_enum)
                             .is_some_and(|symbol| symbol.kind == "enum")
@@ -690,17 +981,11 @@ impl<'a> Resolver<'a> {
                     };
                     return self.resolve_expr(expr);
                 }
-                if !self.is_local(name)
-                    && !matches!(name.as_str(), "len" | "vec_new" | "vec_push")
-                    && !matches!(
-                        name.as_str(),
-                        "print_i64" | "print_f32" | "print_f64" | "print" | "println" | "read_i64"
-                    )
-                {
-                    *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                if !self.is_local(name) && !is_builtin(name) {
+                    *name = resolve_reference(name, self.module, *span, self.scope)?;
                 }
                 for argument in type_arguments {
-                    resolve_type(argument, self.module, *span, self.symbols)?;
+                    resolve_type(argument, self.module, *span, self.scope)?;
                 }
                 for arg in args {
                     self.resolve_expr(arg)?;
@@ -719,7 +1004,7 @@ impl<'a> Resolver<'a> {
             Expr::Match { value, arms, span } => {
                 self.resolve_expr(value)?;
                 for arm in arms {
-                    resolve_pattern(&mut arm.pattern, self.module, arm.span, self.symbols)?;
+                    resolve_pattern(&mut arm.pattern, self.module, arm.span, self.scope, true)?;
                     self.push_scope();
                     self.bind_pattern(&arm.pattern);
                     let result = self.resolve_block(&mut arm.body, *span);
@@ -735,26 +1020,50 @@ impl<'a> Resolver<'a> {
                 span,
                 ..
             } => {
-                *enum_name = resolve_reference(enum_name, self.module, *span, self.symbols)?;
+                *enum_name = resolve_reference(enum_name, self.module, *span, self.scope)?;
                 if let Some(payload) = payload {
                     for value in payload {
                         self.resolve_expr(value)?;
                     }
                 }
             }
-            Expr::Variable(name, span) if name.contains("::") => {
+            Expr::Variable(name, span) => {
+                if self.is_local(name) {
+                    return Ok(());
+                }
+                if let Some((enum_name, variant_name)) =
+                    self.scope.variant_import(self.module, name)
+                {
+                    let (enum_name, variant_name) = (enum_name.to_owned(), variant_name.to_owned());
+                    *expr = Expr::Variant {
+                        enum_name,
+                        type_arguments: Vec::new(),
+                        variant_name,
+                        payload: None,
+                        span: *span,
+                    };
+                    return Ok(());
+                }
+                if let Some(canonical) = self.scope.canonical(self.module, name, *span)? {
+                    *name = canonical;
+                }
+                if !name.contains("::") {
+                    return Ok(());
+                }
                 if self
+                    .scope
                     .symbols
                     .get(name)
                     .is_some_and(|symbol| symbol.kind == "function")
                 {
-                    *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                    *name = resolve_reference(name, self.module, *span, self.scope)?;
                     return Ok(());
                 }
                 if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
                     let resolved_enum =
-                        resolve_reference(enum_name, self.module, *span, self.symbols)?;
+                        resolve_reference(enum_name, self.module, *span, self.scope)?;
                     if self
+                        .scope
                         .symbols
                         .get(&resolved_enum)
                         .is_some_and(|symbol| symbol.kind == "enum")
@@ -766,11 +1075,11 @@ impl<'a> Resolver<'a> {
                             payload: None,
                             span: *span,
                         };
-                        return self.resolve_expr(expr);
+                        return Ok(());
                     }
                 }
                 if let Expr::Variable(name, span) = expr {
-                    *name = resolve_reference(name, self.module, *span, self.symbols)?;
+                    *name = resolve_reference(name, self.module, *span, self.scope)?;
                 }
             }
             Expr::Integer(..)
@@ -778,30 +1087,34 @@ impl<'a> Resolver<'a> {
             | Expr::Float(..)
             | Expr::Bool(..)
             | Expr::String(..)
-            | Expr::Unit(..)
-            | Expr::Variable(..) => {}
+            | Expr::Unit(..) => {}
         }
         Ok(())
     }
 }
 
+/// Resolve type and enum names inside a pattern.
+///
+/// In a match arm, a bare binding whose name is a directly imported enum
+/// variant becomes that variant pattern instead of a new binding.
 fn resolve_pattern(
     pattern: &mut crate::ast::MatchPattern,
     module: &str,
     span: crate::ast::Span,
-    symbols: &HashMap<String, Symbol>,
+    scope: &Scope<'_>,
+    in_match_arm: bool,
 ) -> Result<(), Diagnostic> {
     use crate::ast::MatchPattern;
     match pattern {
         MatchPattern::Tuple(patterns) | MatchPattern::Array(patterns) => {
             for pattern in patterns {
-                resolve_pattern(pattern, module, span, symbols)?;
+                resolve_pattern(pattern, module, span, scope, in_match_arm)?;
             }
         }
         MatchPattern::Struct { name, fields, .. } => {
-            *name = resolve_reference(name, module, span, symbols)?;
+            *name = resolve_reference(name, module, span, scope)?;
             for (_, pattern, field_span) in fields {
-                resolve_pattern(pattern, module, *field_span, symbols)?;
+                resolve_pattern(pattern, module, *field_span, scope, in_match_arm)?;
             }
         }
         MatchPattern::Variant {
@@ -809,15 +1122,44 @@ fn resolve_pattern(
             bindings,
             ..
         } => {
-            *enum_name = resolve_reference(enum_name, module, span, symbols)?;
+            *enum_name = resolve_reference(enum_name, module, span, scope)?;
             if let Some(bindings) = bindings {
                 for pattern in bindings {
-                    resolve_pattern(pattern, module, span, symbols)?;
+                    resolve_pattern(pattern, module, span, scope, in_match_arm)?;
                 }
             }
         }
+        MatchPattern::Binding(name) => {
+            if in_match_arm
+                && let Some((enum_name, variant_name)) = scope.variant_import(module, name)
+            {
+                *pattern = MatchPattern::Variant {
+                    enum_name: enum_name.to_owned(),
+                    variant_name: variant_name.to_owned(),
+                    bindings: None,
+                };
+            }
+        }
+        MatchPattern::ImportedVariant { name, bindings } => {
+            let Some((enum_name, variant_name)) = scope.variant_import(module, name) else {
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!(
+                        "`{name}` does not name an imported enum variant, so it cannot take a payload pattern"
+                    ),
+                ));
+            };
+            let (enum_name, variant_name) = (enum_name.to_owned(), variant_name.to_owned());
+            for binding in bindings.iter_mut() {
+                resolve_pattern(binding, module, span, scope, in_match_arm)?;
+            }
+            *pattern = MatchPattern::Variant {
+                enum_name,
+                variant_name,
+                bindings: Some(std::mem::take(bindings)),
+            };
+        }
         MatchPattern::Wildcard
-        | MatchPattern::Binding(_)
         | MatchPattern::Bool(_)
         | MatchPattern::I64(_)
         | MatchPattern::F32(_)

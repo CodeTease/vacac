@@ -606,6 +606,10 @@ impl Checker {
                 span,
                 "enum variant pattern is not valid in this pattern position",
             )),
+            MatchPattern::ImportedVariant { .. } => Err(at(
+                span,
+                "imported enum variant pattern reached semantic analysis",
+            )),
             MatchPattern::Bool(_)
             | MatchPattern::I64(_)
             | MatchPattern::F32(_)

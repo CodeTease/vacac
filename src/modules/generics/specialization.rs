@@ -32,6 +32,11 @@ impl Specializer {
                     }
                 }
             }
+            MatchPattern::ImportedVariant { bindings, .. } => {
+                for pattern in bindings {
+                    self.normalize_pattern(pattern, _substitutions, span)?;
+                }
+            }
             MatchPattern::Wildcard
             | MatchPattern::Binding(_)
             | MatchPattern::Bool(_)
@@ -110,6 +115,11 @@ impl Specializer {
                     for (pattern, ty) in patterns.iter_mut().zip(&variant.payload) {
                         self.infer_pattern_bindings(pattern, ty, variables);
                     }
+                }
+            }
+            MatchPattern::ImportedVariant { bindings, .. } => {
+                for pattern in bindings {
+                    self.infer_pattern_bindings(pattern, ty, variables);
                 }
             }
             MatchPattern::Wildcard

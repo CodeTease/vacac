@@ -398,6 +398,12 @@ impl<'ctx> Codegen<'ctx> {
                         ),
                     ));
                 }
+                MatchPattern::ImportedVariant { .. } => {
+                    return Err(Diagnostic::at(
+                        arm.span.into(),
+                        "imported enum variant pattern reached code generation".to_string(),
+                    ));
+                }
             };
             if let Some(pattern) = &test_pattern {
                 let next = if index + 1 == arms.len() {

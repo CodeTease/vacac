@@ -377,6 +377,13 @@ pub enum MatchPattern {
         variant_name: String,
         bindings: Option<Vec<MatchPattern>>,
     },
+    /// A payload pattern written with a single name, e.g. `Circle(radius)`,
+    /// where the name may be a directly imported enum variant. Module
+    /// resolution replaces it with `Variant` or reports a diagnostic.
+    ImportedVariant {
+        name: String,
+        bindings: Vec<MatchPattern>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]

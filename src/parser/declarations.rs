@@ -10,6 +10,7 @@ impl Parser {
             ));
         }
         let mut path = vec![self.take_ident("imported name")?];
+        let path_start = self.previous().clone();
         while self.take(&TokenKind::DoubleColon) {
             path.push(self.take_ident("name after `::` in import")?);
         }
@@ -25,11 +26,16 @@ impl Parser {
         } else {
             None
         };
+        let mut span = Span::from(&path_start);
+        let path_end = self.previous().clone();
+        if path_end.line == path_start.line {
+            span.end_column = path_end.end_column;
+        }
         self.consume(&TokenKind::Semicolon, "`;` after import")?;
         Ok(UseDecl {
             path,
             alias,
-            span: Span::from(&start),
+            span,
             module: self.module.clone(),
         })
     }

@@ -133,6 +133,9 @@ impl<'ctx> Codegen<'ctx> {
             MatchPattern::Variant { .. } => {
                 Err("nested enum variant patterns are not supported".into())
             }
+            MatchPattern::ImportedVariant { .. } => {
+                Err("imported enum variant pattern reached code generation".into())
+            }
             MatchPattern::Bool(_)
             | MatchPattern::I64(_)
             | MatchPattern::F32(_)

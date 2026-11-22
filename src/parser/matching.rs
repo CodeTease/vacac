@@ -95,12 +95,23 @@ impl Parser {
         }
         if self.take(&TokenKind::LParen) {
             if path.len() == 1 {
-                let binding = path.pop().expect("path is non-empty");
-                if !self.at(&TokenKind::RParen) {
-                    return Err(unexpected(self.peek(), "`)` after grouped pattern"));
+                let name = path.pop().expect("path is non-empty");
+                if self.at(&TokenKind::RParen) {
+                    self.advance();
+                    return Ok(MatchPattern::Binding(name));
                 }
-                self.advance();
-                return Ok(MatchPattern::Binding(binding));
+                if self.import_names.contains(&name) {
+                    let mut bindings = Vec::new();
+                    loop {
+                        bindings.push(self.parse_pattern()?);
+                        if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                            break;
+                        }
+                    }
+                    self.consume(&TokenKind::RParen, "`)` after enum payload pattern")?;
+                    return Ok(MatchPattern::ImportedVariant { name, bindings });
+                }
+                return Err(unexpected(self.peek(), "`)` after grouped pattern"));
             }
             let variant_name = path.pop().expect("non-empty path");
             let enum_name = path.join("::");

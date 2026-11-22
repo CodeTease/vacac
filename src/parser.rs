@@ -24,6 +24,8 @@ pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     struct_names: HashSet<String>,
+    /// Names bound by `use` declarations, which may name an imported struct.
+    import_names: HashSet<String>,
     enum_names: HashSet<String>,
     module: String,
     suppress_struct_literal: bool,
@@ -57,10 +59,12 @@ impl Parser {
             .collect();
         // `Result` is a compiler-provided prelude enum and is available in every source file.
         enum_names.insert("Result".to_owned());
+        let import_names = collect_import_names(&tokens);
         Self {
             tokens,
             current: 0,
             struct_names,
+            import_names,
             enum_names,
             module,
             suppress_struct_literal: false,
@@ -395,6 +399,41 @@ impl Parser {
         }
         Err(unexpected(self.peek(), "`>` after generic type argument"))
     }
+}
+
+/// Names introduced by top-level `use` declarations, scanned like `struct_names`
+/// so an imported struct can be recognized as a struct literal.
+fn collect_import_names(tokens: &[Token]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if matches!(tokens[index].kind, TokenKind::Use) {
+            index += 1;
+            let mut last = None;
+            let mut alias = None;
+            let mut awaiting_alias = false;
+            while index < tokens.len() {
+                match &tokens[index].kind {
+                    TokenKind::Ident(name) => {
+                        if awaiting_alias {
+                            alias = Some(name.clone());
+                            awaiting_alias = false;
+                        }
+                        last = Some(name.clone());
+                    }
+                    TokenKind::As => awaiting_alias = true,
+                    TokenKind::DoubleColon => {}
+                    _ => break,
+                }
+                index += 1;
+            }
+            if let Some(name) = alias.or(last) {
+                names.insert(name);
+            }
+        }
+        index += 1;
+    }
+    names
 }
 
 fn is_statement_boundary(kind: &TokenKind) -> bool {
