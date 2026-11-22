@@ -152,9 +152,9 @@ scripts/test-examples.sh
 
 The deterministic adversarial corpus in [`tests/fuzz/`](tests/fuzz/) targets
 reference/lifetime diagnostics, generic specialization limits, malformed-source
-recovery and JSON diagnostics, deep module loading, checked integer overflow,
-IEEE floating-point values, returned closure captures, C scalar FFI, and LLVM
-emission. Run it against the release compiler with:
+recovery and JSON diagnostics, deep module loading, module import resolution,
+checked integer overflow, IEEE floating-point values, returned closure captures,
+C scalar FFI, and LLVM emission. Run it against the release compiler with:
 
 ```sh
 python3 tests/fuzz/run.py target/release/vacac

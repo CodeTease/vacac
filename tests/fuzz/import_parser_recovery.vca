@@ -1,0 +1,6 @@
+use broken::;
+use value
+
+fn value() -> i64 { 1 }
+
+fn main() -> i64 { value() }

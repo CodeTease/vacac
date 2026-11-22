@@ -3,7 +3,7 @@
 This directory contains small Vaca v0.1 reproducers for reference/lifetime
 checking, generic specialization limits, trait coherence, bounds, and default
 bodies, parser diagnostics, code generation, runtime traps, closures, modules,
-and the scalar C ABI. Expected rejection and runtime-trap cases are intentional;
+module imports, and the scalar C ABI. Expected rejection and runtime-trap cases are intentional;
 `run.py` checks their diagnostics/statuses so that they are distinct from a
 compiler crash or unexpected success.
 
@@ -40,8 +40,13 @@ additionally exercised with `--emit-llvm`.
   malformed match arm under `--check --json`. Diagnostics are valid JSON and
   recovery terminates; multiple diagnostics currently appear in recovery order,
   not necessarily source order.
+- Import cases cover aliases for modules, types, traits, and variants (including
+  direct variant imports in values and patterns), a duplicate alias, an alias
+  that collides with a declaration in the same module, an unknown path, and
+  malformed `use` declarations.
 - Deep module nesting is tested at a bounded depth of 48 to stress recursive
-  loading/name resolution without intentionally exhausting the host stack.
+  loading/name resolution without intentionally exhausting the host stack. Each
+  level reaches its child through an aliased `use` import.
 - C interop covers only the documented scalar ABI (`i64`, `f32`, `f64`,
   `unit`); Vaca v0.1 does not support pointer/string/aggregate/variadic C FFI.
 

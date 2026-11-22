@@ -1,0 +1,7 @@
+fn value() -> i64 { 1 }
+fn other() -> i64 { 2 }
+
+use value;
+use other as value;
+
+fn main() -> i64 { value() + other() }

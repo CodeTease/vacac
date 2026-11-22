@@ -1,0 +1,9 @@
+enum Kind {
+    A,
+    B,
+}
+
+use Kind::A as Item;
+use Kind::B as Item;
+
+fn main() -> i64 { 0 }
