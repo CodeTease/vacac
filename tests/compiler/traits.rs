@@ -904,3 +904,105 @@ fn main() -> i64 { summarize(Box<i64> { value: 41 }) - 42 }
     );
     assert_eq!(result.status.code(), Some(0));
 }
+
+#[test]
+fn inherited_default_bodies_keep_the_trait_module_scope() {
+    let (directory, compile) = module_project(
+        "default-scope",
+        concat!(
+            "mod shapes;\n",
+            "struct Square { side: i64 }\n",
+            "impl shapes::Shape for Square { fn sides(value: Square) -> i64 { 4 } }\n",
+            "fn main() -> i64 { shapes::Shape::total(Square { side: 0 }) - 5 }\n",
+        ),
+        &[(
+            "shapes.vca",
+            concat!(
+                "fn adjust() -> i64 { 1 }\n",
+                "pub trait Shape {\n",
+                "    fn sides(value: Self) -> i64;\n",
+                "    fn extra(value: Self) -> i64 { adjust() }\n",
+                "    fn total(value: Self) -> i64 { <Self as Shape>::sides(value) + <Self as Shape>::extra(value) }\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn default_bodies_cannot_reach_private_items_from_other_modules() {
+    let (directory, compile) = module_project(
+        "default-private",
+        "mod hidden;\ntrait Uses { fn uses(value: Self) -> i64 { hidden::secret() } }\nimpl Uses for i64 {}\nfn main() -> i64 { 0 }\n",
+        &[("hidden.vca", "fn secret() -> i64 { 1 }\n")],
+    );
+    assert!(!compile.status.success());
+    assert!(
+        String::from_utf8_lossy(&compile.stderr).contains("function `hidden::secret` is private"),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn inherited_default_bodies_are_statically_dispatched() {
+    let (directory, result) = run_compiler_with_args(
+        "trait Doubled { fn doubled(value: Self) -> i64 { value + value } } impl Doubled for i64 {} fn main() -> i64 { Doubled::doubled(21) - 42 }",
+        "traits-default-llvm",
+        &["--emit-llvm", "program.ll", "--quiet"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let ir = fs::read_to_string(directory.join("program.ll")).unwrap();
+    assert!(ir.contains("Doubled for i64::doubled"), "{ir}");
+    assert!(!ir.contains("vtable"), "{ir}");
+    assert!(!ir.contains("trait.dispatch"), "{ir}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn implementations_still_require_functions_without_default_bodies() {
+    assert_compile_error(
+        "trait Show { fn show(value: Self) -> str; fn describe(value: Self) -> str { \"d\" } } impl Show for i64 {} fn main() -> i64 { 0 }",
+        "traits-default-missing-required",
+        "missing required function `show`",
+    );
+}
+
+#[test]
+fn overriding_a_default_body_must_match_the_trait_signature() {
+    assert_compile_error(
+        "trait D { fn d(value: Self) -> i64 { 0 } } impl D for i64 { fn d(value: i64) -> str { \"x\" } } fn main() -> i64 { 0 }",
+        "traits-default-override-signature",
+        "function `D::d` returns `str`, expected `i64`",
+    );
+}
+
+#[test]
+fn inherited_default_body_errors_report_the_trait_source() {
+    let (directory, compile) = compile_source(
+        "trait Bad { fn bad(value: Self) -> i64 { value + true } }\nimpl Bad for i64 {}\nfn main() -> i64 { 0 }",
+        "traits-default-body-error",
+    );
+    assert!(!compile.status.success());
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(
+        stderr.contains("operator operands have different types: i64 and bool"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("test.vca:1:"), "{stderr}");
+    assert!(!stderr.contains("test.vca:2:"), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
