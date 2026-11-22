@@ -512,6 +512,7 @@ impl Specializer {
             | Expr::Float(..)
             | Expr::Bool(..)
             | Expr::String(..)
+            | Expr::Unit(..)
             | Expr::Variable(..) => {}
         }
         Ok(())

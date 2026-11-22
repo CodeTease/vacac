@@ -12,7 +12,7 @@
 * [x] Global and module-level constants or variables (compile-time initializers, static storage, qualified module access).
 * [ ] Module imports and aliases with `use path::name [as alias];`, including collision, privacy, and parser-recovery checks across functions, globals, types, traits, and variants.
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
-* [ ] Make `unit` a zero-sized value with a `()` literal, locals, generic arguments, and enum payloads, enabling `Result<unit, E>` and `?` for fallible side-effect-only operations.
+* [x] Make `unit` a zero-sized value with a `()` literal, locals, generic arguments, and enum payloads, enabling `Result<unit, E>` and `?` for fallible side-effect-only operations.
 * [x] Typed raw pointers (`*const T` / `*mut T`) with explicit raw address-taking and dereference; restricted lexical `&mut T` borrows.
 * [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; mutable-reference returns/reborrows and NLL are deferred).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.

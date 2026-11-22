@@ -20,6 +20,7 @@ impl Checker {
             Expr::Float(_, _) => Ok(ValueType::F64),
             Expr::Bool(_, _) => Ok(ValueType::Bool),
             Expr::String(_, _) => Ok(ValueType::Str),
+            Expr::Unit(_) => Ok(ValueType::Unit),
             Expr::TraitCall { span, .. } => Err(at(
                 *span,
                 "trait call reached semantic analysis without being resolved",
@@ -269,6 +270,9 @@ impl Checker {
                         return Err(at(*span, "closures cannot capture references"));
                     }
                     let target_type = self.check_place(value, root_type)?;
+                    if target_type == ValueType::Unit {
+                        return Err(at(*span, "references cannot target `unit`"));
+                    }
                     if self.place_crosses_vector(value, root_type)? {
                         return Err(at(
                             *span,
@@ -324,6 +328,9 @@ impl Checker {
                         ));
                     }
                     let target_type = self.check_place(value, root_type)?;
+                    if target_type == ValueType::Unit {
+                        return Err(at(*span, "references cannot target `unit`"));
+                    }
                     if self.place_crosses_vector(value, root_type)? {
                         return Err(at(
                             *span,
@@ -363,6 +370,9 @@ impl Checker {
                         *span,
                         matches!(op, UnaryOp::RawBorrowMut),
                     )?;
+                    if place_type == ValueType::Unit {
+                        return Err(at(*span, "raw pointers cannot target `unit`"));
+                    }
                     return Ok(
                         self.raw_pointer_type(place_type, matches!(op, UnaryOp::RawBorrowMut))
                     );

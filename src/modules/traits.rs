@@ -332,7 +332,7 @@ fn validate_signature_type(
         Type::RawPointer(element, _) => validate_signature_type(element, false, false, span),
         Type::Applied(_, arguments) => {
             for argument in arguments {
-                validate_signature_type(argument, false, false, span)?;
+                validate_signature_type(argument, false, true, span)?;
             }
             Ok(())
         }

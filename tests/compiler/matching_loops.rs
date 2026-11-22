@@ -193,11 +193,6 @@ fn match_arms_cannot_mix_unit_and_value_results() {
         "match-unit-mixed-arms",
         "match arm result has type i64, expected unit",
     );
-    assert_compile_error(
-        "fn main() -> i64 { let x = match 1 { _ => { print_i64(1) } }; 0 }\n",
-        "match-unit-bound",
-        "cannot bind a value of type `unit`",
-    );
 }
 
 #[test]

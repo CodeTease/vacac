@@ -75,7 +75,11 @@ C-ABI wrapper returns its low 8 bits as the process exit status.
 Types: `i64`, `f32`, `f64`, `bool`, `str`, tuples, fixed arrays `[T; N]`,
 vectors `Vec<T>`, named structs and enums, function types `fn(T) -> U`, shared
 and mutable references `&T`/`&mut T`, and raw pointers `*const T`/`*mut T`.
-`unit` is return-only. Unsuffixed float literals are `f64`; an `f32` suffix such
+`unit` is a zero-sized value: `()` is its literal and `()`/`unit` name the
+type. Unit values can be bound to locals, used as generic arguments, and stored
+in enum payloads (`Result<unit, E>` works with `?`). Unit parameters, struct
+fields, tuple/array/vector elements, and globals remain unsupported. Unsuffixed
+float literals are `f64`; an `f32` suffix such
 as `1.25f32` produces an `f32`. There are no implicit numeric conversions.
 `Result<T, E>` is a compiler-provided prelude enum; `?` propagates its error.
 Built-ins are `print_i64(i64)`, `print_f32(f32)` (9 significant digits plus

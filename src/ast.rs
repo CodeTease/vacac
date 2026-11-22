@@ -253,6 +253,7 @@ pub enum Expr {
     Float(f64, Span),
     Bool(bool, Span),
     String(String, Span),
+    Unit(Span),
     Tuple(Vec<Expr>, Span),
     Array(Vec<Expr>, Span),
     Variable(String, Span),

@@ -91,6 +91,9 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ValueType::Str,
                 data: ConstantData::Str(value.clone()),
             },
+            Expr::Unit(span) => {
+                return Err(fail(*span, "global initializer type cannot be `unit`"));
+            }
             Expr::Variable(name, span) => {
                 if self.lookup_local(name).is_some() {
                     return Err(fail(
@@ -740,6 +743,7 @@ fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Float(_, span)
         | Expr::Bool(_, span)
         | Expr::String(_, span)
+        | Expr::Unit(span)
         | Expr::Tuple(_, span)
         | Expr::Array(_, span)
         | Expr::Variable(_, span)

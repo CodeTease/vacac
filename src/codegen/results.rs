@@ -89,22 +89,24 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         self.builder.position_at_end(err_block);
-        let err_payload_tuple = self
-            .builder
-            .build_extract_value(result_value, 2, "result.err.payload")
-            .map_err(|error| error.to_string())?
-            .into_struct_value();
-        let err_payload = self
-            .builder
-            .build_extract_value(err_payload_tuple, 0, "result.err.value")
-            .map_err(|error| error.to_string())?;
         let err_enum = self.enum_types[return_id];
-        let err_tuple = self.enum_payload_types[return_id][return_err_index].const_zero();
-        let err_tuple = self
-            .builder
-            .build_insert_value(err_tuple, err_payload, 0, "result.propagated.err.payload")
-            .map_err(|error| error.to_string())?
-            .into_struct_value();
+        let mut err_tuple = self.enum_payload_types[return_id][return_err_index].const_zero();
+        if result_err_type != ValueType::Unit {
+            let err_payload_tuple = self
+                .builder
+                .build_extract_value(result_value, 2, "result.err.payload")
+                .map_err(|error| error.to_string())?
+                .into_struct_value();
+            let err_payload = self
+                .builder
+                .build_extract_value(err_payload_tuple, 0, "result.err.value")
+                .map_err(|error| error.to_string())?;
+            err_tuple = self
+                .builder
+                .build_insert_value(err_tuple, err_payload, 0, "result.propagated.err.payload")
+                .map_err(|error| error.to_string())?
+                .into_struct_value();
+        }
         let err_enum_value = self
             .builder
             .build_insert_value(
@@ -138,6 +140,12 @@ impl<'ctx> Codegen<'ctx> {
             .cloned()
             .ok_or("invalid built-in Result Ok payload")?;
         let value_type = self.resolve_type(&ok_type, span)?;
+        if value_type == ValueType::Unit {
+            return Ok(TypedValue {
+                value: None,
+                ty: ValueType::Unit,
+            });
+        }
         let ok_tuple = self
             .builder
             .build_extract_value(result_value, 1, "result.ok.payload")

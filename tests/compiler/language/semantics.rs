@@ -214,18 +214,35 @@ fn unit_functions_can_be_called_and_return_implicitly_or_explicitly() {
 }
 
 #[test]
-fn unit_function_results_cannot_be_used_as_values() {
-    let (dir, compile) = compile_source(
-        "fn report() -> unit { print_i64(1); }\nfn main() -> i64 { let result = report(); 0 }\n",
-        "unit-as-value",
+fn unit_values_can_be_bound_and_reassigned() {
+    let result = compile_and_run(
+        r#"
+        fn report(value: i64) -> unit {
+            print_i64(value);
+        }
+        fn main() -> i64 {
+            let literal: unit = ();
+            let inferred = report(1);
+            literal = inferred;
+            let parenthesized: () = report(2);
+            parenthesized = ();
+            print_i64(3);
+            0
+        }
+        "#,
+        "unit-values",
     );
-    let stderr = String::from_utf8_lossy(&compile.stderr);
-    assert!(!compile.status.success());
-    assert!(
-        stderr.contains("cannot bind a value of type `unit`"),
-        "unexpected diagnostic: {stderr}"
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "1\n2\n3\n");
+}
+
+#[test]
+fn unit_values_cannot_be_used_as_scalars() {
+    assert_compile_error(
+        "fn main() -> i64 { let value: unit = (); value + 1 }\n",
+        "unit-arithmetic",
+        "operator operands have different types: unit and i64",
     );
-    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]

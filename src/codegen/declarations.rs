@@ -625,8 +625,11 @@ impl<'ctx> Codegen<'ctx> {
     ) -> Result<StructType<'ctx>, Diagnostic> {
         let fields = captures
             .iter()
-            .map(|(_, ty)| self.llvm_type(*ty).ok_or("capture has no LLVM type"))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|(_, ty)| {
+                self.llvm_type(*ty)
+                    .unwrap_or_else(|| self.context.i8_type().as_basic_type_enum())
+            })
+            .collect::<Vec<_>>();
         Ok(self.context.struct_type(&fields, false))
     }
 
@@ -728,10 +731,8 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                     if value_type == ValueType::Unit {
-                        return Err(Diagnostic::at(
-                            variant.span.into(),
-                            "enum payloads cannot have type `unit`".to_string(),
-                        ));
+                        payload_fields.push(self.context.struct_type(&[], false).into());
+                        continue;
                     }
                     payload_fields.push(
                         self.llvm_type(value_type)

@@ -31,27 +31,29 @@ impl<'ctx> Codegen<'ctx> {
             if !captures.is_empty() {
                 let environment_type = self.closure_environment_type(&captures)?;
                 for (index, (name, ty)) in captures.iter().enumerate() {
-                    let field = self
-                        .builder
-                        .build_struct_gep(
-                            environment_type,
-                            environment,
-                            index as u32,
-                            "capture.ptr",
-                        )
-                        .map_err(|error| error.to_string())?;
-                    let value = self
-                        .builder
-                        .build_load(
-                            self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
-                            field,
-                            name,
-                        )
-                        .map_err(|error| error.to_string())?;
                     let alloca = self.create_entry_alloca(*ty, name)?;
-                    self.builder
-                        .build_store(alloca, value)
-                        .map_err(|error| error.to_string())?;
+                    if *ty != ValueType::Unit {
+                        let field = self
+                            .builder
+                            .build_struct_gep(
+                                environment_type,
+                                environment,
+                                index as u32,
+                                "capture.ptr",
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let value = self
+                            .builder
+                            .build_load(
+                                self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
+                                field,
+                                name,
+                            )
+                            .map_err(|error| error.to_string())?;
+                        self.builder
+                            .build_store(alloca, value)
+                            .map_err(|error| error.to_string())?;
+                    }
                     let binding_id = self.next_binding_id();
                     self.scopes[0].insert(
                         name.clone(),
@@ -206,12 +208,6 @@ impl<'ctx> Codegen<'ctx> {
                         "mutable references cannot be copied into another binding",
                     ));
                 }
-                if emitted_value.ty == ValueType::Unit {
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        "cannot bind a value of type `unit`".to_string(),
-                    ));
-                }
                 if matches!(
                     emitted_value.ty,
                     ValueType::Reference(_) | ValueType::MutableReference(_)
@@ -240,7 +236,13 @@ impl<'ctx> Codegen<'ctx> {
                         ),
                     ));
                 }
-                let aggregate = emitted_value.value.ok_or("missing initializer value")?;
+                let aggregate = match emitted_value.value {
+                    Some(value) => value,
+                    None if emitted_value.ty == ValueType::Unit => {
+                        self.context.i8_type().const_zero().into()
+                    }
+                    None => return Err("missing initializer value".into()),
+                };
                 let binding_origin = if matches!(ty, ValueType::MutableReference(_)) {
                     match value {
                         Expr::Unary {

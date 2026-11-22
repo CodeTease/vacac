@@ -248,16 +248,33 @@ fn enums_reject_non_exhaustive_duplicate_and_invalid_payload_matches() {
 }
 
 #[test]
+fn enums_support_unit_payloads() {
+    let result = compile_and_run(
+        r#"
+        enum Signal { Ping(unit), Stop }
+        fn main() -> i64 {
+            let signal: Signal = Signal::Ping(());
+            match signal {
+                Signal::Ping(value) => {
+                    let copy: unit = value;
+                    copy = ();
+                    7
+                },
+                Signal::Stop => { 1 },
+            }
+        }
+        "#,
+        "enum-unit-payload-value",
+    );
+    assert_eq!(result.status.code(), Some(7));
+}
+
+#[test]
 fn enums_reject_duplicate_declarations_and_unsupported_payloads() {
     assert_compile_error(
         "enum Choice { A, A } fn main() -> i64 { 0 }\n",
         "enum-duplicate-variant",
         "enum variant `A` is defined more than once",
-    );
-    assert_compile_error(
-        "enum Choice { Value(unit) } fn main() -> i64 { 0 }\n",
-        "enum-unit-payload",
-        "enum payloads cannot have type `unit`",
     );
     assert_compile_error(
         "enum Link { Next(Link) } fn main() -> i64 { 0 }\n",

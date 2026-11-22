@@ -290,6 +290,9 @@ impl<'ctx> Codegen<'ctx> {
                         ),
                     ));
                 }
+                if ty == ValueType::Unit {
+                    return Ok(false);
+                }
                 self.builder
                     .build_store(pointer, value.value.ok_or("missing assignment value")?)
                     .map_err(|e| e.to_string())?;
@@ -383,6 +386,9 @@ impl<'ctx> Codegen<'ctx> {
                             self.type_name(target_type)
                         ),
                     ));
+                }
+                if value.ty == ValueType::Unit {
+                    return Ok(false);
                 }
                 self.builder
                     .build_store(

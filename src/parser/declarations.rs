@@ -458,10 +458,7 @@ impl Parser {
             Ok(Type::Function(params, Box::new(self.parse_type()?)))
         } else if self.take(&TokenKind::LParen) {
             if self.take(&TokenKind::RParen) {
-                return Err(unexpected(
-                    self.previous(),
-                    "at least one tuple type element; empty tuple types are not supported",
-                ));
+                return Ok(Type::Unit);
             }
             let first = self.parse_type()?;
             if !self.take(&TokenKind::Comma) {

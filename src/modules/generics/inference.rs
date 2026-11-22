@@ -158,6 +158,7 @@ impl Specializer {
             Expr::Float(..) => Some(Type::F64),
             Expr::Bool(..) => Some(Type::Bool),
             Expr::String(..) => Some(Type::Str),
+            Expr::Unit(..) => Some(Type::Unit),
             Expr::Variable(name, _) => {
                 if let Some(ty) = variables.get(name) {
                     return Some(ty.clone());

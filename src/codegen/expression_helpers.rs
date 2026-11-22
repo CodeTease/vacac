@@ -151,7 +151,11 @@ impl<'ctx> Codegen<'ctx> {
             alloca_builder.position_at_end(entry);
         }
         Ok(alloca_builder
-            .build_alloca(self.llvm_type(ty).ok_or("cannot allocate unit")?, name)
+            .build_alloca(
+                self.llvm_type(ty)
+                    .unwrap_or_else(|| self.context.i8_type().as_basic_type_enum()),
+                name,
+            )
             .map_err(|e| e.to_string())?)
     }
 }

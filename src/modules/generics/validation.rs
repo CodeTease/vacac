@@ -236,12 +236,6 @@ pub(super) fn validate_templates(program: &Program) -> Result<(), Diagnostic> {
                 ));
             }
             for payload in &variant.payload {
-                if *payload == Type::Unit {
-                    return Err(Diagnostic::at(
-                        variant.span.into(),
-                        "enum payloads cannot have type `unit`",
-                    ));
-                }
                 check_type(
                     payload,
                     &parameters,

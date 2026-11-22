@@ -100,6 +100,10 @@ impl<'ctx> Codegen<'ctx> {
                 value: Some(self.string_literal(value)?.into()),
                 ty: ValueType::Str,
             }),
+            Expr::Unit(_) => Ok(TypedValue {
+                value: None,
+                ty: ValueType::Unit,
+            }),
             Expr::Tuple(elements, span) => self.emit_tuple_literal(elements, *span),
             Expr::Array(elements, span) => self.emit_array_literal(elements, *span),
             Expr::Call {
@@ -118,6 +122,12 @@ impl<'ctx> Codegen<'ctx> {
             }
             Expr::Variable(name, span) => {
                 if let Some(local) = self.lookup_local(name) {
+                    if local.ty == ValueType::Unit {
+                        return Ok(TypedValue {
+                            value: None,
+                            ty: ValueType::Unit,
+                        });
+                    }
                     let value = self
                         .builder
                         .build_load(self.llvm_type(local.ty).unwrap(), local.pointer, name)
@@ -410,6 +420,12 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     let (pointer, target_type) =
                         self.emit_place_pointer(value, name, local.pointer, local.ty)?;
+                    if target_type == ValueType::Unit {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "references cannot target `unit`".to_string(),
+                        ));
+                    }
                     if matches!(
                         target_type,
                         ValueType::Reference(_) | ValueType::MutableReference(_)
@@ -461,6 +477,12 @@ impl<'ctx> Codegen<'ctx> {
                     }
                     let (pointer, target_type) =
                         self.emit_place_pointer(value, name, local.pointer, local.ty)?;
+                    if target_type == ValueType::Unit {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "references cannot target `unit`".to_string(),
+                        ));
+                    }
                     if !self.reference_target_is_supported(
                         target_type,
                         &mut std::collections::HashSet::new(),
@@ -518,6 +540,12 @@ impl<'ctx> Codegen<'ctx> {
                         }
                     }
                     let (pointer, target_type) = self.emit_address_of_place(value)?;
+                    if target_type == ValueType::Unit {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "raw pointers cannot target `unit`".to_string(),
+                        ));
+                    }
                     let ty =
                         self.raw_pointer_type(target_type, matches!(op, UnaryOp::RawBorrowMut));
                     return Ok(TypedValue {
@@ -782,14 +810,17 @@ impl<'ctx> Codegen<'ctx> {
                                 "closure.capture.ptr",
                             )
                             .map_err(|error| error.to_string())?;
-                        let value = self
-                            .builder
-                            .build_load(
-                                self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
-                                *source,
-                                "closure.capture",
-                            )
-                            .map_err(|error| error.to_string())?;
+                        let value = if *ty == ValueType::Unit {
+                            self.context.i8_type().const_zero().into()
+                        } else {
+                            self.builder
+                                .build_load(
+                                    self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
+                                    *source,
+                                    "closure.capture",
+                                )
+                                .map_err(|error| error.to_string())?
+                        };
                         self.builder
                             .build_store(field, value)
                             .map_err(|error| error.to_string())?;

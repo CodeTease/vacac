@@ -218,10 +218,7 @@ impl Parser {
             }
             TokenKind::LParen => {
                 if self.take(&TokenKind::RParen) {
-                    return Err(unexpected(
-                        self.previous(),
-                        "at least one tuple element; empty tuples are not supported",
-                    ));
+                    return Ok(Expr::Unit(span));
                 }
                 let first = self.parse_nested_expression()?;
                 if !self.take(&TokenKind::Comma) {

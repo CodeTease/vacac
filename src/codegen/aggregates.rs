@@ -23,9 +23,11 @@ impl<'ctx> Codegen<'ctx> {
                     ));
                 }
                 let alloca = self.create_entry_alloca(ty, name)?;
-                self.builder
-                    .build_store(alloca, value)
-                    .map_err(|error| error.to_string())?;
+                if ty != ValueType::Unit {
+                    self.builder
+                        .build_store(alloca, value)
+                        .map_err(|error| error.to_string())?;
+                }
                 let binding_id = self.next_binding_id();
                 self.scopes
                     .last_mut()
@@ -182,8 +184,10 @@ impl<'ctx> Codegen<'ctx> {
         let payload_values = match (&variant.payload[..], payload_expr) {
             ([], None) => Vec::new(),
             (expected, Some(expressions)) if expected.len() == expressions.len() => {
-                let mut values = Vec::with_capacity(expected.len());
-                for (payload_type, expression) in expected.iter().zip(expressions) {
+                let mut values = Vec::new();
+                for (payload_index, (payload_type, expression)) in
+                    expected.iter().zip(expressions).enumerate()
+                {
                     let expected = self.resolve_type(payload_type, variant.span)?;
                     let payload = self.emit_expression_expected(expression, expected)?;
                     if payload.ty != expected {
@@ -196,10 +200,12 @@ impl<'ctx> Codegen<'ctx> {
                             ),
                         ));
                     }
-                    values.push((
-                        payload.ty,
-                        payload.value.ok_or("enum payload has no value")?,
-                    ));
+                    if expected != ValueType::Unit {
+                        values.push((
+                            payload_index,
+                            payload.value.ok_or("enum payload has no value")?,
+                        ));
+                    }
                 }
                 values
             }
@@ -223,7 +229,7 @@ impl<'ctx> Codegen<'ctx> {
         let mut payload_value = self.enum_payload_types[enum_id][variant_index]
             .const_zero()
             .as_basic_value_enum();
-        for (payload_index, (_ty, payload)) in payload_values.into_iter().enumerate() {
+        for (payload_index, payload) in payload_values {
             payload_value = self
                 .builder
                 .build_insert_value(

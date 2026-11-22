@@ -75,6 +75,42 @@ fn expected_result_types_flow_into_if_and_match_constructors() {
 }
 
 #[test]
+fn unit_results_support_side_effect_only_question_mark_operations() {
+    let result = compile_and_run(
+        r#"
+        enum Fault { Bad }
+
+        fn step(ok: bool) -> Result<unit, Fault> {
+            if ok { Result::Ok(()) } else { Result::Err(Fault::Bad) }
+        }
+        fn compute() -> Result<i64, Fault> {
+            let first: unit = step(true)?;
+            let second: () = step(true)?;
+            first = second;
+            Result::Ok(42)
+        }
+        fn forward() -> Result<i64, Fault> {
+            step(false)?;
+            Result::Ok(0)
+        }
+        fn main() -> i64 {
+            let success = match compute() {
+                Result::Ok(value) => { value },
+                Result::Err(_) => { 1 },
+            };
+            let propagated = match forward() {
+                Result::Ok(_) => { 1 },
+                Result::Err(_) => { 0 },
+            };
+            success + propagated
+        }
+        "#,
+        "unit-result-question",
+    );
+    assert_eq!(result.status.code(), Some(42));
+}
+
+#[test]
 fn question_mark_rejects_non_results_and_incompatible_returns() {
     assert_compile_error(
         "fn main() -> i64 { 42? }",

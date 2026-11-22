@@ -103,9 +103,6 @@ impl Checker {
             for variant in &declaration.variants {
                 for payload_type in &variant.payload {
                     match self.resolve_type(payload_type, variant.span)? {
-                        ValueType::Unit => {
-                            return Err(at(variant.span, "enum payloads cannot have type `unit`"));
-                        }
                         ValueType::Reference(_) | ValueType::MutableReference(_) => {
                             return Err(at(variant.span, "references cannot be stored in enums"));
                         }
@@ -569,7 +566,8 @@ impl Checker {
             | Expr::Float32(..)
             | Expr::Float(..)
             | Expr::Bool(..)
-            | Expr::String(..) => {}
+            | Expr::String(..)
+            | Expr::Unit(..) => {}
             Expr::TraitCall { span, .. } => {
                 return Err(at(
                     *span,

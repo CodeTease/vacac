@@ -178,9 +178,6 @@ impl Checker {
                         "empty array literals require an array type annotation",
                     ));
                 }
-                if value_type == ValueType::Unit {
-                    return Err(at(*span, "cannot bind a value of type `unit`"));
-                }
                 let binding_type = match ty {
                     Some(ty) => self.resolve_type(ty, *span)?,
                     None => value_type,
