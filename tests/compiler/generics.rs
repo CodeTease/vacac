@@ -134,6 +134,26 @@ fn main() -> i64 {
 }
 
 #[test]
+fn match_patterns_keep_their_enum_when_specializing_the_scrutinee() {
+    assert_compile_error(
+        r#"
+        enum Box<T> { Some(T), None }
+        enum Other { A }
+        fn first<T>(value: Box<T>) -> i64 {
+            match value {
+                Other::A => { 0 },
+                Box::Some(_) => { 1 },
+                Box::None => { 0 },
+            }
+        }
+        fn main() -> i64 { first(Box::Some(7)) - 1 }
+        "#,
+        "generics-match-pattern-enum-mismatch",
+        "match pattern uses enum `Other`, expected `Box::<i64>`",
+    );
+}
+
+#[test]
 fn generic_inference_uses_enum_payload_bindings() {
     let result = compile_and_run(
         r#"

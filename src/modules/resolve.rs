@@ -53,13 +53,17 @@ impl<'a> Scope<'a> {
         name: &str,
         span: crate::ast::Span,
     ) -> Result<Option<String>, Diagnostic> {
-        if self.symbols.contains_key(name) || self.module_names.contains(name) {
-            return Ok(None);
-        }
         let (head, rest) = match name.split_once("::") {
             Some((head, rest)) => (head, Some(rest)),
             None => (name, None),
         };
+        let exact = self.symbols.contains_key(name) || self.module_names.contains(name);
+        // A qualified name that already names a declaration or module is
+        // canonical, so leave it alone. A bare name must prefer the current
+        // module's import alias over a root declaration of the same name.
+        if exact && rest.is_some() {
+            return Ok(None);
+        }
         let Some(import) = self.import(module, head) else {
             return Ok(None);
         };
@@ -607,6 +611,52 @@ fn resolve_reference(
     Ok(symbol.qualified.clone())
 }
 
+/// Resolve a name that `Scope::canonical` already rewrote to an import target.
+///
+/// The target is looked up exactly so it is never reinterpreted as another
+/// import alias.
+fn resolve_canonical_reference(
+    original: &str,
+    canonical: &str,
+    module: &str,
+    span: crate::ast::Span,
+    scope: &Scope<'_>,
+) -> Result<String, Diagnostic> {
+    let Some(symbol) = scope.symbols.get(canonical) else {
+        let (head, rest) = match original.split_once("::") {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (original, None),
+        };
+        if let Some(import) = scope.import(module, head) {
+            if let Some(member) = rest {
+                return Err(Diagnostic::at(
+                    span.into(),
+                    format!("module `{}` has no member `{member}`", import.target),
+                ));
+            }
+            return Err(Diagnostic::at(
+                span.into(),
+                format!(
+                    "`{original}` names {} `{}`, which is not valid here",
+                    import.kind, import.target
+                ),
+            ));
+        }
+        return Ok(if canonical.contains("::") {
+            canonical.into()
+        } else {
+            qualify(module, canonical)
+        });
+    };
+    if symbol.module != module && !symbol.public {
+        return Err(Diagnostic::at(
+            span.into(),
+            format!("{} `{original}` is private", symbol.kind),
+        ));
+    }
+    Ok(symbol.qualified.clone())
+}
+
 fn resolve_type(
     ty: &mut crate::ast::Type,
     module: &str,
@@ -890,6 +940,8 @@ impl<'a> Resolver<'a> {
                 args,
                 span,
             } => {
+                let original_name = name.clone();
+                let mut canonical = None;
                 if !self.is_local(name) {
                     if let Some((enum_name, variant_name)) =
                         self.scope.variant_import(self.module, name)
@@ -902,20 +954,28 @@ impl<'a> Resolver<'a> {
                                 "enum variant payload must contain at least one value",
                             ));
                         }
-                        let payload = std::mem::take(args);
+                        let mut payload = std::mem::take(args);
+                        let mut type_arguments = std::mem::take(type_arguments);
+                        for argument in &mut type_arguments {
+                            resolve_type(argument, self.module, *span, self.scope)?;
+                        }
+                        for value in &mut payload {
+                            self.resolve_expr(value)?;
+                        }
                         *expr = Expr::Variant {
                             enum_name,
-                            type_arguments: std::mem::take(type_arguments),
+                            type_arguments,
                             variant_name,
                             payload: Some(payload),
                             span: *span,
                         };
-                        return self.resolve_expr(expr);
+                        return Ok(());
                     }
-                    if !is_builtin(name)
-                        && let Some(canonical) = self.scope.canonical(self.module, name, *span)?
-                    {
-                        *name = canonical;
+                    if !is_builtin(name) {
+                        canonical = self.scope.canonical(self.module, name, *span)?;
+                        if let Some(canonical) = &canonical {
+                            *name = canonical.clone();
+                        }
                     }
                 }
                 if let Some((trait_name, function_name)) = name.rsplit_once("::") {
@@ -982,7 +1042,16 @@ impl<'a> Resolver<'a> {
                     return self.resolve_expr(expr);
                 }
                 if !self.is_local(name) && !is_builtin(name) {
-                    *name = resolve_reference(name, self.module, *span, self.scope)?;
+                    *name = match &canonical {
+                        Some(canonical) => resolve_canonical_reference(
+                            &original_name,
+                            canonical,
+                            self.module,
+                            *span,
+                            self.scope,
+                        )?,
+                        None => resolve_reference(name, self.module, *span, self.scope)?,
+                    };
                 }
                 for argument in type_arguments {
                     resolve_type(argument, self.module, *span, self.scope)?;
@@ -1016,11 +1085,15 @@ impl<'a> Resolver<'a> {
             Expr::Try { value, .. } => self.resolve_expr(value)?,
             Expr::Variant {
                 enum_name,
+                type_arguments,
                 payload,
                 span,
                 ..
             } => {
                 *enum_name = resolve_reference(enum_name, self.module, *span, self.scope)?;
+                for argument in type_arguments {
+                    resolve_type(argument, self.module, *span, self.scope)?;
+                }
                 if let Some(payload) = payload {
                     for value in payload {
                         self.resolve_expr(value)?;
@@ -1111,10 +1184,21 @@ fn resolve_pattern(
                 resolve_pattern(pattern, module, span, scope, in_match_arm)?;
             }
         }
-        MatchPattern::Struct { name, fields, .. } => {
+        MatchPattern::Struct {
+            name,
+            fields,
+            shorthand,
+            ..
+        } => {
             *name = resolve_reference(name, module, span, scope)?;
-            for (_, pattern, field_span) in fields {
-                resolve_pattern(pattern, module, *field_span, scope, in_match_arm)?;
+            for ((_, pattern, field_span), shorthand) in fields.iter_mut().zip(shorthand) {
+                resolve_pattern(
+                    pattern,
+                    module,
+                    *field_span,
+                    scope,
+                    in_match_arm && !*shorthand,
+                )?;
             }
         }
         MatchPattern::Variant {

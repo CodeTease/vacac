@@ -370,6 +370,9 @@ pub enum MatchPattern {
     Struct {
         name: String,
         fields: Vec<(String, MatchPattern, Span)>,
+        /// Parallel to `fields`: true when the field was written without a
+        /// `: pattern` and so is always a binding, even in a match arm.
+        shorthand: Vec<bool>,
         rest: bool,
     },
     Variant {

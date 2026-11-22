@@ -47,6 +47,32 @@ impl Specializer {
         Ok(())
     }
 
+    /// Rewrite a match-arm variant pattern to the scrutinee's concrete enum
+    /// instance when both name the same enum template.
+    pub(super) fn specialize_variant_pattern(
+        &self,
+        enum_name: &mut String,
+        concrete_name: &str,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let Some((template, _)) = self.enum_instances.get(concrete_name) else {
+            return Ok(());
+        };
+        let pattern_template = self
+            .enum_instances
+            .get(enum_name)
+            .map(|(template, _)| template.as_str())
+            .unwrap_or(enum_name.as_str());
+        if pattern_template != template {
+            return Err(Diagnostic::at(
+                span.into(),
+                format!("match pattern uses enum `{enum_name}`, expected `{concrete_name}`"),
+            ));
+        }
+        *enum_name = concrete_name.to_owned();
+        Ok(())
+    }
+
     pub(super) fn infer_pattern_bindings(
         &self,
         pattern: &mut MatchPattern,

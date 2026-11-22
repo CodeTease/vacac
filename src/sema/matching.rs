@@ -542,7 +542,9 @@ impl Checker {
                 }
                 Ok(())
             }
-            MatchPattern::Struct { name, fields, rest } => {
+            MatchPattern::Struct {
+                name, fields, rest, ..
+            } => {
                 let ValueType::Struct(struct_id) = ty else {
                     return Err(at(
                         span,

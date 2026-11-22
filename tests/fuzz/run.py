@@ -118,7 +118,9 @@ def make_deep_modules(temporary_directory):
     chain = [f"level_{index}" for index in range(depth)]
     qualified = "::".join(chain)
     (project / "main.vca").write_text(
-        f"mod {chain[0]};\nfn main() -> i64 {{ {qualified}::value() - 42 }}\n",
+        f"mod {chain[0]};\n"
+        f"fn deepest() -> i64 {{ {qualified}::value() }}\n"
+        f"fn main() -> i64 {{ {chain[0]}::value() + deepest() - 84 }}\n",
         encoding="utf-8",
     )
     for index, module in enumerate(chain):

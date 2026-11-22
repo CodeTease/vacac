@@ -582,6 +582,118 @@ fn directly_imported_enum_variants_work_in_values_and_patterns() {
 }
 
 #[test]
+fn direct_variant_import_keeps_its_enum_when_the_module_reuses_the_name() {
+    let (directory, compile) = module_project(
+        "imported-variant-shadowed-enum",
+        concat!(
+            "mod app;\n",
+            "pub enum Shape { Circle(i64), Square }\n",
+            "fn main() -> i64 { app::run() - 3 }\n",
+        ),
+        &[(
+            "app.vca",
+            concat!(
+                "use Shape::Circle;\n",
+                "pub enum Shape { Other }\n",
+                "pub fn run() -> i64 {\n",
+                "    let round = Circle(3);\n",
+                "    match round { Circle(value) => { value }, _ => { 0 } }\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_alias_shadows_a_root_declaration_of_the_same_name() {
+    let (directory, compile) = module_project(
+        "import-alias-shadows-root",
+        concat!(
+            "mod app;\n",
+            "mod other;\n",
+            "pub enum Shape { Root }\n",
+            "fn main() -> i64 { app::run() - 1 }\n",
+        ),
+        &[
+            (
+                "app.vca",
+                concat!(
+                    "use other::Shape as Shape;\n",
+                    "pub fn run() -> i64 { let value: Shape = Shape::Mine; 1 }\n",
+                ),
+            ),
+            ("other.vca", "pub enum Shape { Mine }\n"),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn explicit_variant_type_arguments_resolve_imported_types() {
+    let (directory, compile) = module_project(
+        "variant-imported-type-argument",
+        concat!(
+            "mod pack;\n",
+            "use pack::Pack;\n",
+            "enum Wrapper<T> { Value(T) }\n",
+            "fn main() -> i64 {\n",
+            "    let value = Wrapper::<Pack>::Value(Pack { n: 7 });\n",
+            "    match value { Wrapper::Value(inner) => { inner.n } } - 7\n",
+            "}\n",
+        ),
+        &[("pack.vca", "pub struct Pack { n: i64 }\n")],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn shorthand_struct_field_patterns_are_not_promoted_to_variants() {
+    let (directory, compile) = module_project(
+        "shorthand-field-pattern",
+        concat!(
+            "use Shape::Circle;\n",
+            "enum Shape { Circle, Square }\n",
+            "struct Point { Circle: i64 }\n",
+            "fn main() -> i64 {\n",
+            "    let point = Point { Circle: 7 };\n",
+            "    match point { Point { Circle } => { Circle } } - 7\n",
+            "}\n",
+        ),
+        &[],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn imported_functions_and_globals_work_as_values() {
     let (directory, compile) = module_project(
         "imported-values",
@@ -647,6 +759,19 @@ fn imports_are_private_to_the_declaring_module() {
         "{}",
         String::from_utf8_lossy(&compile.stderr)
     );
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "import-scope-root-only",
+        "mod values;\nmod reader;\nuse values::ANSWER;\nfn main() -> i64 { reader::read() }\n",
+        &[
+            ("values.vca", "pub const ANSWER: i64 = 42;\n"),
+            ("reader.vca", "pub fn read() -> i64 { ANSWER }\n"),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "{}", stderr);
+    assert!(stderr.contains("undefined variable `ANSWER`"), "{stderr}");
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -757,6 +882,41 @@ fn imported_module_alias_errors_name_the_missing_member() {
         stderr.contains("module `math` has no member `Missing`"),
         "{stderr}"
     );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn module_alias_targets_are_not_reinterpreted_as_other_aliases() {
+    let (directory, compile) = module_project(
+        "import-alias-target-not-reexpanded",
+        concat!(
+            "mod app;\n",
+            "mod a;\n",
+            "mod q;\n",
+            "fn main() -> i64 { app::run() }\n",
+        ),
+        &[
+            (
+                "app.vca",
+                concat!(
+                    "use q::r as a;\n",
+                    "use a::b as o;\n",
+                    "pub fn run() -> i64 { o::missing() }\n",
+                ),
+            ),
+            ("a.vca", "mod b;\n"),
+            ("a/b.vca", "pub fn make() -> i64 { 42 }\n"),
+            ("q.vca", "mod r;\n"),
+            ("q/r.vca", "pub fn make() -> i64 { 0 }\n"),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("module `a::b` has no member `missing`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("module `q::r`"), "{stderr}");
     let _ = fs::remove_dir_all(directory);
 }
 
