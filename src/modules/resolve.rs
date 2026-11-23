@@ -828,7 +828,14 @@ impl<'a> Resolver<'a> {
                             if let Some(canonical) =
                                 self.scope.canonical(self.module, name, *span)?
                             {
-                                *name = canonical;
+                                *name = match self.scope.symbols.get(&canonical) {
+                                    Some(symbol) if symbol.kind == "global" => root_value_identity(
+                                        &symbol.qualified,
+                                        &symbol.module,
+                                        symbol.kind,
+                                    ),
+                                    _ => canonical,
+                                };
                             }
                         }
                         self.resolve_expr(value)?;
@@ -1173,11 +1180,12 @@ impl<'a> Resolver<'a> {
                     }
                     return Ok(());
                 }
+                // Resolve a complete value path before probing its prefix as an enum.
                 if self
                     .scope
                     .symbols
                     .get(name)
-                    .is_some_and(|symbol| symbol.kind == "function")
+                    .is_some_and(|symbol| matches!(symbol.kind, "function" | "global"))
                 {
                     *name = resolve_reference(name, self.module, *span, self.scope)?;
                     return Ok(());

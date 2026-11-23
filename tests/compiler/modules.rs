@@ -971,6 +971,73 @@ fn module_prefix_that_is_also_an_import_alias_resolves_function_calls() {
 }
 
 #[test]
+fn module_prefix_that_is_also_an_import_alias_resolves_global_reads() {
+    let (directory, compile) = module_project(
+        "import-module-prefix-global-read",
+        "mod math;\nmod m;\nfn main() -> i64 { m::run() }\n",
+        &[
+            (
+                "math.vca",
+                "pub const VALUE: i64 = 21;\npub enum Kind { Ready }\n",
+            ),
+            (
+                "m.vca",
+                concat!(
+                    "use math as math;\n",
+                    "use math as alias;\n",
+                    "use math::Kind as Choice;\n",
+                    "pub fn run() -> i64 {\n",
+                    "    let value: Choice = Choice::Ready;\n",
+                    "    match value { Choice::Ready => { math::VALUE + alias::VALUE - 42 } }\n",
+                    "}\n",
+                ),
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn assignment_to_imported_root_global_is_not_captured_by_a_same_named_local() {
+    let (directory, compile) = module_project(
+        "import-root-global-assignment",
+        concat!(
+            "mod m;\n",
+            "pub let counter: i64 = 1;\n",
+            "fn main() -> i64 { m::update(); print_i64(counter); 0 }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use counter as imported;\n",
+                "pub fn update() -> unit {\n",
+                "    let counter: i64 = 10;\n",
+                "    counter = 11;\n",
+                "    imported = 42;\n",
+                "    print_i64(counter);\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "11\n42\n");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn import_alias_to_root_function_is_not_captured_by_a_same_named_local() {
     let (directory, compile) = module_project(
         "import-root-alias-local-target-name",
