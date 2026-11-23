@@ -58,10 +58,20 @@ impl<'a> Scope<'a> {
             None => (name, None),
         };
         let exact = self.symbols.contains_key(name) || self.module_names.contains(name);
-        // A qualified name that already names a declaration or module is
-        // canonical, so leave it alone. A bare name must prefer the current
+        // A qualified name that already names a declaration is canonical, so
+        // leave it alone. A qualified name that only names a module is a valid
+        // prefix, not a declaration: let it proceed so an import alias used as
+        // the prefix is rewritten to its target. But if an import already maps
+        // to this exact module path, the name is a canonical import target and
+        // must not be reinterpreted as another alias. The enum-constructor probe
+        // treats a module prefix as "not an enum" and falls through to
+        // function-reference resolution. A bare name must prefer the current
         // module's import alias over a root declaration of the same name.
-        if exact && rest.is_some() {
+        let is_import_target = self
+            .imports
+            .get(module)
+            .is_some_and(|imports| imports.values().any(|import| import.target == name));
+        if exact && rest.is_some() && (!self.module_names.contains(name) || is_import_target) {
             return Ok(None);
         }
         let Some(import) = self.import(module, head) else {
@@ -654,7 +664,27 @@ fn resolve_canonical_reference(
             format!("{} `{original}` is private", symbol.kind),
         ));
     }
-    Ok(symbol.qualified.clone())
+    Ok(root_value_identity(
+        &symbol.qualified,
+        &symbol.module,
+        symbol.kind,
+    ))
+}
+
+/// Give an imported root value declaration an identity that cannot be mistaken
+/// for a local binding.
+///
+/// Root declarations keep bare names, so an alias that targets one would
+/// otherwise collapse to that bare name and be captured by a same-named local
+/// in sema, codegen, and generic specialization. A leading `::` marks the root
+/// namespace explicitly; only functions, extern functions, and globals are
+/// values that can collide with locals (types and traits are not locals).
+fn root_value_identity(qualified: &str, owner_module: &str, kind: &str) -> String {
+    if owner_module.is_empty() && matches!(kind, "function" | "global") {
+        format!("::{qualified}")
+    } else {
+        qualified.to_owned()
+    }
 }
 
 fn resolve_type(
@@ -942,7 +972,10 @@ impl<'a> Resolver<'a> {
             } => {
                 let original_name = name.clone();
                 let mut canonical = None;
-                if !self.is_local(name) {
+                // Locality is decided on the written name: an import alias is
+                // not a local even if its target shares a local's name.
+                let name_is_local = self.is_local(name);
+                if !name_is_local {
                     if let Some((enum_name, variant_name)) =
                         self.scope.variant_import(self.module, name)
                     {
@@ -1010,17 +1043,23 @@ impl<'a> Resolver<'a> {
                 }
                 let enum_constructor =
                     if let Some((enum_name, variant_name)) = name.rsplit_once("::") {
+                        // The prefix may resolve to a module (a valid call
+                        // prefix, not an enum). Tolerate that and fall through to
+                        // function-reference resolution instead of rejecting it.
                         let resolved_enum =
-                            resolve_reference(enum_name, self.module, *span, self.scope)?;
-                        let is_enum = self
-                            .scope
-                            .symbols
-                            .get(&resolved_enum)
-                            .is_some_and(|symbol| symbol.kind == "enum")
-                            && self
-                                .enum_names
-                                .contains(enum_name.rsplit("::").next().unwrap_or(enum_name));
-                        is_enum.then_some((resolved_enum, variant_name.to_owned()))
+                            resolve_reference(enum_name, self.module, *span, self.scope).ok();
+                        let is_enum = resolved_enum.as_ref().is_some_and(|resolved| {
+                            self.scope
+                                .symbols
+                                .get(resolved)
+                                .is_some_and(|symbol| symbol.kind == "enum")
+                        }) && self
+                            .enum_names
+                            .contains(enum_name.rsplit("::").next().unwrap_or(enum_name));
+                        match resolved_enum {
+                            Some(resolved) if is_enum => Some((resolved, variant_name.to_owned())),
+                            _ => None,
+                        }
                     } else {
                         None
                     };
@@ -1041,7 +1080,7 @@ impl<'a> Resolver<'a> {
                     };
                     return self.resolve_expr(expr);
                 }
-                if !self.is_local(name) && !is_builtin(name) {
+                if !name_is_local && !is_builtin(&original_name) {
                     *name = match &canonical {
                         Some(canonical) => resolve_canonical_reference(
                             &original_name,
@@ -1117,10 +1156,21 @@ impl<'a> Resolver<'a> {
                     };
                     return Ok(());
                 }
-                if let Some(canonical) = self.scope.canonical(self.module, name, *span)? {
-                    *name = canonical;
+                let canonical = self.scope.canonical(self.module, name, *span)?;
+                if let Some(canonical) = &canonical {
+                    *name = canonical.clone();
                 }
                 if !name.contains("::") {
+                    // A bare name that came from an import alias targets a root
+                    // declaration; give it a root-qualified identity so a
+                    // same-named local cannot capture it. Other bare names are
+                    // locals or same-module globals and stay as written.
+                    if canonical.is_some()
+                        && let Some(symbol) = self.scope.symbols.get(name.as_str())
+                        && matches!(symbol.kind, "function" | "global")
+                    {
+                        *name = root_value_identity(&symbol.qualified, &symbol.module, symbol.kind);
+                    }
                     return Ok(());
                 }
                 if self

@@ -649,6 +649,12 @@ impl Checker {
     }
 
     pub(super) fn find_global_name(&self, name: &str) -> Option<String> {
+        if let Some(root) = name.strip_prefix("::") {
+            return self
+                .global_declarations
+                .contains_key(root)
+                .then(|| root.to_owned());
+        }
         let qualified = if self.module_context.is_empty() {
             name.to_owned()
         } else {
@@ -664,6 +670,9 @@ impl Checker {
     }
 
     pub(super) fn find_function_name(&self, name: &str) -> Option<String> {
+        if let Some(root) = name.strip_prefix("::") {
+            return self.signatures.contains_key(root).then(|| root.to_owned());
+        }
         let qualified = if self.module_context.is_empty() {
             name.to_owned()
         } else {

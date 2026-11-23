@@ -942,3 +942,117 @@ fn import_paths_resolve_relative_to_the_declaring_module() {
     assert_eq!(run.status.code(), Some(0));
     let _ = fs::remove_dir_all(directory);
 }
+
+#[test]
+fn module_prefix_that_is_also_an_import_alias_resolves_function_calls() {
+    let (directory, compile) = module_project(
+        "import-module-prefix-self-alias",
+        concat!("mod math;\n", "mod m;\n", "fn main() -> i64 { m::run() }\n",),
+        &[
+            ("math.vca", "pub fn pick(value: i64) -> i64 { value + 1 }\n"),
+            (
+                "m.vca",
+                concat!(
+                    "use math as math;\n",
+                    "use math as alias;\n",
+                    "pub fn run() -> i64 { math::pick(20) + alias::pick(20) - 42 }\n",
+                ),
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_alias_to_root_function_is_not_captured_by_a_same_named_local() {
+    let (directory, compile) = module_project(
+        "import-root-alias-local-target-name",
+        concat!(
+            "mod m;\n",
+            "pub fn pick(value: i64) -> i64 { value + 1 }\n",
+            "fn main() -> i64 { m::run(10) }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use pick as imported;\n",
+                "pub fn run(pick: i64) -> i64 {\n",
+                "    let callable: fn(i64) -> i64 = imported;\n",
+                "    imported(40) + callable(1) + pick - 53\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_alias_to_generic_root_function_specializes_with_a_same_named_local() {
+    let (directory, compile) = module_project(
+        "import-root-generic-alias-local-target-name",
+        concat!(
+            "mod m;\n",
+            "pub fn ident<T>(value: T) -> T { value }\n",
+            "fn main() -> i64 { m::run(3) }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use ident as brought;\n",
+                "pub fn run(ident: i64) -> i64 { brought(38) + ident - 41 }\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_local_named_like_an_import_alias_still_shadows_it() {
+    let (directory, compile) = module_project(
+        "import-alias-shadowed-by-local",
+        concat!(
+            "mod m;\n",
+            "pub fn pick(value: i64) -> i64 { value + 1 }\n",
+            "fn main() -> i64 { m::run() }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use pick as imported;\n",
+                "pub fn run() -> i64 {\n",
+                "    let imported: fn(i64) -> i64 = pick;\n",
+                "    imported(41) - 42\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}

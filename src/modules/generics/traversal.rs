@@ -282,11 +282,14 @@ impl Specializer {
                 span,
             } => {
                 let local_callee = variables.contains_key(name);
+                // A leading `::` is an imported root declaration's identity; look
+                // it up exactly so it is not confused with a same-named local.
+                let lookup_name = name.strip_prefix("::").unwrap_or(name.as_str());
                 let expected_parameters = match variables.get(name) {
                     Some(Type::Function(parameters, _)) => Some(parameters.clone()),
                     _ => self
                         .signatures
-                        .get(name)
+                        .get(lookup_name)
                         .map(|(parameters, _)| parameters.clone()),
                 };
                 for (index, argument) in args.iter_mut().enumerate() {
@@ -310,8 +313,8 @@ impl Specializer {
                 for argument in type_arguments.iter_mut() {
                     *argument = self.normalize_type(argument.clone(), substitutions, *span)?;
                 }
-                if !local_callee && self.generic_functions.contains_key(name) {
-                    let template = self.generic_functions.get(name).unwrap().clone();
+                if !local_callee && self.generic_functions.contains_key(lookup_name) {
+                    let template = self.generic_functions.get(lookup_name).unwrap().clone();
                     if args.len() != template.params.len() {
                         return Err(Diagnostic::at(
                             (*span).into(),
@@ -383,7 +386,7 @@ impl Specializer {
                             self.unify(&parameter.ty, &actual, &mut checked, *span)?;
                         }
                     }
-                    *name = self.instantiate_function(name, resolved_arguments, *span)?;
+                    *name = self.instantiate_function(lookup_name, resolved_arguments, *span)?;
                     type_arguments.clear();
                 } else if !type_arguments.is_empty() {
                     return Err(Diagnostic::at(

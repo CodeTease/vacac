@@ -163,8 +163,13 @@ impl Specializer {
                 if let Some(ty) = variables.get(name) {
                     return Some(ty.clone());
                 }
-                let function_name = if self.signatures.contains_key(name) {
-                    Some(name.clone())
+                // A leading `::` is an imported root declaration's identity; look
+                // it up exactly so it is not confused with a same-named local.
+                let lookup_name = name.strip_prefix("::").unwrap_or(name);
+                let function_name = if self.signatures.contains_key(lookup_name) {
+                    Some(lookup_name.to_owned())
+                } else if name.starts_with("::") {
+                    None
                 } else {
                     let qualified = if self.module_context.is_empty() {
                         name.clone()
@@ -183,15 +188,18 @@ impl Specializer {
                 if !visiting_globals.insert(name.clone()) {
                     return None;
                 }
-                let qualified = if self.module_context.is_empty() {
-                    name.clone()
+                let global = if name.starts_with("::") {
+                    self.global_declarations.get(lookup_name)
                 } else {
-                    format!("{}::{name}", self.module_context)
+                    let qualified = if self.module_context.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{}::{name}", self.module_context)
+                    };
+                    self.global_declarations
+                        .get(name)
+                        .or_else(|| self.global_declarations.get(&qualified))
                 };
-                let global = self
-                    .global_declarations
-                    .get(name)
-                    .or_else(|| self.global_declarations.get(&qualified));
                 let Some(global) = global else {
                     visiting_globals.remove(name);
                     return None;
@@ -241,7 +249,10 @@ impl Specializer {
             }
             Expr::Call { name, .. } => match variables.get(name) {
                 Some(Type::Function(_, result)) => Some((**result).clone()),
-                _ => self.signatures.get(name).map(|(_, result)| result.clone()),
+                _ => self
+                    .signatures
+                    .get(name.strip_prefix("::").unwrap_or(name))
+                    .map(|(_, result)| result.clone()),
             },
             Expr::TraitCall { .. } => None,
             Expr::Lambda {
