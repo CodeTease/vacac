@@ -152,9 +152,8 @@ impl Specializer {
                         MatchPattern::Variant { enum_name, .. },
                         Some(Type::Named(concrete_name)),
                     ) = (&mut arm.pattern, matched_type.as_ref())
-                        && self.enum_instances.contains_key(concrete_name)
                     {
-                        *enum_name = concrete_name.clone();
+                        self.specialize_variant_pattern(enum_name, concrete_name, arm.span)?;
                     }
                     self.normalize_pattern(&mut arm.pattern, substitutions, *match_span)?;
                     if let Some(matched_type) = &matched_type {

@@ -542,7 +542,9 @@ impl Checker {
                 }
                 Ok(())
             }
-            MatchPattern::Struct { name, fields, rest } => {
+            MatchPattern::Struct {
+                name, fields, rest, ..
+            } => {
                 let ValueType::Struct(struct_id) = ty else {
                     return Err(at(
                         span,
@@ -605,6 +607,10 @@ impl Checker {
             MatchPattern::Variant { .. } => Err(at(
                 span,
                 "enum variant pattern is not valid in this pattern position",
+            )),
+            MatchPattern::ImportedVariant { .. } => Err(at(
+                span,
+                "imported enum variant pattern reached semantic analysis",
             )),
             MatchPattern::Bool(_)
             | MatchPattern::I64(_)

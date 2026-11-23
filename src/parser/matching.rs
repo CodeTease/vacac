@@ -95,12 +95,23 @@ impl Parser {
         }
         if self.take(&TokenKind::LParen) {
             if path.len() == 1 {
-                let binding = path.pop().expect("path is non-empty");
-                if !self.at(&TokenKind::RParen) {
-                    return Err(unexpected(self.peek(), "`)` after grouped pattern"));
+                let name = path.pop().expect("path is non-empty");
+                if self.at(&TokenKind::RParen) {
+                    self.advance();
+                    return Ok(MatchPattern::Binding(name));
                 }
-                self.advance();
-                return Ok(MatchPattern::Binding(binding));
+                if self.import_names.contains(&name) {
+                    let mut bindings = Vec::new();
+                    loop {
+                        bindings.push(self.parse_pattern()?);
+                        if !self.take(&TokenKind::Comma) || self.at(&TokenKind::RParen) {
+                            break;
+                        }
+                    }
+                    self.consume(&TokenKind::RParen, "`)` after enum payload pattern")?;
+                    return Ok(MatchPattern::ImportedVariant { name, bindings });
+                }
+                return Err(unexpected(self.peek(), "`)` after grouped pattern"));
             }
             let variant_name = path.pop().expect("non-empty path");
             let enum_name = path.join("::");
@@ -124,6 +135,7 @@ impl Parser {
         if self.take(&TokenKind::LBrace) {
             let name = path.join("::");
             let mut fields = Vec::new();
+            let mut shorthand = Vec::new();
             let mut rest = false;
             if !self.at(&TokenKind::RBrace) {
                 loop {
@@ -139,12 +151,14 @@ impl Parser {
                     }
                     let field_token = self.peek().clone();
                     let field_name = self.take_ident("struct field pattern")?;
-                    let pattern = if self.take(&TokenKind::Colon) {
+                    let explicit = self.take(&TokenKind::Colon);
+                    let pattern = if explicit {
                         self.parse_pattern()?
                     } else {
                         MatchPattern::Binding(field_name.clone())
                     };
                     fields.push((field_name, pattern, Span::from(&field_token)));
+                    shorthand.push(!explicit);
                     if !self.take(&TokenKind::Comma) {
                         break;
                     }
@@ -154,7 +168,12 @@ impl Parser {
                 }
             }
             self.consume(&TokenKind::RBrace, "`}` after struct pattern")?;
-            return Ok(MatchPattern::Struct { name, fields, rest });
+            return Ok(MatchPattern::Struct {
+                name,
+                fields,
+                shorthand,
+                rest,
+            });
         }
         if path.len() > 1 {
             let variant_name = path.pop().expect("path has multiple segments");

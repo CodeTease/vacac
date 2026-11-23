@@ -1,0 +1,3 @@
+use absent::value;
+
+fn main() -> i64 { 0 }

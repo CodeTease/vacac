@@ -484,3 +484,642 @@ fn diagnostics_from_child_modules_include_the_child_source_path() {
     assert!(stderr.contains("undefined variable `missing`"), "{stderr}");
     let _ = fs::remove_dir_all(directory);
 }
+
+#[test]
+fn imports_alias_functions_globals_types_traits_and_enums() {
+    let (directory, compile) = module_project(
+        "imports-aliasing",
+        concat!(
+            "mod math;\n",
+            "use math as m;\n",
+            "use math::ANSWER;\n",
+            "use math::Counter;\n",
+            "use math::Color as Hue;\n",
+            "use math::Label as Labelled;\n",
+            "use math::increment as bump;\n",
+            "use math::COUNTER;\n",
+            "const NEXT: i64 = ANSWER + 1;\n",
+            "fn describe<T: Labelled>(value: T) -> i64 { Labelled::label(value) }\n",
+            "fn main() -> i64 {\n",
+            "    let counter = Counter { value: bump(ANSWER) };\n",
+            "    COUNTER = NEXT;\n",
+            "    let hue = Hue::Green;\n",
+            "    let extra = match hue {\n",
+            "        Hue::Red => { 0 },\n",
+            "        Hue::Green => { 1 },\n",
+            "    };\n",
+            "    print_i64(m::increment(ANSWER));\n",
+            "    describe(counter.value) + extra + COUNTER - 86\n",
+            "}\n",
+        ),
+        &[(
+            "math.vca",
+            concat!(
+                "pub const ANSWER: i64 = 41;\n",
+                "pub let COUNTER: i64 = 0;\n",
+                "pub struct Counter { value: i64 }\n",
+                "pub enum Color { Red, Green }\n",
+                "pub trait Label { fn label(value: Self) -> i64; }\n",
+                "impl Label for i64 { fn label(value: Self) -> i64 { value + 1 } }\n",
+                "pub fn increment(value: i64) -> i64 { value + 1 }\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    // `bump(41)` is 42, `describe(42)` is 43, `extra` is 1, `COUNTER` is 42.
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "42\n");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn directly_imported_enum_variants_work_in_values_and_patterns() {
+    let (directory, compile) = module_project(
+        "imported-variants",
+        concat!(
+            "mod shapes;\n",
+            "use shapes::Shape;\n",
+            "use shapes::Shape::Circle;\n",
+            "use shapes::Shape::Square;\n",
+            "use shapes::size;\n",
+            "fn main() -> i64 {\n",
+            "    let round = Circle(3);\n",
+            "    let flat: Shape = Square;\n",
+            "    let radius = match round {\n",
+            "        Circle(value) => { value },\n",
+            "        Square => { 0 },\n",
+            "    };\n",
+            "    let square_size = match flat {\n",
+            "        Circle(_) => { 1 },\n",
+            "        Square => { size(flat) },\n",
+            "    };\n",
+            "    radius + square_size - 7\n",
+            "}\n",
+        ),
+        &[(
+            "shapes.vca",
+            concat!(
+                "pub enum Shape { Circle(i64), Square }\n",
+                "pub fn size(shape: Shape) -> i64 {\n",
+                "    match shape { Shape::Circle(radius) => { radius }, Shape::Square => { 4 } }\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn direct_variant_import_keeps_its_enum_when_the_module_reuses_the_name() {
+    let (directory, compile) = module_project(
+        "imported-variant-shadowed-enum",
+        concat!(
+            "mod app;\n",
+            "pub enum Shape { Circle(i64), Square }\n",
+            "fn main() -> i64 { app::run() - 3 }\n",
+        ),
+        &[(
+            "app.vca",
+            concat!(
+                "use Shape::Circle;\n",
+                "pub enum Shape { Other }\n",
+                "pub fn run() -> i64 {\n",
+                "    let round = Circle(3);\n",
+                "    match round { Circle(value) => { value }, _ => { 0 } }\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_alias_shadows_a_root_declaration_of_the_same_name() {
+    let (directory, compile) = module_project(
+        "import-alias-shadows-root",
+        concat!(
+            "mod app;\n",
+            "mod other;\n",
+            "pub enum Shape { Root }\n",
+            "fn main() -> i64 { app::run() - 1 }\n",
+        ),
+        &[
+            (
+                "app.vca",
+                concat!(
+                    "use other::Shape as Shape;\n",
+                    "pub fn run() -> i64 { let value: Shape = Shape::Mine; 1 }\n",
+                ),
+            ),
+            ("other.vca", "pub enum Shape { Mine }\n"),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn explicit_variant_type_arguments_resolve_imported_types() {
+    let (directory, compile) = module_project(
+        "variant-imported-type-argument",
+        concat!(
+            "mod pack;\n",
+            "use pack::Pack;\n",
+            "enum Wrapper<T> { Value(T) }\n",
+            "fn main() -> i64 {\n",
+            "    let value = Wrapper::<Pack>::Value(Pack { n: 7 });\n",
+            "    match value { Wrapper::Value(inner) => { inner.n } } - 7\n",
+            "}\n",
+        ),
+        &[("pack.vca", "pub struct Pack { n: i64 }\n")],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn shorthand_struct_field_patterns_are_not_promoted_to_variants() {
+    let (directory, compile) = module_project(
+        "shorthand-field-pattern",
+        concat!(
+            "use Shape::Circle;\n",
+            "enum Shape { Circle, Square }\n",
+            "struct Point { Circle: i64 }\n",
+            "fn main() -> i64 {\n",
+            "    let point = Point { Circle: 7 };\n",
+            "    match point { Point { Circle } => { Circle } } - 7\n",
+            "}\n",
+        ),
+        &[],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn imported_functions_and_globals_work_as_values() {
+    let (directory, compile) = module_project(
+        "imported-values",
+        concat!(
+            "mod math;\n",
+            "use math::increment;\n",
+            "use math::STEP;\n",
+            "fn main() -> i64 {\n",
+            "    let callable: fn(i64) -> i64 = increment;\n",
+            "    callable(STEP) - 42\n",
+            "}\n",
+        ),
+        &[(
+            "math.vca",
+            "pub const STEP: i64 = 41;\npub fn increment(value: i64) -> i64 { value + 1 }\n",
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn imports_are_private_to_the_declaring_module() {
+    let (directory, compile) = module_project(
+        "import-scope",
+        "mod values;\nmod reader;\nfn main() -> i64 { reader::read() - 42 }\n",
+        &[
+            ("values.vca", "pub const ANSWER: i64 = 42;\n"),
+            (
+                "reader.vca",
+                "use values::ANSWER;\npub fn read() -> i64 { ANSWER }\n",
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "import-scope-leak",
+        "mod values;\nuse values::ANSWER;\nmod reader;\nfn main() -> i64 { ANSWER + reader::read() - 84 }\n",
+        &[
+            ("values.vca", "pub const ANSWER: i64 = 42;\n"),
+            (
+                "reader.vca",
+                "use values::ANSWER;\npub fn read() -> i64 { ANSWER }\n",
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let _ = fs::remove_dir_all(directory);
+
+    let (directory, compile) = module_project(
+        "import-scope-root-only",
+        "mod values;\nmod reader;\nuse values::ANSWER;\nfn main() -> i64 { reader::read() }\n",
+        &[
+            ("values.vca", "pub const ANSWER: i64 = 42;\n"),
+            ("reader.vca", "pub fn read() -> i64 { ANSWER }\n"),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "{}", stderr);
+    assert!(stderr.contains("undefined variable `ANSWER`"), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_collisions_with_local_declarations_and_modules_are_rejected() {
+    for (name, root, expected) in [
+        (
+            "import-duplicate",
+            "mod math;\nuse math::value;\nuse math::other as value;\nfn main() -> i64 { value() }\n",
+            "import name `value` is imported more than once",
+        ),
+        (
+            "import-local-declaration",
+            "mod math;\nuse math::value;\nfn value() -> i64 { 3 }\nfn main() -> i64 { value() }\n",
+            "import name `value` conflicts with function `value` declared in this module",
+        ),
+        (
+            "import-module-name",
+            "mod math;\nuse math::value as math;\nfn main() -> i64 { 0 }\n",
+            "import name `math` conflicts with module `math`",
+        ),
+        (
+            "import-reserved",
+            "mod math;\nuse math::value as Result;\nfn main() -> i64 { 0 }\n",
+            "`Result` is a reserved compiler-provided prelude enum",
+        ),
+    ] {
+        let (directory, compile) = module_project(
+            name,
+            root,
+            &[(
+                "math.vca",
+                "pub fn value() -> i64 { 1 }\npub fn other() -> i64 { 2 }\n",
+            )],
+        );
+        let stderr = String::from_utf8_lossy(&compile.stderr);
+        assert!(!compile.status.success(), "{name} compiled: {stderr}");
+        assert!(stderr.contains(expected), "{name}: {stderr}");
+        let _ = fs::remove_dir_all(directory);
+    }
+}
+
+#[test]
+fn private_and_unknown_import_targets_are_rejected() {
+    for (name, root, module, expected) in [
+        (
+            "import-private-function",
+            "mod math;\nuse math::hidden;\nfn main() -> i64 { 0 }\n",
+            "fn hidden() -> i64 { 1 }\n",
+            "function `math::hidden` is private",
+        ),
+        (
+            "import-private-type",
+            "mod math;\nuse math::Secret;\nfn main() -> i64 { 0 }\n",
+            "struct Secret { value: i64 }\n",
+            "type `math::Secret` is private",
+        ),
+        (
+            "import-private-variant",
+            "mod math;\nuse math::Kind::Red;\nfn main() -> i64 { 0 }\n",
+            "enum Kind { Red, Blue }\n",
+            "enum `math::Kind` is private",
+        ),
+        (
+            "import-unknown",
+            "mod math;\nuse math::missing;\nfn main() -> i64 { 0 }\n",
+            "pub fn value() -> i64 { 1 }\n",
+            "cannot import `math::missing`: no module or declaration has that path",
+        ),
+    ] {
+        let (directory, compile) = module_project(name, root, &[("math.vca", module)]);
+        let stderr = String::from_utf8_lossy(&compile.stderr);
+        assert!(!compile.status.success(), "{name} compiled: {stderr}");
+        assert!(stderr.contains(expected), "{name}: {stderr}");
+        let _ = fs::remove_dir_all(directory);
+    }
+}
+
+#[test]
+fn import_syntax_errors_recover_across_root_and_modules() {
+    let (directory, compile) = module_project(
+        "import-recovery",
+        "mod m;\nuse m::;\nuse broken\nfn main() -> i64 { 0 }\n",
+        &[("m.vca", "use ;\npub fn value() -> i64 { 1 }\n")],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("expected name after `::` in import"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("expected `;` after import"), "{stderr}");
+    assert!(stderr.contains("expected imported name"), "{stderr}");
+    assert_eq!(stderr.matches("vacac:").count(), 3, "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn imported_module_alias_errors_name_the_missing_member() {
+    let (directory, compile) = module_project(
+        "import-missing-member",
+        "mod math;\nuse math as m;\nfn main() -> i64 { let value: m::Missing = 0; 0 }\n",
+        &[("math.vca", "pub struct Point { x: i64 }\n")],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(
+        stderr.contains("module `math` has no member `Missing`"),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn module_alias_targets_are_not_reinterpreted_as_other_aliases() {
+    let (directory, compile) = module_project(
+        "import-alias-target-not-reexpanded",
+        concat!(
+            "mod app;\n",
+            "mod a;\n",
+            "mod q;\n",
+            "fn main() -> i64 { app::run() }\n",
+        ),
+        &[
+            (
+                "app.vca",
+                concat!(
+                    "use q::r as a;\n",
+                    "use a::b as o;\n",
+                    "pub fn run() -> i64 { o::missing() }\n",
+                ),
+            ),
+            ("a.vca", "mod b;\n"),
+            ("a/b.vca", "pub fn make() -> i64 { 42 }\n"),
+            ("q.vca", "mod r;\n"),
+            ("q/r.vca", "pub fn make() -> i64 { 0 }\n"),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("module `a::b` has no member `missing`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("module `q::r`"), "{stderr}");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_paths_resolve_relative_to_the_declaring_module() {
+    let (directory, compile) = module_project(
+        "import-relative-path",
+        "mod outer;\nuse outer::nested::value;\nfn main() -> i64 { outer::run() + value() - 84 }\n",
+        &[
+            (
+                "outer.vca",
+                "mod nested;\nuse nested::value;\npub fn run() -> i64 { value() }\n",
+            ),
+            ("outer/nested.vca", "pub fn value() -> i64 { 42 }\n"),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn module_prefix_that_is_also_an_import_alias_resolves_function_calls() {
+    let (directory, compile) = module_project(
+        "import-module-prefix-self-alias",
+        concat!("mod math;\n", "mod m;\n", "fn main() -> i64 { m::run() }\n",),
+        &[
+            ("math.vca", "pub fn pick(value: i64) -> i64 { value + 1 }\n"),
+            (
+                "m.vca",
+                concat!(
+                    "use math as math;\n",
+                    "use math as alias;\n",
+                    "pub fn run() -> i64 { math::pick(20) + alias::pick(20) - 42 }\n",
+                ),
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn module_prefix_that_is_also_an_import_alias_resolves_global_reads() {
+    let (directory, compile) = module_project(
+        "import-module-prefix-global-read",
+        "mod math;\nmod m;\nfn main() -> i64 { m::run() }\n",
+        &[
+            (
+                "math.vca",
+                "pub const VALUE: i64 = 21;\npub enum Kind { Ready }\n",
+            ),
+            (
+                "m.vca",
+                concat!(
+                    "use math as math;\n",
+                    "use math as alias;\n",
+                    "use math::Kind as Choice;\n",
+                    "pub fn run() -> i64 {\n",
+                    "    let value: Choice = Choice::Ready;\n",
+                    "    match value { Choice::Ready => { math::VALUE + alias::VALUE - 42 } }\n",
+                    "}\n",
+                ),
+            ),
+        ],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn assignment_to_imported_root_global_is_not_captured_by_a_same_named_local() {
+    let (directory, compile) = module_project(
+        "import-root-global-assignment",
+        concat!(
+            "mod m;\n",
+            "pub let counter: i64 = 1;\n",
+            "fn main() -> i64 { m::update(); print_i64(counter); 0 }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use counter as imported;\n",
+                "pub fn update() -> unit {\n",
+                "    let counter: i64 = 10;\n",
+                "    counter = 11;\n",
+                "    imported = 42;\n",
+                "    print_i64(counter);\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "11\n42\n");
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_alias_to_root_function_is_not_captured_by_a_same_named_local() {
+    let (directory, compile) = module_project(
+        "import-root-alias-local-target-name",
+        concat!(
+            "mod m;\n",
+            "pub fn pick(value: i64) -> i64 { value + 1 }\n",
+            "fn main() -> i64 { m::run(10) }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use pick as imported;\n",
+                "pub fn run(pick: i64) -> i64 {\n",
+                "    let callable: fn(i64) -> i64 = imported;\n",
+                "    imported(40) + callable(1) + pick - 53\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn import_alias_to_generic_root_function_specializes_with_a_same_named_local() {
+    let (directory, compile) = module_project(
+        "import-root-generic-alias-local-target-name",
+        concat!(
+            "mod m;\n",
+            "pub fn ident<T>(value: T) -> T { value }\n",
+            "fn main() -> i64 { m::run(3) }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use ident as brought;\n",
+                "pub fn run(ident: i64) -> i64 { brought(38) + ident - 41 }\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_local_named_like_an_import_alias_still_shadows_it() {
+    let (directory, compile) = module_project(
+        "import-alias-shadowed-by-local",
+        concat!(
+            "mod m;\n",
+            "pub fn pick(value: i64) -> i64 { value + 1 }\n",
+            "fn main() -> i64 { m::run() }\n",
+        ),
+        &[(
+            "m.vca",
+            concat!(
+                "use pick as imported;\n",
+                "pub fn run() -> i64 {\n",
+                "    let imported: fn(i64) -> i64 = pick;\n",
+                "    imported(41) - 42\n",
+                "}\n",
+            ),
+        )],
+    );
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}

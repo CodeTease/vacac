@@ -506,6 +506,7 @@ mod tests {
             traits: Vec::new(),
             impls: Vec::new(),
             modules: Vec::new(),
+            uses: Vec::new(),
             source_files: vec!["root.vca".into(), "nested/child.vca".into()],
             source_texts: vec![
                 "fn main() -> i64 { 0 }\n".into(),

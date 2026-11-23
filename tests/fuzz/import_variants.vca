@@ -1,0 +1,32 @@
+enum Color {
+    Red,
+    Blue,
+    Named(i64, i64),
+}
+
+use Color as Shade;
+use Color::Red;
+use Color::Named;
+
+trait Label {
+    fn label(value: Self) -> i64;
+}
+
+impl Label for Color {
+    fn label(value: Self) -> i64 {
+        match value {
+            Red => { 1 },
+            Shade::Blue => { 2 },
+            Named(number, extra) => { number + extra },
+        }
+    }
+}
+
+fn describe<T: Label>(value: T) -> i64 {
+    Label::label(value)
+}
+
+fn main() -> i64 {
+    print_i64(describe(Red) + describe(Shade::Blue) + describe(Named(2, 3)));
+    0
+}

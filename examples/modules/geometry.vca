@@ -1,16 +1,19 @@
 mod point;
 
+use point::Direction;
+use point::Point;
+
 pub fn distance_squared() -> i64 {
-    let origin = point::Point { x: 0, y: 0 };
-    let endpoint = point::Point { x: 3, y: 4 };
-    let direction = point::Direction::North;
+    let origin = Point { x: 0, y: 0 };
+    let endpoint = Point { x: 3, y: 4 };
+    let direction = Direction::North;
 
     match direction {
-        point::Direction::North => {
+        Direction::North => {
             let dx = endpoint.x - origin.x;
             let dy = endpoint.y - origin.y;
             dx * dx + dy * dy
         },
-        point::Direction::South => { 0 },
+        Direction::South => { 0 },
     }
 }

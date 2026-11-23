@@ -57,6 +57,7 @@ pub(super) fn load(root: &Path) -> Result<Program, DiagnosticSet> {
             traits: Vec::new(),
             impls: Vec::new(),
             modules: Vec::new(),
+            uses: Vec::new(),
             source_files: Vec::new(),
             source_texts: Vec::new(),
             functions_are_qualified: false,
@@ -151,6 +152,7 @@ impl Loader {
             .append(&mut parsed.extern_functions);
         self.program.traits.append(&mut parsed.traits);
         self.program.impls.append(&mut parsed.impls);
+        self.program.uses.append(&mut parsed.uses);
         for declaration in declarations {
             if declaration.name.is_empty() || declaration.name.contains("::") {
                 self.diagnostics.push(Diagnostic::at(

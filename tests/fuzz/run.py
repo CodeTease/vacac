@@ -118,7 +118,9 @@ def make_deep_modules(temporary_directory):
     chain = [f"level_{index}" for index in range(depth)]
     qualified = "::".join(chain)
     (project / "main.vca").write_text(
-        f"mod {chain[0]};\nfn main() -> i64 {{ {qualified}::value() - 42 }}\n",
+        f"mod {chain[0]};\n"
+        f"fn deepest() -> i64 {{ {qualified}::value() }}\n"
+        f"fn main() -> i64 {{ {chain[0]}::value() + deepest() - 84 }}\n",
         encoding="utf-8",
     )
     for index, module in enumerate(chain):
@@ -129,7 +131,10 @@ def make_deep_modules(temporary_directory):
             source = "pub fn value() -> i64 { 42 }\n"
         else:
             child = chain[index + 1]
-            source = f"mod {child};\npub fn value() -> i64 {{ {child}::value() }}\n"
+            source = (
+                f"mod {child};\nuse {child}::value as next_value;\n"
+                f"pub fn value() -> i64 {{ next_value() }}\n"
+            )
         path.write_text(source, encoding="utf-8")
     return project / "main.vca"
 
@@ -210,6 +215,27 @@ def main():
     record(diagnostic_case(
         compiler, "unexpected non-ASCII character reports the whole scalar", "unexpected_unicode_character.vca",
         "unexpected character `λ`",
+    ))
+    record(check_result(
+        "imports alias modules, types, traits, and variants",
+        run([compiler, CORPUS / "import_variants.vca", "--run"]),
+        stdout="8\n",
+    ))
+    record(diagnostic_case(
+        compiler, "a duplicate import alias is rejected", "import_duplicate_alias.vca",
+        "import name `Item` is imported more than once",
+    ))
+    record(diagnostic_case(
+        compiler, "an import that collides with a declaration is rejected", "import_name_collision.vca",
+        "import name `value` conflicts with function `value` declared in this module",
+    ))
+    record(diagnostic_case(
+        compiler, "an unknown import path is rejected", "import_unknown_path.vca",
+        "cannot import `absent::value`: no module or declaration has that path",
+    ))
+    record(diagnostic_case(
+        compiler, "malformed imports report syntax errors and recover", "import_parser_recovery.vca",
+        "expected name after `::` in import",
     ))
     record(parser_json_case(compiler))
     record(malformed_match_json_case(compiler))

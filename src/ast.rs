@@ -66,6 +66,7 @@ pub struct Program {
     pub traits: Vec<TraitDecl>,
     pub impls: Vec<ImplDecl>,
     pub modules: Vec<ModuleDecl>,
+    pub uses: Vec<UseDecl>,
     pub source_files: Vec<String>,
     pub source_texts: Vec<String>,
     pub functions_are_qualified: bool,
@@ -88,6 +89,17 @@ pub struct GlobalDecl {
 pub struct ModuleDecl {
     pub name: String,
     pub span: Span,
+}
+
+/// A module-level import: `use path::name [as alias];`.
+#[derive(Debug, Clone)]
+pub struct UseDecl {
+    /// Root-relative path of the imported item or module.
+    pub path: Vec<String>,
+    /// Local binding chosen by the importer, defaulting to the last path segment.
+    pub alias: Option<String>,
+    pub span: Span,
+    pub module: String,
 }
 
 #[derive(Debug, Clone)]
@@ -358,12 +370,22 @@ pub enum MatchPattern {
     Struct {
         name: String,
         fields: Vec<(String, MatchPattern, Span)>,
+        /// Parallel to `fields`: true when the field was written without a
+        /// `: pattern` and so is always a binding, even in a match arm.
+        shorthand: Vec<bool>,
         rest: bool,
     },
     Variant {
         enum_name: String,
         variant_name: String,
         bindings: Option<Vec<MatchPattern>>,
+    },
+    /// A payload pattern written with a single name, e.g. `Circle(radius)`,
+    /// where the name may be a directly imported enum variant. Module
+    /// resolution replaces it with `Variant` or reports a diagnostic.
+    ImportedVariant {
+        name: String,
+        bindings: Vec<MatchPattern>,
     },
 }
 

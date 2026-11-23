@@ -123,6 +123,9 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub(super) fn resolve_function_name(&self, name: &str) -> Option<String> {
+        if let Some(root) = name.strip_prefix("::") {
+            return self.functions.contains_key(root).then(|| root.to_owned());
+        }
         if self.functions.contains_key(name) {
             Some(name.to_owned())
         } else {

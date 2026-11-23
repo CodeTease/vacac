@@ -88,10 +88,7 @@ impl Parser {
         if self.at(&TokenKind::Less) {
             let start = self.advance().clone();
             let self_type = self.parse_type()?;
-            if !matches!(&self.peek().kind, TokenKind::Ident(name) if name == "as") {
-                return Err(unexpected(self.peek(), "`as` in qualified trait call"));
-            }
-            self.advance();
+            self.consume(&TokenKind::As, "`as` in qualified trait call")?;
             let trait_ref = self.parse_trait_ref()?;
             self.consume(&TokenKind::Greater, "`>` after qualified trait call target")?;
             self.consume(&TokenKind::DoubleColon, "`::` after qualified trait")?;
@@ -344,6 +341,9 @@ impl Parser {
                     && (path.len() >= 2
                         || self
                             .struct_names
+                            .contains(path.last().expect("path is non-empty"))
+                        || self
+                            .import_names
                             .contains(path.last().expect("path is non-empty")))
                     && self.at(&TokenKind::Less)
                     && self.generic_struct_literal_ahead()
@@ -413,7 +413,7 @@ impl Parser {
                 } else if path.len() >= 2 {
                     Ok(Expr::Variable(name, span))
                 } else if !self.suppress_struct_literal
-                    && self.struct_names.contains(&name)
+                    && (self.struct_names.contains(&name) || self.import_names.contains(&name))
                     && self.at(&TokenKind::LBrace)
                 {
                     self.advance();
