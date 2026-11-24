@@ -162,17 +162,207 @@ fn captured_closures_can_be_stored_in_aggregates() {
 }
 
 #[test]
-fn captured_bindings_cannot_be_assigned_in_a_closure() {
+fn mutable_captures_persist_and_aliases_share_environment_state() {
+    let result = compile_and_run(
+        r#"
+        struct Holder { call: fn() -> i64 }
+        fn apply(callback: fn() -> i64) -> i64 { callback() }
+
+        fn main() -> i64 {
+            let count = 0;
+            const first: fn() -> i64 = fn() -> i64 {
+                count = count + 1;
+                count
+            };
+            const alias = first;
+            const second: fn() -> i64 = fn() -> i64 {
+                count = count + 1;
+                count
+            };
+            print_i64(first());
+            print_i64(alias());
+            print_i64(second());
+            print_i64(apply(first));
+            const holder = Holder { call: first };
+            print_i64(holder.call());
+            const functions: Vec<fn() -> i64> = vec_new();
+            vec_push(functions, first);
+            print_i64(functions[0]());
+            print_i64(if first == alias && first != second { 1 } else { 0 });
+            print_i64(count);
+            first() - 6
+        }
+        "#,
+        "function-values-shared-capture-state",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "1\n2\n1\n3\n4\n5\n1\n0\n"
+    );
+}
+
+#[test]
+fn captured_aggregates_and_parameters_support_mutation() {
+    let result = compile_and_run(
+        r#"
+        struct Counter { value: i64 }
+
+        fn make_parameter_counter(value: i64) -> fn() -> i64 {
+            fn() -> i64 {
+                value = value + 1;
+                value
+            }
+        }
+
+        fn make_box<T>(initial: T) -> fn(T) -> T {
+            let value = initial;
+            fn(next: T) -> T {
+                value = next;
+                value
+            }
+        }
+
+        fn main() -> i64 {
+            let item = Counter { value: 40 };
+            const item_counter: fn() -> i64 = fn() -> i64 {
+                item.value = item.value + 1;
+                item.value
+            };
+            print_i64(item_counter());
+            print_i64(item_counter());
+            print_i64(item.value);
+
+            let numbers = [40, 0];
+            const array_counter: fn() -> i64 = fn() -> i64 {
+                numbers[0] = numbers[0] + 2;
+                numbers[0]
+            };
+            print_i64(array_counter());
+            print_i64(array_counter());
+            print_i64(numbers[0]);
+
+            const parameter_counter = make_parameter_counter(40);
+            print_i64(parameter_counter());
+            print_i64(parameter_counter());
+
+            const int_box = make_box(0);
+            const bool_box = make_box(false);
+            print_i64(int_box(42));
+            print_i64(if bool_box(true) { 1 } else { 0 });
+            print_i64(if int_box(7) == 7 { 1 } else { 0 });
+
+            const empty = ();
+            const unit_capture: fn() -> i64 = fn() -> i64 { empty; 42 };
+            print_i64(unit_capture() - 42);
+
+            let zeroes: [i64; 0] = [];
+            const zero_capture: fn() -> i64 = fn() -> i64 { len(zeroes) };
+            zero_capture()
+        }
+        "#,
+        "function-values-mutable-aggregate-captures",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "41\n42\n40\n42\n44\n40\n41\n42\n42\n1\n1\n0\n"
+    );
+}
+
+#[test]
+fn nested_closures_snapshot_current_state_without_write_back() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let count = 0;
+            const outer: fn() -> fn() -> i64 = fn() -> fn() -> i64 {
+                count = count + 5;
+                fn() -> i64 {
+                    count = count + 1;
+                    count
+                }
+            };
+            const first_inner = outer();
+            print_i64(first_inner());
+            print_i64(first_inner());
+            const second_inner = outer();
+            print_i64(second_inner());
+            print_i64(count);
+            second_inner() - 12
+        }
+        "#,
+        "function-values-nested-mutable-captures",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "6\n7\n11\n0\n");
+}
+
+#[test]
+fn reentrant_closure_calls_observe_updates_through_the_same_environment() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let count = 0;
+            const functions: Vec<fn() -> i64> = vec_new();
+            const bump: fn() -> i64 = fn() -> i64 {
+                count = count + 1;
+                if count == 1 {
+                    functions[0]()
+                } else {
+                    count
+                }
+            };
+            vec_push(functions, bump);
+            bump() - 2
+        }
+        "#,
+        "function-values-reentrant-capture",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn immutable_captures_still_reject_assignment() {
     assert_compile_error(
-        "fn main() -> i64 { let captured = 1; let f = fn() -> i64 { captured = 2; 0 }; f() }",
-        "function-values-capture-assignment-rejected",
-        "cannot assign to captured binding `captured`",
+        "fn main() -> i64 { const captured = 1; let f = fn() -> i64 { captured = 2; 0 }; f() }",
+        "function-values-const-capture-assignment-rejected",
+        "cannot assign to immutable binding `captured`",
     );
     assert_compile_error(
-        "struct Item { value: i64 } fn main() -> i64 { let item = Item { value: 1 }; let f = fn() -> i64 { item.value = 2; 0 }; f() }",
-        "function-values-capture-field-assignment-rejected",
-        "cannot assign to captured binding `item`",
+        "struct Item { value: i64 } fn main() -> i64 { const item = Item { value: 1 }; let f = fn() -> i64 { item.value = 2; 0 }; f() }",
+        "function-values-const-capture-field-assignment-rejected",
+        "cannot assign through immutable binding `item`",
     );
+    assert_compile_error(
+        "fn main() -> i64 { for index in 0..1 { let f = fn() -> i64 { index = 2; index }; return f(); } 0 }",
+        "function-values-loop-capture-assignment-rejected",
+        "cannot assign to immutable loop variable `index`",
+    );
+}
+
+#[test]
+fn captures_require_a_whole_binding_snapshot_free_of_mutable_loans() {
+    assert_compile_error(
+        "struct Pair { left: i64, right: i64 } fn main() -> i64 { let pair = Pair { left: 1, right: 2 }; const reference: &mut i64 = &mut pair.left; let closure = fn() -> i64 { pair.right }; closure() }",
+        "function-values-mutably-borrowed-capture",
+        "cannot capture `pair` while it is mutably borrowed",
+    );
+
+    let result = compile_and_run(
+        r#"
+        struct Pair { left: i64, right: i64 }
+
+        fn main() -> i64 {
+            let pair = Pair { left: 1, right: 2 };
+            const reference: &i64 = &pair.left;
+            const closure: fn() -> i64 = fn() -> i64 { pair.right };
+            closure() - 2 + *reference - 1
+        }
+        "#,
+        "function-values-shared-borrowed-capture",
+    );
+    assert_eq!(result.status.code(), Some(0));
 }
 
 #[test]

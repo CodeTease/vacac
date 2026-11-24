@@ -71,7 +71,40 @@ pub struct Program {
     pub source_texts: Vec<String>,
     pub functions_are_qualified: bool,
     /// Local bindings copied into each lambda's heap-backed closure environment.
-    pub lambda_captures: std::collections::HashMap<(Option<usize>, usize, usize), Vec<String>>,
+    pub lambda_captures: std::collections::HashMap<LambdaKey, Vec<LambdaCapture>>,
+}
+
+/// Identifies a lambda by the concrete function that contains it and its source
+/// location. Generic specializations and inherited trait bodies can share a source
+/// span while producing different concrete closures.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LambdaKey {
+    pub owner: String,
+    pub file: Option<usize>,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl LambdaKey {
+    pub fn new(owner: &str, span: Span) -> Self {
+        Self {
+            owner: owner.to_owned(),
+            file: span.file,
+            line: span.line,
+            column: span.column,
+        }
+    }
+}
+
+/// One value copied into a closure environment when the lambda is evaluated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LambdaCapture {
+    pub name: String,
+    /// Lexical scope that owns the source binding, used to validate the snapshot.
+    pub scope_index: usize,
+    /// `const` bindings and loop variables cannot be assigned through the slot.
+    pub immutable: bool,
+    pub loop_variable: bool,
 }
 
 #[derive(Debug, Clone)]

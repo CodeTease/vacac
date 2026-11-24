@@ -264,6 +264,11 @@ def main():
         "returned closure retains its aggregate capture",
         run([compiler, CORPUS / "returned_closure_capture.vca", "--run"]),
     ))
+    record(check_result(
+        "closure aliases share persistent mutable capture state",
+        run([compiler, CORPUS / "stateful_closure_capture.vca", "--run"]),
+        stdout="1\n2\n1\n3\n",
+    ))
 
     with tempfile.TemporaryDirectory(prefix="vacac-fuzz-modules-") as temporary:
         module_source = make_deep_modules(Path(temporary))

@@ -297,7 +297,6 @@ impl Checker {
             }
             Stmt::Assign { name, value, span } => {
                 self.reject_borrowed(name, *span)?;
-                self.reject_lambda_capture(name, *span)?;
                 let binding_type = if let Some(ty) = self.lookup_local(name) {
                     ty
                 } else if let Some(global) = self.find_global_name(name) {
@@ -315,6 +314,7 @@ impl Checker {
                 } else {
                     return Err(at(*span, format!("undefined variable `{name}`")));
                 };
+                self.record_capture_use(name, *span)?;
                 if self.is_loop_variable(name) {
                     return Err(at(
                         *span,
@@ -350,7 +350,6 @@ impl Checker {
             } => {
                 let root = assignment_root(target)
                     .ok_or_else(|| at(*span, "assignment target must start with a variable"))?;
-                self.reject_lambda_capture(root, *span)?;
                 let through_pointer = place_contains_dereference(target);
                 let binding_type = if let Some(ty) = self.lookup_local(root) {
                     ty
@@ -369,6 +368,7 @@ impl Checker {
                 } else {
                     return Err(at(*span, format!("undefined variable `{root}`")));
                 };
+                self.record_capture_use(root, *span)?;
                 let target_type = self.check_place(target, binding_type)?;
                 if !through_pointer && self.lookup_local(root).is_some() {
                     self.reject_borrowed_place(target, *span)?;

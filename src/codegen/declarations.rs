@@ -29,6 +29,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.define_globals(program)?;
         for function in &program.functions {
             codegen.module_context = function.module.clone();
+            codegen.lambda_owner = function.name.clone();
             codegen.emit_function(function).map_err(|error| {
                 if error.span.is_some() {
                     error
@@ -91,6 +92,7 @@ impl<'ctx> Codegen<'ctx> {
             next_binding_id: 0,
             lambda_captures: HashMap::new(),
             lambda_capture_types: HashMap::new(),
+            lambda_owner: String::new(),
             function_adapters: HashMap::new(),
         }
     }
@@ -621,12 +623,12 @@ impl<'ctx> Codegen<'ctx> {
 
     pub(super) fn closure_environment_type(
         &self,
-        captures: &[(String, ValueType)],
+        captures: &[CaptureLayout],
     ) -> Result<StructType<'ctx>, Diagnostic> {
         let fields = captures
             .iter()
-            .map(|(_, ty)| {
-                self.llvm_type(*ty)
+            .map(|capture| {
+                self.llvm_type(capture.ty)
                     .unwrap_or_else(|| self.context.i8_type().as_basic_type_enum())
             })
             .collect::<Vec<_>>();

@@ -1,7 +1,7 @@
 use crate::diagnostic::Diagnostic;
 use crate::parser::{
-    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, MatchArm,
-    MatchPattern, Program, Span, Stmt, StructDecl, Type, UnaryOp,
+    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, LambdaCapture,
+    LambdaKey, MatchArm, MatchPattern, Program, Span, Stmt, StructDecl, Type, UnaryOp,
 };
 use std::collections::HashMap;
 
@@ -193,8 +193,10 @@ struct Checker {
     allow_shared_borrow: bool,
     allow_mutable_borrow_initializer: bool,
     lambda_scope_boundaries: Vec<usize>,
-    lambda_capture_scopes: Vec<Vec<String>>,
-    lambda_captures: HashMap<(Option<usize>, usize, usize), Vec<String>>,
+    lambda_capture_scopes: Vec<Vec<LambdaCapture>>,
+    lambda_capture_borrow_snapshots: Vec<Vec<Vec<BorrowPlace>>>,
+    lambda_captures: HashMap<LambdaKey, Vec<LambdaCapture>>,
+    current_function_owner: String,
     module_context: String,
     function_visibility: HashMap<String, (String, bool)>,
     global_declarations: HashMap<String, GlobalDecl>,
@@ -244,7 +246,9 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         allow_mutable_borrow_initializer: false,
         lambda_scope_boundaries: Vec::new(),
         lambda_capture_scopes: Vec::new(),
+        lambda_capture_borrow_snapshots: Vec::new(),
         lambda_captures: HashMap::new(),
+        current_function_owner: String::new(),
         module_context: String::new(),
         function_visibility: HashMap::new(),
         global_declarations: HashMap::new(),

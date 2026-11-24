@@ -823,35 +823,84 @@ impl Checker {
         Ok(())
     }
 
-    pub(super) fn reject_lambda_capture(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
-        if self
-            .lookup_local_with_scope(name)
-            .is_some_and(|(scope_index, _)| {
-                self.lambda_scope_boundaries
-                    .last()
-                    .is_some_and(|boundary| scope_index < *boundary)
-            })
+    /// Records that `name` crosses one or more lambda boundaries. Reads and writes
+    /// both count: a write-only capture still needs a slot in every intervening
+    /// environment.
+    pub(super) fn record_capture_use(&mut self, name: &str, span: Span) -> Result<(), Diagnostic> {
+        let Some((scope_index, ty)) = self.lookup_local_with_scope(name) else {
+            return Ok(());
+        };
+        if !self
+            .lambda_scope_boundaries
+            .last()
+            .is_some_and(|boundary| scope_index < *boundary)
         {
-            Err(at(
-                span,
-                format!("cannot assign to captured binding `{name}`"),
-            ))
-        } else {
-            Ok(())
+            return Ok(());
         }
+        if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
+            return Err(at(span, "closures cannot capture references"));
+        }
+        self.record_lambda_capture(name, scope_index);
+        Ok(())
     }
 
     pub(super) fn record_lambda_capture(&mut self, name: &str, scope_index: usize) {
+        let immutable = self.is_immutable_binding(name);
+        let loop_variable = self.is_loop_variable(name);
         for (boundary, captures) in self
             .lambda_scope_boundaries
             .iter()
             .copied()
             .zip(self.lambda_capture_scopes.iter_mut())
         {
-            if scope_index < boundary && !captures.iter().any(|capture| capture == name) {
-                captures.push(name.to_owned());
+            if scope_index < boundary && !captures.iter().any(|capture| capture.name == name) {
+                captures.push(LambdaCapture {
+                    name: name.to_owned(),
+                    scope_index,
+                    immutable,
+                    loop_variable,
+                });
             }
         }
+    }
+
+    /// A lambda reads all of its captured sources when it is evaluated. Shared
+    /// loans permit that read; an overlapping mutable loan does not.
+    pub(super) fn validate_lambda_capture_borrows(
+        &self,
+        captures: &[LambdaCapture],
+        borrow_snapshot: &[Vec<BorrowPlace>],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        for capture in captures {
+            let Some(scope) = self.scopes.get(capture.scope_index) else {
+                continue;
+            };
+            if !scope.contains_key(&capture.name) {
+                continue;
+            }
+            let place = BorrowPlace {
+                root: BorrowRoot {
+                    scope_index: capture.scope_index,
+                    name: capture.name.clone(),
+                },
+                projections: Vec::new(),
+            };
+            if borrow_snapshot
+                .iter()
+                .flatten()
+                .any(|borrow| borrow.overlaps(&place))
+            {
+                return Err(at(
+                    span,
+                    format!(
+                        "cannot capture `{}` while it is mutably borrowed",
+                        capture.name
+                    ),
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn is_immutable_binding(&self, name: &str) -> bool {
