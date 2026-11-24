@@ -37,6 +37,7 @@
 
 ## Compiler
 
+* [ ] Cross-platform support (macOS, Windows).
 * [ ] User-selectable emitted-code optimization levels, with an LLVM module-pass pipeline and matching target-machine settings for executable, `--run`, and `--emit-llvm` modes.
 
 ## Diagnostic Engine
