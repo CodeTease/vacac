@@ -1,7 +1,8 @@
 # vacac - Developer Notes
 
-Language reference and user-facing docs live in `README.md`. This file covers
-building, the compiler pipeline, and rules that are easy to break.
+User-facing docs live in `README.md` (the landing page) and `docs/` (the full
+guides, indexed by `docs/README.md`). This file covers building, the compiler
+pipeline, and rules that are easy to break.
 
 ## Requirements
 
