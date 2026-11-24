@@ -36,10 +36,10 @@ jobs:
       - name: Install Python
         run: sudo apt-get install -y python3 python3-pip
 
-      - name: Install Rust 1.99.1
+      - name: Install Rust 1.100.0
         uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           components: rustfmt
           cache: false
 
