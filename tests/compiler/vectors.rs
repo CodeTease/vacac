@@ -183,6 +183,83 @@ fn vectors_reject_function_elements_with_incompatible_signatures() {
 }
 
 #[test]
+fn vector_element_assignment_survives_growth_during_the_rhs_and_evaluates_indexes_once() {
+    let result = compile_and_run(
+        r#"
+        struct Item { value: i64 }
+
+        let picks = 0;
+
+        fn pick() -> i64 {
+            picks = picks + 1;
+            0
+        }
+
+        fn grow(values: Vec<i64>, result: i64) -> i64 {
+            let index = 0;
+            while index < 8 {
+                vec_push(values, 100 + index);
+                index = index + 1;
+            }
+            result
+        }
+
+        fn grow_items(items: Vec<Item>, result: i64) -> i64 {
+            let index = 0;
+            while index < 8 {
+                vec_push(items, Item { value: index });
+                index = index + 1;
+            }
+            result
+        }
+
+        fn grow_nested(outer: Vec<Vec<i64>>, inner: Vec<i64>, result: i64) -> i64 {
+            let index = 0;
+            while index < 8 {
+                vec_push(outer, inner);
+                vec_push(inner, index);
+                index = index + 1;
+            }
+            result
+        }
+
+        fn main() -> i64 {
+            let values: Vec<i64> = vec_new();
+            vec_push(values, 1);
+            vec_push(values, 2);
+            values[pick()] = grow(values, 7);
+            print_i64(values[0]);
+            print_i64(len(values));
+            print_i64(picks);
+
+            let items: Vec<Item> = vec_new();
+            vec_push(items, Item { value: 1 });
+            items[0].value = grow_items(items, 9);
+            print_i64(items[0].value);
+            print_i64(len(items));
+
+            let outer: Vec<Vec<i64>> = vec_new();
+            let inner: Vec<i64> = vec_new();
+            vec_push(inner, 1);
+            vec_push(outer, inner);
+            outer[0][0] = grow_nested(outer, inner, 11);
+            print_i64(outer[0][0]);
+            print_i64(inner[0]);
+            print_i64(len(outer));
+            print_i64(len(inner));
+            outer[0][0] - 11
+        }
+        "#,
+        "vector-assignment-after-rhs-growth",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&result.stdout),
+        "7\n10\n1\n9\n9\n11\n11\n9\n9\n"
+    );
+}
+
+#[test]
 fn vector_indexing_is_bounds_checked() {
     for (index, test_name) in [("0", "vector-index-high"), ("-1", "vector-index-negative")] {
         let source =
