@@ -28,7 +28,7 @@ capture item on the TODO roadmap.
 
 ## [0.1.0] - 2026-11-24
 
-Initial public release. `vacac` is a handwritten compiler for Vaca v0.1 that
+Initial public release. `vacac` is a handwritten compiler for the Vaca language that
 checks source in Rust and emits native Linux ELF executables through LLVM 23.
 
 ### Added
@@ -120,7 +120,7 @@ checks source in Rust and emits native Linux ELF executables through LLVM 23.
 #### Documentation, examples, and testing
 
 - User documentation for the CLI, diagnostics, scalar C FFI, testing, and the
-  Vaca v0.1 language, plus a documentation index.
+  Vaca language, plus a documentation index.
 - Example programs covering arithmetic, control flow, arrays, vectors, structs,
   enums, tuples, generics, traits, closures, references, pointers, modules,
   globals, `Result`, floating-point values, and C FFI.

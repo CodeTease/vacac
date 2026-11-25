@@ -2,7 +2,7 @@
 
 **PUBLIC DEVELOPMENT**
 
-`vacac` is a handwritten, statically compiled compiler for Vaca v0.1 🐮. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
+`vacac` is a handwritten, statically compiled compiler for Vaca 🐮. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
 
 > This compiler currently supports Linux only. For Windows/macOS, please use Docker or WSL2.
 
@@ -56,7 +56,7 @@ Start at the [documentation index](docs/README.md).
 - [Examples](docs/examples.md) — complete programs to check, compile, and run.
 - [Testing](docs/testing.md) — Rust tests, the example runner, and the adversarial corpus.
 - [Scalar C FFI](docs/c-ffi.md) — `extern "C"` declarations and native linking.
-- [Language reference](docs/language/syntax.md) — Vaca v0.1 types, values, and statements, with links to the rest of the language guide.
+- [Language reference](docs/language/syntax.md) — Vaca types, values, and statements, with links to the rest of the language guide.
 
 ## Examples
 

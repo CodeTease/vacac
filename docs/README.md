@@ -1,6 +1,6 @@
 # Vaca documentation
 
-`vacac` is a handwritten, statically compiled compiler for Vaca v0.1. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
+`vacac` is a handwritten, statically compiled compiler for Vaca. It parses and checks source in Rust, generates native LLVM object code with Inkwell, then invokes `cc` to link an ELF executable.
 
 The repository [README](../README.md) is the short landing page. This index links to the user-facing guides in `docs/`.
 
@@ -14,7 +14,7 @@ The repository [README](../README.md) is the short landing page. This index link
 
 ## Language reference
 
-- [Vaca v0.1 syntax](language/syntax.md) — program structure, value types, literals, bindings, and control-flow overview.
+- [Vaca syntax](language/syntax.md) — program structure, value types, literals, bindings, and control-flow overview.
 - [Runtime and entry point](language/runtime.md) — `main`, process exit status, `read_i64()`, and fatal runtime errors.
 - [Strings](language/strings.md) — immutable strings, concatenation, comparison, and printing.
 - [Conditionals, matching, and loops](language/control-flow.md) — expression conditionals, scalar `match`, and value-producing `loop`.
