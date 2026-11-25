@@ -22,6 +22,7 @@ Some examples to explore:
 - [`struct_inventory.vca`](../examples/struct_inventory.vca) — define, construct, pass, and read named structs.
 - [`const_and_struct_fields.vca`](../examples/const_and_struct_fields.vca) — use an immutable `const` value and update fields of a mutable local struct.
 - [`traits.vca`](../examples/traits.vca) — define traits with default functions, implement them for primitives and generic structs, and dispatch through a trait bound.
+- [`generic_traits.vca`](../examples/generic_traits.vca) — implement a parameterized trait for primitives and generic structs, infer trait and function arguments, and relay through a generic default body.
 - [`stateful_closures.vca`](../examples/stateful_closures.vca) — keep mutable captured state in a closure environment shared by its aliases.
 - [`pointers.rs`](../tests/compiler/pointers.rs) — checked mutable references and explicitly raw pointer reads/writes.
 - [`modules/`](../examples/modules/) — split a program across nested source files and use qualified public structs, enums, and functions, plus `use` imports and aliases.

@@ -37,3 +37,22 @@ fn main() -> i64 {
 ```
 
 Generic parameters may carry trait bounds as documented in [Traits and static dispatch](traits.md). Built-in `Vec<T>` remains supported as a generic function parameter and return type, with its existing built-in runtime behavior.
+
+## Generic traits
+
+Traits and their functions can declare type parameters. Trait arguments select a distinct implementation head, while function type parameters are inferred or supplied per call:
+
+```vaca
+struct Box<T> { value: T }
+
+trait Convert<T> {
+    fn convert(value: Self) -> T;
+    fn duplicate<U>(value: Self, input: U) -> U { input }
+}
+
+impl<T> Convert<T> for Box<T> {
+    fn convert(value: Box<T>) -> T { value.value }
+}
+```
+
+Use `<Type as Trait<A, B>>::function(...)` when `Self` or the trait arguments cannot be inferred. Function arguments can be supplied with `::<...>` after the function name. See [Traits and static dispatch](traits.md#generic-traits-and-generic-trait-functions) for inference, coherence, defaults, and the current limitations.

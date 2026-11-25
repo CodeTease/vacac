@@ -24,7 +24,7 @@ The repository [README](../README.md) is the short landing page. This index link
 - [Enums and exhaustive matching](language/enums.md) — variants, payloads, ordered `match` arms, and reachability rules.
 - [Tuples and destructuring](language/tuples-and-destructuring.md) — tuple values, binding patterns, and nested match patterns.
 - [Generics](language/generics.md) — generic structs, enums, functions, inference, turbofish, and specialization.
-- [Traits and static dispatch](language/traits.md) — trait declarations, default bodies, coherence, and monomorphized dispatch.
+- [Traits and static dispatch](language/traits.md) — trait declarations, generic traits and trait functions, default bodies, coherence, inference, and monomorphized dispatch.
 - [Function values and closures](language/functions-and-closures.md) — function types, lambdas, captures, and equality.
 - [References and raw pointers](language/references-and-pointers.md) — shared and mutable references, named lifetimes, and raw pointers.
 - [Recoverable errors](language/recoverable-errors.md) — `Result<T, E>` and the `?` operator.
