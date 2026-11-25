@@ -1,9 +1,9 @@
 # Deterministic adversarial compiler corpus
 
 This directory contains small Vaca reproducers for reference/lifetime
-checking, generic specialization limits, trait coherence, bounds, and default
-bodies, parser diagnostics, code generation, runtime traps, closures, modules,
-module imports, and the scalar C ABI. Expected rejection and runtime-trap cases are intentional;
+checking, generic specialization limits, generic traits, trait coherence,
+bounds, default bodies, parser diagnostics, code generation, runtime traps,
+closures, modules, module imports, and the scalar C ABI. Expected rejection and runtime-trap cases are intentional;
 `run.py` checks their diagnostics/statuses so that they are distinct from a
 compiler crash or unexpected success.
 
@@ -39,6 +39,10 @@ additionally exercised with `--emit-llvm`.
   overlapping impl targets are rejected before specialization. A separate case
   inherits a default trait body through a generic impl while a concrete impl
   overrides it, checking static dispatch end to end.
+- Generic-trait cases cover inferred and explicit trait/function arguments,
+  trait-argument arity, the rejected `Trait::<Args>::function` shorthand, and a
+  deliberately expanding bound proof that must stop at the trait-proof depth
+  limit instead of overflowing the host stack.
 - Parser cases exercise multiple malformed top-level/body constructs and a
   malformed match arm under `--check --json`. Diagnostics are valid JSON and
   recovery terminates; multiple diagnostics currently appear in recovery order,

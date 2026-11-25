@@ -208,6 +208,31 @@ def main():
         compiler, "malformed trait declarations report syntax errors", "trait_parser_recovery.vca",
         "expected `;` or a `{` default body after trait function signature",
     ))
+    record(check_result(
+        "generic traits dispatch through inferred and explicit arguments",
+        run([compiler, CORPUS / "generic_trait_ok.vca", "--run"]),
+        stdout="42\n41\n",
+    ))
+    record(diagnostic_case(
+        compiler, "generic trait arguments cannot be inferred from nothing",
+        "generic_trait_inference.vca",
+        "cannot infer trait type argument `T` for `Tag::tag`",
+    ))
+    record(diagnostic_case(
+        compiler, "generic trait argument arity is checked in impl heads",
+        "generic_trait_arity.vca",
+        "trait `Tag` expects 1 type argument(s), got 0",
+    ))
+    record(diagnostic_case(
+        compiler, "trait argument shorthand is rejected with guidance",
+        "generic_trait_shorthand.vca",
+        "is not supported; write `<Self as Tag<...>>::tag(...)`",
+    ))
+    record(diagnostic_case(
+        compiler, "expanding trait proofs stop at the depth limit",
+        "generic_trait_proof_limit.vca",
+        "trait bound proof exceeded the limit of 128",
+    ))
     record(diagnostic_case(
         compiler, "raw NUL byte in a string literal is rejected", "raw_nul_literal.vca",
         "NUL characters are not supported in string literals",

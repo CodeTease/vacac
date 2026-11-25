@@ -1,0 +1,11 @@
+trait Tag<T> {
+    fn tag(value: Self) -> i64;
+}
+
+impl Tag<i64> for i64 {
+    fn tag(value: i64) -> i64 { 0 }
+}
+
+fn main() -> i64 {
+    Tag::<i64>::tag(0)
+}
