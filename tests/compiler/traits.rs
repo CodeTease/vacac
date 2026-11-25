@@ -308,21 +308,35 @@ fn generic_bounds_reject_unknown_and_duplicate_traits() {
 }
 
 #[test]
-fn grammar_rejects_generic_traits_public_impls_and_method_generics() {
-    assert_compile_error(
-        "trait Convert<T> { fn convert(value: Self) -> T; } fn main() -> i64 { 0 }",
-        "traits-generic-trait",
-        "generic traits are not supported",
+fn grammar_accepts_generic_traits_and_method_generics() {
+    let result = compile_and_run(
+        r#"
+trait Convert<T> {
+    fn convert(value: Self) -> T;
+    fn duplicate<U>(value: Self, input: U) -> U { input }
+}
+struct Box<T> { value: T }
+impl<T> Convert<T> for Box<T> {
+    fn convert(value: Box<T>) -> T { value.value }
+}
+fn main() -> i64 { <Box<i64> as Convert<i64>>::convert(Box<i64> { value: 42 }) - 42 }
+"#,
+        "traits-generic-grammar",
     );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn public_impls_and_lifetime_method_generics_are_rejected() {
     assert_compile_error(
         "trait Show { fn show(value: Self) -> str; } pub impl Show for i64 { fn show(value: i64) -> str { \"x\" } } fn main() -> i64 { 0 }",
         "traits-public-impl",
         "`pub impl` is not supported",
     );
     assert_compile_error(
-        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show<U>(value: i64) -> str { \"x\" } } fn main() -> i64 { 0 }",
-        "traits-method-generics",
-        "impl functions cannot declare their own generic or lifetime parameters",
+        "trait Show { fn show(value: Self) -> str; } impl Show for i64 { fn show<'a>(value: i64) -> str { \"x\" } } fn main() -> i64 { 0 }",
+        "traits-method-lifetimes",
+        "impl functions cannot declare lifetime parameters",
     );
 }
 
