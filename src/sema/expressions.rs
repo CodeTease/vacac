@@ -94,16 +94,8 @@ impl Checker {
             }
             Expr::Variable(name, span) => {
                 self.reject_mutably_borrowed(name, *span)?;
-                if let Some((scope_index, ty)) = self.lookup_local_with_scope(name) {
-                    if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
-                        && self
-                            .lambda_scope_boundaries
-                            .last()
-                            .is_some_and(|boundary| scope_index < *boundary)
-                    {
-                        return Err(at(*span, "closures cannot capture references"));
-                    }
-                    self.record_lambda_capture(name, scope_index);
+                if let Some((_, ty)) = self.lookup_local_with_scope(name) {
+                    self.record_capture_use(name, *span)?;
                     Ok(ty)
                 } else if let Some(global) = self.find_global_name(name) {
                     let declaration = self.global_declarations[&global].clone();
@@ -664,8 +656,10 @@ impl Checker {
                     return Err(at(*span, "functions and lambdas cannot return references"));
                 }
                 let boundary = self.scopes.len();
+                let borrow_snapshot = self.mutable_borrows.clone();
                 self.lambda_scope_boundaries.push(boundary);
                 self.lambda_capture_scopes.push(Vec::new());
+                self.lambda_capture_borrow_snapshots.push(borrow_snapshot);
                 self.scopes.push(HashMap::new());
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
@@ -704,9 +698,16 @@ impl Checker {
                 self.mutable_reference_origins.pop();
                 self.lambda_scope_boundaries.pop();
                 let captures = self.lambda_capture_scopes.pop().unwrap_or_default();
-                self.lambda_captures
-                    .insert((span.file, span.line, span.column), captures);
+                let borrow_snapshot = self
+                    .lambda_capture_borrow_snapshots
+                    .pop()
+                    .unwrap_or_default();
+                self.lambda_captures.insert(
+                    LambdaKey::new(&self.current_function_owner, *span),
+                    captures.clone(),
+                );
                 let returns = checked?;
+                self.validate_lambda_capture_borrows(&captures, &borrow_snapshot, *span)?;
                 if return_type != ValueType::Unit && !returns {
                     return Err(at(
                         *span,

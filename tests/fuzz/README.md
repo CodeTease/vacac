@@ -21,6 +21,9 @@ additionally exercised with `--emit-llvm`.
 
 ## Coverage and limits
 
+- Closure fixtures cover both a returned aggregate snapshot and a mutable
+  counter whose aliases share environment state while separately created
+  closures remain independent.
 - References are intentionally more limited than Rust: loans are lexical
   (there is no NLL), mutable-reference reborrowing is rejected, references
   cannot be captured or stored in aggregates, and lifetime contracts accept

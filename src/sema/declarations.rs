@@ -686,6 +686,7 @@ impl Checker {
     }
 
     pub(super) fn check_function(&mut self, function: &Function) -> Result<(), Diagnostic> {
+        self.current_function_owner = function.name.clone();
         self.scopes.clear();
         self.immutable_scopes.clear();
         self.mutable_borrows.clear();

@@ -1,0 +1,19 @@
+// Aliases of a closure share its mutable heap environment; separate evaluations do not.
+fn make_counter(seed: i64) -> fn() -> i64 {
+    let count = seed;
+    fn() -> i64 {
+        count = count + 1;
+        count
+    }
+}
+
+fn main() -> i64 {
+    const first = make_counter(0);
+    const alias = first;
+    const second = make_counter(0);
+    print_i64(first());
+    print_i64(alias());
+    print_i64(second());
+    print_i64(first());
+    first() - 4
+}

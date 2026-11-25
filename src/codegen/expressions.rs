@@ -711,15 +711,24 @@ impl<'ctx> Codegen<'ctx> {
                     .map(|param| self.resolve_type(&param.ty, param.span))
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret = self.resolve_type(&synthetic.return_type, synthetic.span)?;
-                let capture_names = self
+                let descriptors = self
                     .lambda_captures
-                    .get(&(span.file, span.line, span.column))
+                    .get(&LambdaKey::new(&self.lambda_owner, *span))
                     .cloned()
-                    .unwrap_or_default();
-                let mut captures = Vec::with_capacity(capture_names.len());
-                for capture_name in capture_names {
-                    let local = self.lookup_local(&capture_name).ok_or_else(|| {
-                        format!("internal error: captured local `{capture_name}` is unavailable")
+                    .ok_or_else(|| {
+                        Diagnostic::at(
+                            span.into(),
+                            "internal error: lambda capture metadata is unavailable",
+                        )
+                    })?;
+                let mut captures = Vec::with_capacity(descriptors.len());
+                let mut sources = Vec::with_capacity(descriptors.len());
+                for descriptor in descriptors {
+                    let local = self.lookup_local(&descriptor.name).ok_or_else(|| {
+                        format!(
+                            "internal error: captured local `{}` is unavailable",
+                            descriptor.name
+                        )
                     })?;
                     if matches!(
                         local.ty,
@@ -730,15 +739,16 @@ impl<'ctx> Codegen<'ctx> {
                             "closures cannot capture references".to_string(),
                         ));
                     }
-                    captures.push((capture_name, local.ty, local.pointer));
+                    captures.push(CaptureLayout {
+                        name: descriptor.name,
+                        ty: local.ty,
+                        immutable: descriptor.immutable,
+                        loop_variable: descriptor.loop_variable,
+                    });
+                    sources.push(local.pointer);
                 }
-                self.lambda_capture_types.insert(
-                    name.clone(),
-                    captures
-                        .iter()
-                        .map(|(capture, ty, _)| (capture.clone(), *ty))
-                        .collect(),
-                );
+                self.lambda_capture_types
+                    .insert(name.clone(), captures.clone());
                 let llvm_function = self.module.add_function(
                     &name,
                     self.closure_function_type(&params, ret)?,
@@ -770,11 +780,7 @@ impl<'ctx> Codegen<'ctx> {
                 let environment = if captures.is_empty() {
                     self.context.ptr_type(AddressSpace::default()).const_null()
                 } else {
-                    let capture_layout = captures
-                        .iter()
-                        .map(|(capture, ty, _)| (capture.clone(), *ty))
-                        .collect::<Vec<_>>();
-                    let environment_type = self.closure_environment_type(&capture_layout)?;
+                    let environment_type = self.closure_environment_type(&captures)?;
                     let allocator = self
                         .module
                         .get_function("vaca_alloc")
@@ -782,6 +788,25 @@ impl<'ctx> Codegen<'ctx> {
                     let size = environment_type
                         .size_of()
                         .ok_or("closure environment has no size")?;
+                    // A capture list containing only zero-sized values still gets a
+                    // distinct allocation so separately evaluated closures differ.
+                    let size = self
+                        .builder
+                        .build_select(
+                            self.builder
+                                .build_int_compare(
+                                    IntPredicate::EQ,
+                                    size,
+                                    size.get_type().const_zero(),
+                                    "closure.environment.empty",
+                                )
+                                .map_err(|error| error.to_string())?,
+                            size.get_type().const_int(1, false),
+                            size,
+                            "closure.environment.size",
+                        )
+                        .map_err(|error| error.to_string())?
+                        .into_int_value();
                     let environment = self
                         .builder
                         .build_call(
@@ -800,7 +825,7 @@ impl<'ctx> Codegen<'ctx> {
                         .basic()
                         .ok_or("closure allocator returned void")?
                         .into_pointer_value();
-                    for (index, (_, ty, source)) in captures.iter().enumerate() {
+                    for (index, (capture, source)) in captures.iter().zip(&sources).enumerate() {
                         let field = self
                             .builder
                             .build_struct_gep(
@@ -810,12 +835,13 @@ impl<'ctx> Codegen<'ctx> {
                                 "closure.capture.ptr",
                             )
                             .map_err(|error| error.to_string())?;
-                        let value = if *ty == ValueType::Unit {
+                        let value = if capture.ty == ValueType::Unit {
                             self.context.i8_type().const_zero().into()
                         } else {
                             self.builder
                                 .build_load(
-                                    self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
+                                    self.llvm_type(capture.ty)
+                                        .ok_or("capture has no LLVM type")?,
                                     *source,
                                     "closure.capture",
                                 )

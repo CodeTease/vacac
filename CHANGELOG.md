@@ -6,6 +6,23 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Persistent mutable closure captures. A lambda now stores its captured values
+  in a heap environment shared by every copy of that closure, so assignments to
+  captured mutable locals persist across calls while separately evaluated
+  lambdas remain independent. Nested lambdas snapshot their parent's current
+  state, and `const` bindings and loop variables stay immutable in captures.
+
+### Fixed
+
+- Vector element assignment now reloads the vector data pointer when it applies
+  the store, so a right-hand side that grows the vector cannot leave the store
+  targeting freed storage. Target indexes and bounds checks are still evaluated
+  exactly once, before the right-hand side.
+
 ## [0.1.0] - 2026-11-24
 
 Initial public release. `vacac` is a handwritten compiler for Vaca v0.1 that

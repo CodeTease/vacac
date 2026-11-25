@@ -42,7 +42,7 @@ Calls that return references conservatively propagate all arguments correspondin
 
 ## Reference limitations
 
-References still cannot be captured by a closure or stored in aggregates or globals. Provenance propagation is limited to direct named-function calls, local reference aliases, supported shared-reference reborrows, and `if`/`match` joins; function-value calls and other expression forms do not propagate reference origins. Last-use loan ending (NLL) is not implemented, so loans remain conservatively lexical.
+References still cannot be captured by a closure or stored in aggregates or globals. Closure capture slots are not borrowable: a closure cannot take a shared reference, mutable reference, or raw address of a binding it captured. Provenance propagation is limited to direct named-function calls, local reference aliases, supported shared-reference reborrows, and `if`/`match` joins; function-value calls and other expression forms do not propagate reference origins. Last-use loan ending (NLL) is not implemented, so loans remain conservatively lexical.
 
 ## Raw pointers
 

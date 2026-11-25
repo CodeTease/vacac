@@ -30,38 +30,27 @@ impl<'ctx> Codegen<'ctx> {
                 .into_pointer_value();
             if !captures.is_empty() {
                 let environment_type = self.closure_environment_type(&captures)?;
-                for (index, (name, ty)) in captures.iter().enumerate() {
-                    let alloca = self.create_entry_alloca(*ty, name)?;
-                    if *ty != ValueType::Unit {
-                        let field = self
-                            .builder
-                            .build_struct_gep(
-                                environment_type,
-                                environment,
-                                index as u32,
-                                "capture.ptr",
-                            )
-                            .map_err(|error| error.to_string())?;
-                        let value = self
-                            .builder
-                            .build_load(
-                                self.llvm_type(*ty).ok_or("capture has no LLVM type")?,
-                                field,
-                                name,
-                            )
-                            .map_err(|error| error.to_string())?;
-                        self.builder
-                            .build_store(alloca, value)
-                            .map_err(|error| error.to_string())?;
-                    }
+                for (index, capture) in captures.iter().enumerate() {
+                    // Captured locals name the heap slot directly. Every call through
+                    // the same closure therefore reads and writes shared state, and a
+                    // nested call cannot be overwritten by an outer call's stale copy.
+                    let pointer = self
+                        .builder
+                        .build_struct_gep(
+                            environment_type,
+                            environment,
+                            index as u32,
+                            "capture.ptr",
+                        )
+                        .map_err(|error| error.to_string())?;
                     let binding_id = self.next_binding_id();
                     self.scopes[0].insert(
-                        name.clone(),
+                        capture.name.clone(),
                         Local {
-                            pointer: alloca,
-                            ty: *ty,
-                            immutable: true,
-                            loop_variable: false,
+                            pointer,
+                            ty: capture.ty,
+                            immutable: capture.immutable,
+                            loop_variable: capture.loop_variable,
                             binding_id,
                             mutable_reference_origin: None,
                         },

@@ -1,7 +1,7 @@
 use crate::diagnostic::Diagnostic;
 use crate::parser::{
-    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, MatchPattern, Program,
-    Span, Stmt, StructDecl, Type, UnaryOp,
+    ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, LambdaCapture,
+    LambdaKey, MatchPattern, Program, Span, Stmt, StructDecl, Type, UnaryOp,
 };
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
@@ -120,6 +120,14 @@ struct Local<'ctx> {
     mutable_reference_origin: Option<MutableReferenceOrigin>,
 }
 
+#[derive(Clone)]
+struct CaptureLayout {
+    name: String,
+    ty: ValueType,
+    immutable: bool,
+    loop_variable: bool,
+}
+
 struct TypedValue<'ctx> {
     value: Option<BasicValueEnum<'ctx>>,
     ty: ValueType,
@@ -176,8 +184,9 @@ struct Codegen<'ctx> {
     global_states: HashMap<String, u8>,
     next_lambda_id: usize,
     next_binding_id: usize,
-    lambda_captures: HashMap<(Option<usize>, usize, usize), Vec<String>>,
-    lambda_capture_types: HashMap<String, Vec<(String, ValueType)>>,
+    lambda_captures: HashMap<LambdaKey, Vec<LambdaCapture>>,
+    lambda_capture_types: HashMap<String, Vec<CaptureLayout>>,
+    lambda_owner: String,
     function_adapters: HashMap<String, FunctionValue<'ctx>>,
 }
 

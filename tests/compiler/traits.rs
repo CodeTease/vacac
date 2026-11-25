@@ -861,6 +861,36 @@ fn main() -> i64 { Twice::twice(21) - 42 + Twice::twice(true) - 100 }
 }
 
 #[test]
+fn inherited_default_bodies_specialize_stateful_closure_captures() {
+    let result = compile_and_run(
+        r#"
+        trait Counted {
+            fn make(seed: i64) -> fn() -> i64 {
+                let count = seed;
+                fn() -> i64 {
+                    count = count + 1;
+                    count
+                }
+            }
+        }
+        impl Counted for i64 {}
+        impl Counted for bool {}
+        fn main() -> i64 {
+            const first = <i64 as Counted>::make(40);
+            const second = <bool as Counted>::make(40);
+            print_i64(first());
+            print_i64(first());
+            print_i64(second());
+            first() - 43
+        }
+        "#,
+        "traits-default-stateful-closures",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "41\n42\n41\n");
+}
+
+#[test]
 fn default_bodies_call_sibling_functions_and_annotate_self() {
     let result = compile_and_run(
         r#"
