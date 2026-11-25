@@ -329,6 +329,28 @@ fn main() -> i64 {
 }
 
 #[test]
+fn inferred_if_branches_keep_local_binding_scopes() {
+    let result = compile_and_run(
+        r#"
+fn identity<T>(value: T) -> T { value }
+fn main() -> i64 {
+    let value = 42;
+    let flag = if true {
+        let value = true;
+        value
+    } else {
+        false
+    };
+    let other = identity(flag);
+    if other { 0 } else { 1 }
+}
+"#,
+        "generics-if-scope",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn generic_constructors_and_patterns_follow_function_value_types() {
     let result = compile_and_run(
         r#"

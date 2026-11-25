@@ -333,10 +333,10 @@ impl Specializer {
                     .find(|field| field.name == *name)
                     .map(|field| field.ty.clone())
             }
-            Expr::If { then_block, .. } => then_block
-                .tail
-                .as_ref()
-                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
+            Expr::If { then_block, .. } => {
+                let mut branch_variables = variables.clone();
+                self.infer_block_tail_type(then_block, &mut branch_variables, visiting_globals)
+            }
             Expr::Match { value, arms, .. } => {
                 let matched = self.infer_expr_type_inner(value, variables, visiting_globals);
                 let mut result = None;
