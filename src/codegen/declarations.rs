@@ -107,9 +107,7 @@ impl<'ctx> Codegen<'ctx> {
         let Expr::Variable(name, _) = expression else {
             return None;
         };
-        let Some(local) = self.lookup_local(name) else {
-            return None;
-        };
+        let local = self.lookup_local(name)?;
         if !matches!(local.ty, ValueType::MutableReference(_)) {
             return None;
         }
@@ -954,8 +952,6 @@ impl<'ctx> Codegen<'ctx> {
             }
             let llvm_name = if function.name == "main" {
                 "vaca_main"
-            } else if program.functions_are_qualified {
-                &function.name
             } else {
                 &function.name
             };

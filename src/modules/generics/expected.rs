@@ -247,17 +247,17 @@ impl Specializer {
                             format!("enum `{enum_name}` has no variant `{variant_name}`"),
                         )
                     })?;
-                if let Some(values) = payload {
-                    if values.len() != variant.payload.len() {
-                        return Err(Diagnostic::at(
-                            (*variant_span).into(),
-                            format!(
-                                "variant `{enum_name}::{variant_name}` expects {} payload value(s), got {}",
-                                variant.payload.len(),
-                                values.len()
-                            ),
-                        ));
-                    }
+                if let Some(values) = payload
+                    && values.len() != variant.payload.len()
+                {
+                    return Err(Diagnostic::at(
+                        (*variant_span).into(),
+                        format!(
+                            "variant `{enum_name}::{variant_name}` expects {} payload value(s), got {}",
+                            variant.payload.len(),
+                            values.len()
+                        ),
+                    ));
                 }
                 let mut resolved_arguments = if !type_arguments.is_empty() {
                     type_arguments

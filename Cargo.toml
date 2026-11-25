@@ -7,6 +7,19 @@ description = "A small static compiler for the Vaca language"
 [dependencies]
 inkwell = { version = "0.11.0", features = ["llvm23-1"] }
 
+[lints.clippy]
+# `Diagnostic` is a deliberately rich error value threaded through the whole
+# pipeline by value; boxing every `Result` would churn every signature.
+result_large_err = "allow"
+# Compiler internals pass many parallel pieces of state (types, spans, flags)
+# explicitly instead of hiding them in a context struct.
+too_many_arguments = "allow"
+# Symbol tables use small tuples inline; aliasing them would hide more than it
+# explains.
+type_complexity = "allow"
+# `SelfType` is the language's spelling, not a redundant enum prefix.
+enum_variant_names = "allow"
+
 [features]
 # Release artifacts link LLVM statically so they do not need libLLVM at runtime.
 static-llvm = ["inkwell/llvm23-1-force-static"]

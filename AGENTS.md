@@ -6,7 +6,8 @@ pipeline, and rules that are easy to break.
 
 ## Requirements
 
-- Rust with the 2024 edition; CI pins 1.99.1
+- Rust with the 2024 edition; CI pins 1.100.0 with the `rustfmt` and `clippy`
+  components
 - **LLVM 23**; inkwell uses feature `llvm23-1`. Provide `llvm-config` or
   `llvm-config-23`, or set `LLVM_SYS_231_PREFIX` (CI uses `/usr/lib/llvm-23`)
 - C linker as `cc`
@@ -19,12 +20,17 @@ pipeline, and rules that are easy to break.
 | Build | `cargo build --release` |
 | Test | `cargo test` (CI uses `cargo test --locked`) |
 | Format | `cargo fmt` |
+| Lint | `cargo clippy --all-targets -- -D warnings` |
 | Check/run all examples | `scripts/test-examples.sh` (after `cargo build --release`) |
 | Adversarial corpus | `python3 tests/fuzz/run.py target/release/vacac` |
 
-No linter config exists. GitHub Actions (`.github/workflows/ci.yml`) checks
-`cargo fmt --all -- --check`, runs tests, builds the release compiler, checks and
-runs all examples, and runs `tests/fuzz/run.py`.
+`[lints.clippy]` in `Cargo.toml` allows exactly four lints (`result_large_err`,
+`too_many_arguments`, `type_complexity`, `enum_variant_names`), each with a
+comment. Everything else must stay warning free; add a new `allow` only with a
+comment explaining why the lint is wrong for this codebase. GitHub Actions
+(`.github/workflows/ci.yml`) checks `cargo fmt --all -- --check`, runs
+`cargo clippy --all-targets --locked -- -D warnings`, runs tests, builds the
+release compiler, checks and runs all examples, and runs `tests/fuzz/run.py`.
 
 ## Architecture
 

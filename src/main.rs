@@ -491,6 +491,25 @@ fn backend_diagnostic(
     error
 }
 
+fn main() -> ExitCode {
+    let json_diagnostics = std::env::args_os().any(|arg| arg == "--json");
+    match run() {
+        Ok(code) => ExitCode::from(code as u8),
+        Err(errors) => {
+            if json_diagnostics {
+                for error in errors.diagnostics {
+                    eprintln!("{}", error.render_json());
+                }
+            } else {
+                for error in errors.diagnostics {
+                    eprintln!("vacac: {}", error.render_human());
+                }
+            }
+            ExitCode::from(1)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,24 +557,5 @@ mod tests {
             Some("pub fn value() { missing }")
         );
         assert!(diagnostic.render_human().contains("nested/child.vca:1:18"));
-    }
-}
-
-fn main() -> ExitCode {
-    let json_diagnostics = std::env::args_os().any(|arg| arg == "--json");
-    match run() {
-        Ok(code) => ExitCode::from(code as u8),
-        Err(errors) => {
-            if json_diagnostics {
-                for error in errors.diagnostics {
-                    eprintln!("{}", error.render_json());
-                }
-            } else {
-                for error in errors.diagnostics {
-                    eprintln!("vacac: {}", error.render_human());
-                }
-            }
-            ExitCode::from(1)
-        }
     }
 }
