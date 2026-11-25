@@ -62,6 +62,19 @@ fn parser_recovers_between_bad_statements_inside_a_function() {
 }
 
 #[test]
+fn parser_recovers_inside_a_malformed_nested_pattern() {
+    let (dir, compile) = compile_source(
+        "fn helper() -> i64 { match (1, true) { (1, => { 1 }, _ => { 0 } } }\nfn main() -> i64 { 0 }\n",
+        "parser-nested-pattern-recovery",
+    );
+    let stderr = String::from_utf8_lossy(&compile.stderr);
+    assert!(!compile.status.success());
+    assert!(stderr.contains("expected pattern, found `=`"), "{stderr}");
+    assert!(stderr.contains("test.vca:1:"), "{stderr}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn parser_recovers_after_a_bad_match_arm_without_consuming_the_match_close() {
     let (dir, compile) = compile_source(
         "fn helper() -> i64 { match true { false => { 0 }, true => { 1, 2 => { 2 } } } }\nfn main() -> i64 { 0 }\n",
