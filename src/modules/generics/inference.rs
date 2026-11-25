@@ -337,10 +337,18 @@ impl Specializer {
                 .tail
                 .as_ref()
                 .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
-            Expr::Match { arms, .. } => arms
-                .first()
-                .and_then(|arm| arm.body.tail.as_ref())
-                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
+            Expr::Match { value, arms, .. } => {
+                let matched = self.infer_expr_type_inner(value, variables, visiting_globals);
+                let arm = arms.first()?;
+                let mut arm_variables = variables.clone();
+                if let Some(matched) = &matched {
+                    let mut pattern = arm.pattern.clone();
+                    self.infer_pattern_bindings(&mut pattern, matched, &mut arm_variables);
+                }
+                arm.body.tail.as_ref().and_then(|value| {
+                    self.infer_expr_type_inner(value, &arm_variables, visiting_globals)
+                })
+            }
             Expr::Variant { enum_name, .. } => self
                 .enum_names
                 .contains(enum_name)

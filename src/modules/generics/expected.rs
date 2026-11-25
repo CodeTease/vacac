@@ -155,7 +155,12 @@ impl Specializer {
                     {
                         self.specialize_variant_pattern(enum_name, concrete_name, arm.span)?;
                     }
-                    self.normalize_pattern(&mut arm.pattern, substitutions, *match_span)?;
+                    self.normalize_pattern_typed(
+                        &mut arm.pattern,
+                        matched_type.as_ref(),
+                        substitutions,
+                        *match_span,
+                    )?;
                     if let Some(matched_type) = &matched_type {
                         self.infer_pattern_bindings(
                             &mut arm.pattern,

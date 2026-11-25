@@ -88,11 +88,16 @@ impl Specializer {
                     } else {
                         self.process_expr(value, substitutions, variables)?;
                     }
-                    self.normalize_pattern(pattern, substitutions, *span)?;
-                    if let Some(ty) = ty
+                    let binding_type = ty
                         .clone()
-                        .or_else(|| self.infer_expr_type(value, variables))
-                    {
+                        .or_else(|| self.infer_expr_type(value, variables));
+                    self.normalize_pattern_typed(
+                        pattern,
+                        binding_type.as_ref(),
+                        substitutions,
+                        *span,
+                    )?;
+                    if let Some(ty) = binding_type {
                         self.infer_pattern_bindings(pattern, &ty, variables);
                     }
                 }
@@ -419,7 +424,12 @@ impl Specializer {
                     {
                         self.specialize_variant_pattern(enum_name, concrete_name, arm.span)?;
                     }
-                    self.normalize_pattern(&mut arm.pattern, substitutions, *span)?;
+                    self.normalize_pattern_typed(
+                        &mut arm.pattern,
+                        matched_type.as_ref(),
+                        substitutions,
+                        *span,
+                    )?;
                     if let Some(matched_type) = &matched_type {
                         self.infer_pattern_bindings(
                             &mut arm.pattern,

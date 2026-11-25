@@ -1,40 +1,106 @@
 use super::inference::type_key;
 use super::*;
 impl Specializer {
-    pub(super) fn normalize_pattern(
+    /// Rewrite pattern names and recurse using the type at each position, so a
+    /// nested pattern inside a generic payload sees the concrete variant or field
+    /// layout it must match.
+    pub(super) fn normalize_pattern_typed(
         &mut self,
         pattern: &mut MatchPattern,
-        _substitutions: &Substitution,
+        ty: Option<&Type>,
+        substitutions: &Substitution,
         span: Span,
     ) -> Result<(), Diagnostic> {
         match pattern {
-            MatchPattern::Tuple(patterns) | MatchPattern::Array(patterns) => {
+            MatchPattern::Tuple(patterns) => {
+                let elements = match ty {
+                    Some(Type::Tuple(elements)) => Some(elements.clone()),
+                    _ => None,
+                };
+                for (index, pattern) in patterns.iter_mut().enumerate() {
+                    let element = elements
+                        .as_ref()
+                        .and_then(|elements| elements.get(index))
+                        .cloned();
+                    self.normalize_pattern_typed(pattern, element.as_ref(), substitutions, span)?;
+                }
+            }
+            MatchPattern::Array(patterns) => {
+                let element = match ty {
+                    Some(Type::Array(element, _)) => Some((**element).clone()),
+                    _ => None,
+                };
                 for pattern in patterns {
-                    self.normalize_pattern(pattern, _substitutions, span)?;
+                    self.normalize_pattern_typed(pattern, element.as_ref(), substitutions, span)?;
                 }
             }
             MatchPattern::Struct { name, fields, .. } => {
-                if let Some(template_name) = self
-                    .struct_instances
-                    .get(name)
-                    .map(|(template, _)| template.clone())
-                {
-                    *name = template_name;
+                if let Some(concrete) = self.match_struct_instance(name, ty) {
+                    *name = concrete;
                 }
-                for (_, pattern, field_span) in fields {
-                    self.normalize_pattern(pattern, _substitutions, *field_span)?;
+                let declaration = self
+                    .concrete_structs
+                    .get(name)
+                    .or_else(|| {
+                        self.generated_structs
+                            .iter()
+                            .find(|declaration| declaration.name == *name)
+                    })
+                    .cloned();
+                if let Some(declaration) = declaration {
+                    for (field_name, pattern, field_span) in fields.iter_mut() {
+                        let field_ty = declaration
+                            .fields
+                            .iter()
+                            .find(|field| field.name == *field_name)
+                            .map(|field| {
+                                self.normalize_type(field.ty.clone(), substitutions, *field_span)
+                            })
+                            .transpose()?;
+                        self.normalize_pattern_typed(
+                            pattern,
+                            field_ty.as_ref(),
+                            substitutions,
+                            *field_span,
+                        )?;
+                    }
+                } else {
+                    for (_, pattern, field_span) in fields.iter_mut() {
+                        self.normalize_pattern_typed(pattern, None, substitutions, *field_span)?;
+                    }
                 }
             }
-            MatchPattern::Variant { bindings, .. } => {
+            MatchPattern::Variant {
+                enum_name,
+                variant_name,
+                bindings,
+            } => {
+                if let Some(concrete) = self.match_enum_instance(enum_name, ty) {
+                    *enum_name = concrete;
+                }
+                let payload_types = self
+                    .enum_declarations
+                    .get(enum_name)
+                    .and_then(|declaration| {
+                        declaration
+                            .variants
+                            .iter()
+                            .find(|variant| variant.name == *variant_name)
+                            .map(|variant| variant.payload.clone())
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|payload| self.normalize_type(payload, substitutions, span))
+                    .collect::<Result<Vec<_>, _>>()?;
                 if let Some(patterns) = bindings {
-                    for pattern in patterns {
-                        self.normalize_pattern(pattern, _substitutions, span)?;
+                    for (pattern, payload) in patterns.iter_mut().zip(payload_types.iter()) {
+                        self.normalize_pattern_typed(pattern, Some(payload), substitutions, span)?;
                     }
                 }
             }
             MatchPattern::ImportedVariant { bindings, .. } => {
                 for pattern in bindings {
-                    self.normalize_pattern(pattern, _substitutions, span)?;
+                    self.normalize_pattern_typed(pattern, None, substitutions, span)?;
                 }
             }
             MatchPattern::Wildcard
@@ -45,6 +111,48 @@ impl Specializer {
             | MatchPattern::F64(_) => {}
         }
         Ok(())
+    }
+
+    /// Adopt a concrete struct instance when the expected type names the same
+    /// template as the pattern.
+    fn match_struct_instance(&self, name: &str, ty: Option<&Type>) -> Option<String> {
+        let Some(Type::Named(concrete)) = ty else {
+            return None;
+        };
+        if concrete == name {
+            return None;
+        }
+        let expected_template = self
+            .struct_instances
+            .get(concrete)
+            .map(|(template, _)| template.as_str())?;
+        let pattern_template = self
+            .struct_instances
+            .get(name)
+            .map(|(template, _)| template.as_str())
+            .unwrap_or(name);
+        (pattern_template == expected_template).then(|| concrete.clone())
+    }
+
+    /// Adopt a concrete enum instance when the expected type names the same
+    /// template as the pattern.
+    fn match_enum_instance(&self, name: &str, ty: Option<&Type>) -> Option<String> {
+        let Some(Type::Named(concrete)) = ty else {
+            return None;
+        };
+        if concrete == name {
+            return None;
+        }
+        let expected_template = self
+            .enum_instances
+            .get(concrete)
+            .map(|(template, _)| template.as_str())?;
+        let pattern_template = self
+            .enum_instances
+            .get(name)
+            .map(|(template, _)| template.as_str())
+            .unwrap_or(name);
+        (pattern_template == expected_template).then(|| concrete.clone())
     }
 
     /// Rewrite a match-arm variant pattern to the scrutinee's concrete enum
