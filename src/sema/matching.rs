@@ -62,12 +62,14 @@ impl Checker {
                 &mut bindings,
                 &mut seen,
             )?;
-            let useful = self.is_useful(
-                &rows,
-                std::slice::from_ref(&row),
-                &[value_type],
-                &mut budget,
-            )?;
+            let useful = self
+                .is_useful(
+                    &rows,
+                    std::slice::from_ref(&row),
+                    &[value_type],
+                    &mut budget,
+                )
+                .map_err(|error| at(span, error.message))?;
             if !useful {
                 return Err(self.unreachable_arm(arms, index, value_type, &row, &rows));
             }
@@ -80,14 +82,18 @@ impl Checker {
             }
             rows.push(vec![row]);
         }
-        let exhaustive = !self.is_useful(
-            &rows,
-            &[PatternRow::Wild],
-            std::slice::from_ref(&value_type),
-            &mut budget,
-        )?;
+        let exhaustive = !self
+            .is_useful(
+                &rows,
+                &[PatternRow::Wild],
+                std::slice::from_ref(&value_type),
+                &mut budget,
+            )
+            .map_err(|error| at(span, error.message))?;
         if !exhaustive {
-            return Err(self.non_exhaustive_match(value_type, &rows, arms, span, &mut budget)?);
+            return Err(self
+                .non_exhaustive_match(value_type, &rows, arms, span, &mut budget)
+                .map_err(|error| at(span, error.message))?);
         }
         let result_type =
             result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))?;
