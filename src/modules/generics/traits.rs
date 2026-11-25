@@ -413,7 +413,9 @@ impl Specializer {
                 continue;
             }
             // Prefer nested trait calls, which can supply evidence after they are
-            // specialized, and defer generic aggregates that need an expected type.
+            // specialized. Generic aggregates with contents can also supply
+            // evidence, but payload-free aggregates cannot, so defer those until
+            // every other argument has been processed.
             let Some(index) = (0..args.len())
                 .filter(|index| !processed[*index])
                 .min_by_key(|index| match &args[*index] {
@@ -421,22 +423,35 @@ impl Specializer {
                     Expr::Variant {
                         enum_name,
                         type_arguments,
+                        payload,
                         ..
                     } if type_arguments.is_empty()
                         && self.generic_enums.contains_key(enum_name) =>
                     {
-                        2
+                        if payload.as_ref().is_some_and(|payload| !payload.is_empty()) {
+                            2
+                        } else {
+                            3
+                        }
                     }
                     Expr::Struct {
                         name,
                         type_arguments,
+                        fields,
                         ..
-                    } if type_arguments.is_empty() && self.generic_structs.contains_key(name) => 2,
+                    } if type_arguments.is_empty() && self.generic_structs.contains_key(name) => {
+                        if fields.is_empty() {
+                            3
+                        } else {
+                            2
+                        }
+                    }
                     _ => 1,
                 })
             else {
                 break;
             };
+            self.prepare_deferred_aggregate(&mut args[index], substitutions, variables)?;
             self.process_expr(&mut args[index], substitutions, variables)?;
             if let Some(actual) = self.infer_trait_argument_type(&args[index], variables) {
                 let actual = self.normalize_type(actual, substitutions, call_span)?;
@@ -640,6 +655,61 @@ impl Specializer {
             Err(error) if explicit_self && error.message.contains("`#Self`") => Ok(()),
             Err(error) => Err(map_self_marker(error)),
         }
+    }
+
+    /// Give deferred generic aggregates a chance to infer their type arguments
+    /// from nested expressions before `process_expr` requires an expected type.
+    fn prepare_deferred_aggregate(
+        &mut self,
+        expr: &mut Expr,
+        substitutions: &Substitution,
+        variables: &mut HashMap<String, Type>,
+    ) -> Result<(), Diagnostic> {
+        let unresolved_struct = matches!(
+            expr,
+            Expr::Struct {
+                name,
+                type_arguments,
+                fields,
+                ..
+            } if type_arguments.is_empty()
+                && self.generic_structs.contains_key(name)
+                && !fields.is_empty()
+        ) && self.infer_trait_argument_type(expr, variables).is_none();
+        if unresolved_struct {
+            if let Expr::Struct { fields, .. } = expr {
+                for (_, value, _) in fields.iter_mut() {
+                    self.prepare_deferred_aggregate(value, substitutions, variables)?;
+                }
+                for (_, value, _) in fields.iter_mut() {
+                    self.process_expr(value, substitutions, variables)?;
+                }
+            }
+            if let Some(Type::Applied(_, arguments)) =
+                self.infer_trait_argument_type(expr, variables)
+                && let Expr::Struct { type_arguments, .. } = expr
+            {
+                *type_arguments = arguments;
+            }
+            return Ok(());
+        }
+        let unresolved_variant = matches!(
+            expr,
+            Expr::Variant {
+                enum_name,
+                type_arguments,
+                ..
+            } if type_arguments.is_empty() && self.generic_enums.contains_key(enum_name)
+        ) && self.infer_trait_argument_type(expr, variables).is_none();
+        if unresolved_variant
+            && let Expr::Variant { payload, .. } = expr
+            && let Some(values) = payload
+        {
+            for value in values {
+                self.prepare_deferred_aggregate(value, substitutions, variables)?;
+            }
+        }
+        Ok(())
     }
 
     fn infer_trait_argument_type(

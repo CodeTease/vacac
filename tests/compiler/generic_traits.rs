@@ -163,16 +163,30 @@ fn generic_trait_inference_is_independent_of_argument_order() {
     let result = compile_and_run(
         r#"
 enum Maybe<T> { None, Some(T) }
+struct Box<U> { value: U }
 trait Choose<T> {
     fn choose(value: Self, maybe: Maybe<T>, input: T) -> i64;
+    fn choose_pair(value: Self, first: Maybe<T>, second: Maybe<T>) -> i64;
+    fn choose_box(value: Self, maybe: Maybe<T>, boxed: Box<T>) -> i64;
+    fn choose_box_first(value: Self, boxed: Box<T>, maybe: Maybe<T>) -> i64;
+    fn choose_nested(value: Self, maybe: Maybe<T>, nested: Maybe<Box<T>>) -> i64;
     fn pick(value: Self, input: T) -> T;
 }
 impl<A> Choose<A> for i64 {
     fn choose(value: i64, maybe: Maybe<A>, input: A) -> i64 { 42 }
+    fn choose_pair(value: i64, first: Maybe<A>, second: Maybe<A>) -> i64 { 42 }
+    fn choose_box(value: i64, maybe: Maybe<A>, boxed: Box<A>) -> i64 { 42 }
+    fn choose_box_first(value: i64, boxed: Box<A>, maybe: Maybe<A>) -> i64 { 42 }
+    fn choose_nested(value: i64, maybe: Maybe<A>, nested: Maybe<Box<A>>) -> i64 { 42 }
     fn pick(value: i64, input: A) -> A { input }
 }
 fn main() -> i64 {
-    Choose::choose(0, Maybe::None, Choose::pick(0, 42)) - 42
+    let nested_call = Choose::choose(0, Maybe::None, Choose::pick(0, 42));
+    let payload = Choose::choose_pair(0, Maybe::None, Maybe::Some(Choose::pick(0, 42)));
+    let boxed = Choose::choose_box(0, Maybe::None, Box { value: Choose::pick(0, 42) });
+    let boxed_first = Choose::choose_box_first(0, Box { value: Choose::pick(0, 42) }, Maybe::None);
+    let nested = Choose::choose_nested(0, Maybe::None, Maybe::Some(Box { value: Choose::pick(0, 42) }));
+    nested_call + payload + boxed + boxed_first + nested - 210
 }
 "#,
         "generic-traits-inference-order",
@@ -351,6 +365,11 @@ fn generic_trait_inference_reports_missing_and_conflicting_arguments() {
         "trait Pick { fn pick<U>(value: Self) -> U; } impl Pick for i64 { fn pick<U>(value: i64) -> U { loop {} } } fn main() -> i64 { <i64 as Pick>::pick(0); 0 }",
         "generic-traits-infer-function-argument",
         "cannot infer generic type parameter `U` for `Pick::pick`",
+    );
+    assert_compile_error(
+        "enum Maybe<T> { None, Some(T) } trait Choose<T> { fn choose(value: Self, maybe: Maybe<T>) -> i64; } impl<A> Choose<A> for i64 { fn choose(value: i64, maybe: Maybe<A>) -> i64 { 0 } } fn main() -> i64 { Choose::choose(0, Maybe::None); 0 }",
+        "generic-traits-infer-payload-free-aggregate",
+        "cannot infer generic type parameter `T` for `Maybe`",
     );
 }
 
