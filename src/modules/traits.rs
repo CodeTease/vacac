@@ -652,17 +652,6 @@ fn validate_and_lower_impl(
     shapes: &TypeShapes,
 ) -> Result<ImplInfo, Diagnostic> {
     let trait_info = registry.trait_info(trait_id).clone();
-    if declaration.trait_arguments.len() != trait_info.generic_params.len() {
-        return Err(at(
-            declaration.trait_span,
-            format!(
-                "trait `{}` expects {} type argument(s), got {}",
-                trait_info.name,
-                trait_info.generic_params.len(),
-                declaration.trait_arguments.len()
-            ),
-        ));
-    }
     let mut by_name = HashMap::new();
     for required in &trait_info.functions {
         by_name.insert(required.name.as_str(), required);
@@ -766,21 +755,17 @@ fn validate_and_lower_impl(
                 ),
             ));
         }
-        for function_param in &function.generic_params {
-            let parameters = declaration
+        validate_bounds(
+            &function.generic_params,
+            declaration
                 .generic_params
                 .iter()
-                .chain(&function.generic_params)
-                .collect::<Vec<_>>();
-            validate_bounds(
-                std::slice::from_ref(function_param),
-                parameters.iter().copied(),
-                false,
-                true,
-                registry,
-                shapes,
-            )?;
-        }
+                .chain(&function.generic_params),
+            false,
+            true,
+            registry,
+            shapes,
+        )?;
         for param in &function.params {
             let actual = substitute_self(&param.ty, &declaration.target);
             validate_signature_type(&actual, true, false, param.span)?;
@@ -865,11 +850,9 @@ fn validate_and_lower_impl(
             substitutions.insert(original_name, Type::Parameter(name.clone()));
             parameter.name = name;
         }
-        let mut generic_params = declaration.generic_params.clone();
-        generic_params.extend(function_parameters);
         let mut function = Function {
             name: internal_name.clone(),
-            generic_params,
+            generic_params: function_parameters,
             lifetime_params: Vec::new(),
             params: required.params.clone(),
             return_type: required.return_type.clone(),
@@ -880,7 +863,12 @@ fn validate_and_lower_impl(
             // checks inside it use the trait's module rather than the impl's.
             module: trait_info.module.clone(),
         };
+        // Trait-argument substitution applies only to the method's own generic
+        // parameters; impl-owned bounds stay as declared for registry matching.
         substitute_parameters_in_function(&mut function, &substitutions);
+        let mut generic_params = declaration.generic_params.clone();
+        generic_params.extend(function.generic_params);
+        function.generic_params = generic_params;
         for param in &function.params {
             validate_signature_type(&param.ty, true, false, param.span)?;
         }
@@ -940,6 +928,7 @@ fn function_bound_keys(
                 })
                 .collect::<Vec<_>>();
             keys.sort();
+            keys.dedup();
             keys
         })
         .collect()

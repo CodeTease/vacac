@@ -88,6 +88,24 @@ fn main() -> i64 {
 }
 
 #[test]
+fn inherited_defaults_keep_impl_owned_bounds() {
+    let result = compile_and_run(
+        r#"
+trait Convert<T> { fn convert(value: Self) -> i64; }
+impl Convert<i64> for bool { fn convert(value: bool) -> i64 { 0 } }
+struct Box<T> { value: T }
+trait Pick<A> { fn pick(value: Self) -> i64 { 0 } }
+impl<A, B: Convert<A>> Pick<B> for Box<A> {}
+fn main() -> i64 {
+    <Box<i64> as Pick<bool>>::pick(Box<i64> { value: 0 })
+}
+"#,
+        "generic-traits-inherited-impl-bounds",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn unqualified_calls_infer_self_trait_and_function_arguments() {
     let result = compile_and_run(
         r#"
@@ -128,12 +146,36 @@ impl<T> Tag<T> for Box<T> {
 }
 fn main() -> i64 {
     let empty: Vec<i64> = vec_new();
+    let inferred = Take::take(0, empty);
     let taken = <i64 as Take<Vec<i64>>>::take(0, empty);
+    let contextual = <i64 as Take<Vec<i64>>>::take(0, vec_new());
     let tagged = <Box<i64> as Tag<i64>>::tag(Box<i64> { value: 42 });
-    taken + tagged - 42
+    inferred + taken + contextual + tagged - 42
 }
 "#,
         "generic-traits-contextual-arguments",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn generic_trait_inference_is_independent_of_argument_order() {
+    let result = compile_and_run(
+        r#"
+enum Maybe<T> { None, Some(T) }
+trait Choose<T> {
+    fn choose(value: Self, maybe: Maybe<T>, input: T) -> i64;
+    fn pick(value: Self, input: T) -> T;
+}
+impl<A> Choose<A> for i64 {
+    fn choose(value: i64, maybe: Maybe<A>, input: A) -> i64 { 42 }
+    fn pick(value: i64, input: A) -> A { input }
+}
+fn main() -> i64 {
+    Choose::choose(0, Maybe::None, Choose::pick(0, 42)) - 42
+}
+"#,
+        "generic-traits-inference-order",
     );
     assert_eq!(result.status.code(), Some(0));
 }
@@ -189,7 +231,9 @@ trait Tag<T> { fn tag(value: Self) -> i64; }
 impl Tag<bool> for i64 { fn tag(value: i64) -> i64 { 20 } }
 impl Tag<i64> for i64 { fn tag(value: i64) -> i64 { 22 } }
 fn main() -> i64 {
-    <i64 as Tag<bool>>::tag(0) + <i64 as Tag<i64>>::tag(0) - 42
+    let boolean = <i64 as Tag<bool>>::tag(0);
+    let integer = <i64 as Tag<i64>>::tag(0);
+    if boolean == 20 && integer == 22 { 0 } else { 1 }
 }
 "#,
         "generic-traits-coherence-distinct-arguments",
@@ -250,6 +294,21 @@ fn main() -> i64 { 0 }
         "generic-traits-method-types",
         "has type `bool`, expected `i64`",
     );
+}
+
+#[test]
+fn substituted_method_bounds_deduplicate_before_comparison() {
+    let result = compile_and_run(
+        r#"
+trait Convert<T> { fn convert(value: Self) -> i64; }
+impl Convert<i64> for i64 { fn convert(value: i64) -> i64 { 0 } }
+trait Map<T> { fn map<U: Convert<T> + Convert<i64>>(value: Self, input: U) -> i64; }
+impl Map<i64> for i64 { fn map<U: Convert<i64>>(value: i64, input: U) -> i64 { 0 } }
+fn main() -> i64 { <i64 as Map<i64>>::map::<i64>(0, 0) }
+"#,
+        "generic-traits-bound-deduplication",
+    );
+    assert_eq!(result.status.code(), Some(0));
 }
 
 #[test]
@@ -407,6 +466,41 @@ fn generic_trait_dispatch_is_erased_before_llvm_emission() {
 }
 
 #[test]
+fn impl_method_bounds_resolve_in_non_root_modules() {
+    let directory = std::env::temp_dir().join(format!(
+        "vacac-generic-traits-bound-resolution-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("main.vca"),
+        "mod lib;\nfn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("lib.vca"),
+        "pub trait Convert<T> { fn convert(value: Self) -> i64; }\ntrait Map<T> { fn map<U: Convert<T>>(value: Self, input: U) -> i64; }\nimpl Convert<i64> for i64 { fn convert(value: i64) -> i64 { 0 } }\nimpl Map<i64> for i64 { fn map<U: Convert<i64>>(value: i64, input: U) -> i64 { 0 } }\n",
+    )
+    .unwrap();
+    let compile = std::process::Command::new(env!("CARGO_BIN_EXE_vacac"))
+        .arg(directory.join("main.vca"))
+        .arg("-o")
+        .arg(directory.join("program"))
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = std::process::Command::new(directory.join("program"))
+        .output()
+        .unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn public_generic_traits_work_across_modules() {
     let directory = std::env::temp_dir().join(format!(
         "vacac-generic-traits-modules-{}",
@@ -496,11 +590,15 @@ fn malformed_generic_traits_recover_to_later_declarations() {
 #[test]
 fn generic_traits_share_the_specialization_limit() {
     fn source(count: usize) -> String {
+        const TRAIT_SPECIALIZATIONS: usize = 511;
         let mut source = String::from(
-            "trait Mark { fn mark<U>(value: Self) -> i64; }\nimpl Mark for i64 { fn mark<U>(value: i64) -> i64 { 0 } }\nfn main() -> i64 {\n",
+            "trait Mark { fn mark<U>(value: Self) -> i64; }\nimpl Mark for i64 { fn mark<U>(value: i64) -> i64 { 0 } }\nfn ordinary<T>() -> i64 { 0 }\nfn main() -> i64 {\n",
         );
-        for index in 0..count {
+        for index in 0..TRAIT_SPECIALIZATIONS {
             source.push_str(&format!("    <i64 as Mark>::mark::<[i64; {index}]>(0);\n"));
+        }
+        for index in 0..(count - TRAIT_SPECIALIZATIONS) {
+            source.push_str(&format!("    ordinary::<[i64; {index}]>();\n"));
         }
         source.push_str("    0\n}\n");
         source

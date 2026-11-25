@@ -497,6 +497,7 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             &scope,
         )?;
         for function in &mut declaration.functions {
+            resolve_generic_bounds(&mut function.generic_params, &declaration.module, &scope)?;
             resolve_function_signature(
                 &mut function.params,
                 &mut function.return_type,

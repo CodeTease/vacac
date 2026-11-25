@@ -412,7 +412,29 @@ impl Specializer {
             if progress {
                 continue;
             }
-            let Some(index) = processed.iter().position(|processed| !*processed) else {
+            // Prefer nested trait calls, which can supply evidence after they are
+            // specialized, and defer generic aggregates that need an expected type.
+            let Some(index) = (0..args.len())
+                .filter(|index| !processed[*index])
+                .min_by_key(|index| match &args[*index] {
+                    Expr::TraitCall { .. } => 0,
+                    Expr::Variant {
+                        enum_name,
+                        type_arguments,
+                        ..
+                    } if type_arguments.is_empty()
+                        && self.generic_enums.contains_key(enum_name) =>
+                    {
+                        2
+                    }
+                    Expr::Struct {
+                        name,
+                        type_arguments,
+                        ..
+                    } if type_arguments.is_empty() && self.generic_structs.contains_key(name) => 2,
+                    _ => 1,
+                })
+            else {
                 break;
             };
             self.process_expr(&mut args[index], substitutions, variables)?;
@@ -429,12 +451,17 @@ impl Specializer {
             processed[index] = true;
         }
 
+        let self_suggestion = if trait_info.generic_params.is_empty() {
+            format!("<Type as {trait_name}>")
+        } else {
+            format!("<Type as {trait_name}<...>>")
+        };
         let self_type = inferred.get("#Self").cloned().ok_or_else(|| {
             Diagnostic::at(
                 call_span.into(),
                 format!(
-                    "cannot infer `Self` for `{}::{}`; use `<Type as {}<...>>::{}(...)`",
-                    trait_name, function_name, trait_name, function_name
+                    "cannot infer `Self` for `{}::{}`; use `{}::{}(...)`",
+                    trait_name, function_name, self_suggestion, function_name
                 ),
             )
         })?;
@@ -443,8 +470,8 @@ impl Specializer {
             return Err(Diagnostic::at(
                 call_span.into(),
                 format!(
-                    "cannot infer a concrete `Self` for `{}::{}`; use `<Type as {}<...>>::{}(...)`",
-                    trait_name, function_name, trait_name, function_name
+                    "cannot infer a concrete `Self` for `{}::{}`; use `{}::{}(...)`",
+                    trait_name, function_name, self_suggestion, function_name
                 ),
             ));
         }
@@ -660,14 +687,11 @@ impl Specializer {
             }
             Expr::Variant {
                 enum_name,
-                type_arguments,
                 variant_name,
                 payload,
                 span,
+                ..
             } if self.generic_enums.contains_key(enum_name) => {
-                if !type_arguments.is_empty() {
-                    return Some(Type::Applied(enum_name.clone(), type_arguments.clone()));
-                }
                 let template = self.generic_enums.get(enum_name)?;
                 let variant = template
                     .variants

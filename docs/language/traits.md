@@ -68,7 +68,7 @@ Trait arguments are inferred from value arguments, not from the implementation t
 
 ```vaca
 <i64 as Zero>::zero()
-Choose::pick::<i64>(0, 42)
+<i64 as Choose<i64>>::pick(0, 42)
 ```
 
 The qualified form supplies `Self` and every trait argument explicitly: `<Type as Trait<A, B>>::function(...)`. The unqualified `Trait::<A>::function(...)` shorthand is rejected because a turbofish after the trait selects function arguments, not trait arguments.
