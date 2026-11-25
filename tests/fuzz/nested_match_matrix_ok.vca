@@ -1,0 +1,11 @@
+// The same product matrix is accepted once the remaining combination is covered.
+struct Pair { left: bool, right: bool }
+
+fn main() -> i64 {
+    let pair = Pair { left: false, right: false };
+    match pair {
+        Pair { left: true, .. } => { 1 },
+        Pair { right: true, .. } => { 2 },
+        Pair { left: false, right: false } => { 0 },
+    }
+}

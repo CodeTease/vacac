@@ -21,8 +21,8 @@ The repository [README](../README.md) is the short landing page. This index link
 - [Fixed-size arrays](language/arrays.md) — array types, indexing, iteration, copying, and equality.
 - [Runtime-sized vectors](language/vectors.md) — `Vec<T>`, `vec_new`, `vec_push`, indexing, and iteration.
 - [Named records](language/structs.md) — struct declarations, literals, field access, and equality.
-- [Enums and exhaustive matching](language/enums.md) — variants, payloads, `match`, and reachability rules.
-- [Tuples and destructuring](language/tuples-and-destructuring.md) — tuple values, binding patterns, and match patterns.
+- [Enums and exhaustive matching](language/enums.md) — variants, payloads, ordered `match` arms, and reachability rules.
+- [Tuples and destructuring](language/tuples-and-destructuring.md) — tuple values, binding patterns, and nested match patterns.
 - [Generics](language/generics.md) — generic structs, enums, functions, inference, turbofish, and specialization.
 - [Traits and static dispatch](language/traits.md) — trait declarations, default bodies, coherence, and monomorphized dispatch.
 - [Function values and closures](language/functions-and-closures.md) — function types, lambdas, captures, and equality.

@@ -1,0 +1,22 @@
+// Deeply nested enum payload patterns stay reachable and exhaustive.
+enum E0 { A(i64), B }
+enum E1 { A(E0), B }
+enum E2 { A(E1), B }
+enum E3 { A(E2), B }
+enum E4 { A(E3), B }
+enum E5 { A(E4), B }
+enum E6 { A(E5), B }
+enum E7 { A(E6), B }
+
+fn depth(value: E7) -> i64 {
+    match value {
+        E7::A(E6::A(E5::A(E4::A(E3::A(E2::A(E1::A(E0::A(number)))))))) => { number },
+        E7::A(_) => { 1 },
+        E7::B => { 2 },
+    }
+}
+
+fn main() -> i64 {
+    let nested = E7::A(E6::A(E5::A(E4::A(E3::A(E2::A(E1::A(E0::A(42))))))));
+    depth(nested) - 42
+}

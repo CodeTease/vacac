@@ -26,11 +26,26 @@ fn main() -> i64 {
 
 ## Construction and matching
 
-Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. Match patterns use `EnumName::Variant`; payload variants bind or ignore every field, for example `Event::Record(id, _, label)`, and tuple/array/struct payloads can be recursively destructured. The payload count and types must match the declaration.
+Construct variants with `EnumName::Variant` or `EnumName::Variant(expression, ...)`. Match patterns use `EnumName::Variant`; payload variants bind or ignore every field, for example `Event::Record(id, _, label)`. Payload patterns can themselves be variants, tuples, arrays, or structs, so a test on a nested value appears anywhere a value of that type appears. The payload count and types must match the declaration at every level.
 
-Scalar patterns may be booleans, signed integers, or floating-point literals (use the `f32` suffix for an `f32` pattern). Float pattern equality follows IEEE `==`: `+0.0` and `-0.0` are equal and duplicate, while NaN matches no float literal. Floating-point matches always require a `_` wildcard because their pattern set is not exhaustive.
+Arms are tried in order and only the first matching arm runs. A pattern may overlap earlier arms as long as some value still reaches it; an arm whose values are all covered by earlier arms is rejected as unreachable, and repeating an earlier pattern is reported as a duplicate.
 
-For booleans, integers, and enums a final `_` wildcard or identifier binding may handle remaining values; it is optional when every possible value or variant is otherwise covered. Wildcards and identifier catch-alls must be unique and last, and duplicate or unreachable arms are rejected.
+Exhaustiveness is computed from the complete pattern, not from variant tags alone: `Reading::Sample(true, _)` and `Reading::Sample(false, _)` together cover every sample, while either arm alone does not. Boolean and enum positions are exhaustive once every constructor is covered. Tuple, array, and struct positions are exhaustive once every combination of their elements is covered. Integer and floating-point positions always need a catch-all because their domains are open-ended. A catch-all is a final `_` or identifier binding and must stay unique and last.
+
+Scalar patterns may be booleans, signed integers, or floating-point literals (use the `f32` suffix for an `f32` pattern), including inside aggregate patterns. Float pattern equality follows IEEE `==`: `+0.0` and `-0.0` are equal and duplicate, while NaN matches no float literal.
+
+```vaca
+enum Reading { Sample(bool, i64), Missing }
+
+fn classify(value: Reading) -> i64 {
+    match value {
+        Reading::Sample(true, 0) => { 0 },
+        Reading::Sample(true, number) => { number },
+        Reading::Sample(false, _) => { -1 },
+        Reading::Missing => { -2 },
+    }
+}
+```
 
 Each arm uses `=> { ... }` and its block must end in a value expression. All arm values must have the same type. When every arm produces `unit`, the match is usable as an expression statement (`match ... { ... };`) and is lowered without a result PHI; a `unit` match result can also be bound.
 

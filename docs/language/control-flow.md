@@ -14,7 +14,7 @@ Both branches must end with a value expression of the same non-`unit` type. Bran
 
 ## Scalar matching
 
-`match` also accepts `bool` and `i64` values. Boolean matches must cover both `true` and `false`, or include a wildcard; integer matches require a wildcard because the integer domain is open-ended. Duplicate and unreachable patterns are rejected. Integer patterns are signed decimal literals, including `-9223372036854775808`:
+`match` also accepts `bool` and `i64` values. Boolean matches must cover both `true` and `false`, or include a wildcard; integer matches require a wildcard because the integer domain is open-ended. Duplicate and unreachable patterns are rejected. Integer patterns are signed decimal literals, including `-9223372036854775808`. Scalar patterns can also appear inside tuple, array, struct, and enum payload patterns; see [Tuples and destructuring](tuples-and-destructuring.md#match-patterns).
 
 ```vaca
 let label = match code {

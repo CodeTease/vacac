@@ -1,0 +1,21 @@
+// Ordered matching over nested enum payloads, struct fields, and array slots.
+enum Status { Ready(i64), Broken(str), Idle }
+struct Job { status: Status, flags: [bool; 2] }
+
+fn describe(job: Job) -> i64 {
+    match job {
+        Job { status: Status::Ready(0), flags: [true, _] } => { 10 },
+        Job { status: Status::Ready(code), .. } => { code },
+        Job { status: Status::Broken(_), .. } => { 20 },
+        Job { status: Status::Idle, flags: [false, false] } => { 30 },
+        Job { status: Status::Idle, .. } => { 31 },
+    }
+}
+
+fn main() -> i64 {
+    print_i64(describe(Job { status: Status::Ready(0), flags: [true, false] }));
+    print_i64(describe(Job { status: Status::Ready(5), flags: [false, false] }));
+    print_i64(describe(Job { status: Status::Broken("no"), flags: [true, true] }));
+    print_i64(describe(Job { status: Status::Idle, flags: [false, false] }));
+    0
+}

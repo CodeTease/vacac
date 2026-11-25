@@ -239,6 +239,18 @@ def main():
     ))
     record(parser_json_case(compiler))
     record(malformed_match_json_case(compiler))
+    record(check_result(
+        "deeply nested enum payload patterns dispatch and terminate",
+        run([compiler, CORPUS / "nested_match_deep.vca", "--run"]),
+    ))
+    record(diagnostic_case(
+        compiler, "nested field coverage stays non-exhaustive", "nested_match_matrix.vca",
+        "non-exhaustive match on `Pair`",
+    ))
+    record(check_result(
+        "the remaining nested product combination satisfies coverage",
+        run([compiler, CORPUS / "nested_match_matrix_ok.vca", "--check", "--quiet"]),
+    ))
 
     record(check_result(
         "trait default bodies inherit and override through generic impls",
