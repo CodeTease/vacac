@@ -18,5 +18,5 @@ fn depth(value: E7) -> i64 {
 
 fn main() -> i64 {
     let nested = E7::A(E6::A(E5::A(E4::A(E3::A(E2::A(E1::A(E0::A(42))))))));
-    depth(nested) - 42
+    if depth(nested) == 42 { 0 } else { 1 }
 }

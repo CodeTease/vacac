@@ -145,7 +145,10 @@ impl Specializer {
                 span: match_span,
             } => {
                 self.process_expr(value, substitutions, variables)?;
-                let matched_type = self.infer_expr_type(value, variables);
+                let matched_type = self
+                    .infer_expr_type(value, variables)
+                    .map(|ty| self.normalize_type(ty, substitutions, *match_span))
+                    .transpose()?;
                 for arm in arms {
                     let mut arm_variables = variables.clone();
                     if let (

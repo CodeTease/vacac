@@ -162,6 +162,21 @@ fn exhaustiveness_names_the_missing_nested_case() {
 }
 
 #[test]
+fn one_element_tuple_witness_keeps_the_tuple_syntax() {
+    assert_compile_error(
+        r#"
+        fn main() -> i64 {
+            match (1,) {
+                (0,) => { 0 },
+            }
+        }
+        "#,
+        "nested-one-tuple-witness",
+        "missing case: (_,)",
+    );
+}
+
+#[test]
 fn unreachable_arms_are_rejected_after_the_union_of_prior_arms() {
     assert_compile_error(
         r#"

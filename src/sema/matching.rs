@@ -417,6 +417,17 @@ impl Checker {
         types: &[ValueType],
         budget: &mut usize,
     ) -> Result<bool, Diagnostic> {
+        let matrix = row_refs(matrix);
+        self.is_useful_rows(&matrix, v, types, budget)
+    }
+
+    fn is_useful_rows(
+        &mut self,
+        matrix: &[&[PatternRow]],
+        v: &[PatternRow],
+        types: &[ValueType],
+        budget: &mut usize,
+    ) -> Result<bool, Diagnostic> {
         if *budget == 0 {
             return Err(Diagnostic::new(
                 "match pattern analysis exceeded its complexity limit".to_string(),
@@ -429,6 +440,13 @@ impl Checker {
         let ty = types[0];
         match &v[0] {
             PatternRow::Wild => {
+                if matrix
+                    .iter()
+                    .all(|row| matches!(row.first(), Some(PatternRow::Wild)))
+                {
+                    let default = default_matrix(matrix);
+                    return self.is_useful_rows(&default, &v[1..], &types[1..], budget);
+                }
                 if let Some(constructors) = self.complete_constructors(ty, matrix) {
                     for constructor in constructors {
                         let child_types = self.constructor_child_types(&constructor, ty)?;
@@ -437,14 +455,15 @@ impl Checker {
                         let mut columns = child_types.clone();
                         columns.extend_from_slice(&types[1..]);
                         let specialized = self.specialize(matrix, &constructor, child_types.len());
-                        if self.is_useful(&specialized, &head, &columns, budget)? {
+                        let specialized_refs = row_refs(&specialized);
+                        if self.is_useful_rows(&specialized_refs, &head, &columns, budget)? {
                             return Ok(true);
                         }
                     }
                     Ok(false)
                 } else {
                     let default = default_matrix(matrix);
-                    self.is_useful(&default, &v[1..], &types[1..], budget)
+                    self.is_useful_rows(&default, &v[1..], &types[1..], budget)
                 }
             }
             row => {
@@ -458,7 +477,8 @@ impl Checker {
                 let mut columns = child_types;
                 columns.extend_from_slice(&types[1..]);
                 let specialized = self.specialize(matrix, &constructor, child_count);
-                self.is_useful(&specialized, &head, &columns, budget)
+                let specialized_refs = row_refs(&specialized);
+                self.is_useful_rows(&specialized_refs, &head, &columns, budget)
             }
         }
     }
@@ -467,6 +487,16 @@ impl Checker {
     fn witness(
         &mut self,
         matrix: &[Vec<PatternRow>],
+        types: &[ValueType],
+        budget: &mut usize,
+    ) -> Result<Option<Vec<String>>, Diagnostic> {
+        let matrix = row_refs(matrix);
+        self.witness_rows(&matrix, types, budget)
+    }
+
+    fn witness_rows(
+        &mut self,
+        matrix: &[&[PatternRow]],
         types: &[ValueType],
         budget: &mut usize,
     ) -> Result<Option<Vec<String>>, Diagnostic> {
@@ -479,14 +509,37 @@ impl Checker {
         if types.is_empty() {
             return Ok(matrix.is_empty().then(Vec::new));
         }
+        if matrix
+            .iter()
+            .all(|row| matches!(row.first(), Some(PatternRow::Wild)))
+        {
+            let mut default = default_matrix(matrix);
+            let mut skipped = 1;
+            while !types[skipped..].is_empty()
+                && default
+                    .iter()
+                    .all(|row| matches!(row.first(), Some(PatternRow::Wild)))
+            {
+                default = default_matrix(&default);
+                skipped += 1;
+            }
+            if let Some(mut witness) = self.witness_rows(&default, &types[skipped..], budget)? {
+                for _ in 0..skipped {
+                    witness.insert(0, "_".to_owned());
+                }
+                return Ok(Some(witness));
+            }
+            return Ok(None);
+        }
         let ty = types[0];
         if let Some(constructors) = self.all_constructors(ty) {
             for constructor in constructors {
                 let child_types = self.constructor_child_types(&constructor, ty)?;
                 let specialized = self.specialize(matrix, &constructor, child_types.len());
+                let specialized_refs = row_refs(&specialized);
                 let mut columns = child_types.clone();
                 columns.extend_from_slice(&types[1..]);
-                if let Some(mut witness) = self.witness(&specialized, &columns, budget)? {
+                if let Some(mut witness) = self.witness_rows(&specialized_refs, &columns, budget)? {
                     let rest = witness.split_off(child_types.len());
                     let rendered = self.render_constructor(&constructor, ty, &witness);
                     let mut result = vec![rendered];
@@ -505,14 +558,15 @@ impl Checker {
                 seen.push(constructor);
             }
         }
-        if let Some(mut witness) = self.witness(&default, &types[1..], budget)? {
+        if let Some(mut witness) = self.witness_rows(&default, &types[1..], budget)? {
             witness.insert(0, "_".to_owned());
             return Ok(Some(witness));
         }
         for constructor in seen {
             let specialized = self.specialize(matrix, &constructor, 0);
+            let specialized_refs = row_refs(&specialized);
             let columns = types[1..].to_vec();
-            if let Some(mut witness) = self.witness(&specialized, &columns, budget)? {
+            if let Some(mut witness) = self.witness_rows(&specialized_refs, &columns, budget)? {
                 let rendered = self.render_constructor(&constructor, ty, &[]);
                 witness.insert(0, rendered);
                 return Ok(Some(witness));
@@ -523,7 +577,7 @@ impl Checker {
 
     fn specialize(
         &self,
-        matrix: &[Vec<PatternRow>],
+        matrix: &[&[PatternRow]],
         constructor: &Constructor,
         child_count: usize,
     ) -> Vec<Vec<PatternRow>> {
@@ -549,7 +603,7 @@ impl Checker {
     fn complete_constructors(
         &self,
         ty: ValueType,
-        matrix: &[Vec<PatternRow>],
+        matrix: &[&[PatternRow]],
     ) -> Option<Vec<Constructor>> {
         match ty {
             ValueType::Bool => {
@@ -671,7 +725,10 @@ impl Checker {
                 }
             }
             Constructor::Product => match ty {
-                ValueType::Tuple(_) => format!("({})", children.join(", ")),
+                ValueType::Tuple(_) => {
+                    let trailing_comma = if children.len() == 1 { "," } else { "" };
+                    format!("({}{trailing_comma})", children.join(", "))
+                }
                 ValueType::Array(_) => format!("[{}]", children.join(", ")),
                 ValueType::Struct(struct_id) => {
                     let declaration = &self.structs[struct_id];
@@ -1027,10 +1084,14 @@ fn row_children(row: &PatternRow) -> &[PatternRow] {
     }
 }
 
-fn default_matrix(matrix: &[Vec<PatternRow>]) -> Vec<Vec<PatternRow>> {
+fn row_refs(matrix: &[Vec<PatternRow>]) -> Vec<&[PatternRow]> {
+    matrix.iter().map(Vec::as_slice).collect()
+}
+
+fn default_matrix<'a>(matrix: &[&'a [PatternRow]]) -> Vec<&'a [PatternRow]> {
     matrix
         .iter()
-        .filter(|row| matches!(row[0], PatternRow::Wild))
-        .map(|row| row[1..].to_vec())
+        .filter(|row| matches!(row.first(), Some(PatternRow::Wild)))
+        .map(|row| &row[1..])
         .collect()
 }
