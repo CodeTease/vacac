@@ -145,7 +145,10 @@ impl Specializer {
                 span: match_span,
             } => {
                 self.process_expr(value, substitutions, variables)?;
-                let matched_type = self.infer_expr_type(value, variables);
+                let matched_type = self
+                    .infer_expr_type(value, variables)
+                    .map(|ty| self.normalize_type(ty, substitutions, *match_span))
+                    .transpose()?;
                 for arm in arms {
                     let mut arm_variables = variables.clone();
                     if let (
@@ -155,7 +158,12 @@ impl Specializer {
                     {
                         self.specialize_variant_pattern(enum_name, concrete_name, arm.span)?;
                     }
-                    self.normalize_pattern(&mut arm.pattern, substitutions, *match_span)?;
+                    self.normalize_pattern_typed(
+                        &mut arm.pattern,
+                        matched_type.as_ref(),
+                        substitutions,
+                        *match_span,
+                    )?;
                     if let Some(matched_type) = &matched_type {
                         self.infer_pattern_bindings(
                             &mut arm.pattern,

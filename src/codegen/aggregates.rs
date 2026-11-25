@@ -130,8 +130,42 @@ impl<'ctx> Codegen<'ctx> {
                 }
                 Ok(())
             }
-            MatchPattern::Variant { .. } => {
-                Err("nested enum variant patterns are not supported".into())
+            MatchPattern::Variant {
+                variant_name,
+                bindings,
+                ..
+            } => {
+                let ValueType::Enum(enum_id) = ty else {
+                    return Err("enum variant pattern type mismatch".into());
+                };
+                let variant_index = self.variant_index(enum_id, variant_name, span)?;
+                let Some(patterns) = bindings else {
+                    return Ok(());
+                };
+                let payload_types = self.enums[enum_id].variants[variant_index].payload.clone();
+                let (variant_field, _) = self.enum_payload_field(enum_id, variant_index, 0);
+                let payload_tuple = self
+                    .builder
+                    .build_extract_value(
+                        value.into_struct_value(),
+                        variant_field,
+                        "enum.match.tuple",
+                    )
+                    .map_err(|error| error.to_string())?
+                    .into_struct_value();
+                for (payload_index, (pattern, payload_type)) in
+                    patterns.iter().zip(&payload_types).enumerate()
+                {
+                    let payload_ty = self.resolve_type(payload_type, span)?;
+                    let (_, payload_field) =
+                        self.enum_payload_field(enum_id, variant_index, payload_index);
+                    let payload = self
+                        .builder
+                        .build_extract_value(payload_tuple, payload_field, "enum.match.payload")
+                        .map_err(|error| error.to_string())?;
+                    self.emit_pattern_bindings(pattern, payload_ty, payload, immutable, span)?;
+                }
+                Ok(())
             }
             MatchPattern::ImportedVariant { .. } => {
                 Err("imported enum variant pattern reached code generation".into())
@@ -139,7 +173,7 @@ impl<'ctx> Codegen<'ctx> {
             MatchPattern::Bool(_)
             | MatchPattern::I64(_)
             | MatchPattern::F32(_)
-            | MatchPattern::F64(_) => Err("literal patterns are unsupported here".into()),
+            | MatchPattern::F64(_) => Ok(()),
         }
     }
 

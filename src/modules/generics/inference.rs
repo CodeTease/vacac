@@ -333,14 +333,29 @@ impl Specializer {
                     .find(|field| field.name == *name)
                     .map(|field| field.ty.clone())
             }
-            Expr::If { then_block, .. } => then_block
-                .tail
-                .as_ref()
-                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
-            Expr::Match { arms, .. } => arms
-                .first()
-                .and_then(|arm| arm.body.tail.as_ref())
-                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
+            Expr::If { then_block, .. } => {
+                let mut branch_variables = variables.clone();
+                self.infer_block_tail_type(then_block, &mut branch_variables, visiting_globals)
+            }
+            Expr::Match { value, arms, .. } => {
+                let matched = self.infer_expr_type_inner(value, variables, visiting_globals);
+                let mut result = None;
+                for arm in arms {
+                    let mut arm_variables = variables.clone();
+                    if let Some(matched) = &matched {
+                        let mut pattern = arm.pattern.clone();
+                        self.infer_pattern_bindings(&mut pattern, matched, &mut arm_variables);
+                    }
+                    if result.is_none() {
+                        result = self.infer_block_tail_type(
+                            &arm.body,
+                            &mut arm_variables,
+                            visiting_globals,
+                        );
+                    }
+                }
+                result
+            }
             Expr::Variant { enum_name, .. } => self
                 .enum_names
                 .contains(enum_name)
@@ -365,7 +380,170 @@ impl Specializer {
                     .first()
                     .cloned()
             }
-            Expr::Loop { .. } => None,
+            Expr::Loop { body, .. } => {
+                let mut loop_variables = variables.clone();
+                self.infer_loop_block_break_type(body, &mut loop_variables, visiting_globals)
+            }
+        }
+    }
+
+    /// Infer the tail type of a block after accounting for local bindings that
+    /// its statements introduce or shadow in the enclosing arm scope.
+    fn infer_block_tail_type(
+        &self,
+        block: &Block,
+        variables: &mut HashMap<String, Type>,
+        visiting_globals: &mut std::collections::HashSet<String>,
+    ) -> Option<Type> {
+        for statement in &block.statements {
+            match statement {
+                Stmt::Let {
+                    pattern, ty, value, ..
+                } => {
+                    let binding_type = ty
+                        .clone()
+                        .or_else(|| self.infer_expr_type_inner(value, variables, visiting_globals));
+                    if let Some(binding_type) = binding_type {
+                        let mut pattern = pattern.clone();
+                        self.infer_pattern_bindings(&mut pattern, &binding_type, variables);
+                    }
+                }
+                Stmt::Assign { name, value, .. } => {
+                    if let Some(ty) = self.infer_expr_type_inner(value, variables, visiting_globals)
+                    {
+                        variables.insert(name.clone(), ty);
+                    }
+                }
+                _ => {}
+            }
+        }
+        block
+            .tail
+            .as_ref()
+            .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals))
+    }
+
+    /// A value-producing loop takes the type of its first break value. Breaks
+    /// inside nested loops and lambdas belong to those constructs instead.
+    fn infer_loop_block_break_type(
+        &self,
+        block: &Block,
+        variables: &mut HashMap<String, Type>,
+        visiting_globals: &mut std::collections::HashSet<String>,
+    ) -> Option<Type> {
+        for statement in &block.statements {
+            if let Some(ty) =
+                self.infer_statement_break_type(statement, variables, visiting_globals)
+            {
+                return Some(ty);
+            }
+        }
+        block
+            .tail
+            .as_ref()
+            .and_then(|value| self.infer_expr_break_type(value, variables, visiting_globals))
+    }
+
+    fn infer_statement_break_type(
+        &self,
+        statement: &Stmt,
+        variables: &mut HashMap<String, Type>,
+        visiting_globals: &mut std::collections::HashSet<String>,
+    ) -> Option<Type> {
+        match statement {
+            Stmt::Break { value, .. } => value
+                .as_ref()
+                .and_then(|value| self.infer_expr_type_inner(value, variables, visiting_globals)),
+            Stmt::Let {
+                pattern, ty, value, ..
+            } => {
+                let nested = self.infer_expr_break_type(value, variables, visiting_globals);
+                if let Some(ty) = ty
+                    .clone()
+                    .or_else(|| self.infer_expr_type_inner(value, variables, visiting_globals))
+                {
+                    let mut pattern = pattern.clone();
+                    self.infer_pattern_bindings(&mut pattern, &ty, variables);
+                }
+                nested
+            }
+            Stmt::Assign { name, value, .. } => {
+                let nested = self.infer_expr_break_type(value, variables, visiting_globals);
+                if let Some(ty) = self.infer_expr_type_inner(value, variables, visiting_globals) {
+                    variables.insert(name.clone(), ty);
+                }
+                nested
+            }
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                let mut then_variables = variables.clone();
+                if let Some(ty) = self.infer_loop_block_break_type(
+                    then_block,
+                    &mut then_variables,
+                    visiting_globals,
+                ) {
+                    return Some(ty);
+                }
+                let mut else_variables = variables.clone();
+                else_block.as_ref().and_then(|block| {
+                    self.infer_loop_block_break_type(block, &mut else_variables, visiting_globals)
+                })
+            }
+            Stmt::While { .. } | Stmt::For { .. } | Stmt::ForArray { .. } => None,
+            Stmt::Continue { .. } | Stmt::Return { .. } => None,
+            Stmt::AssignPlace { target, value, .. } => self
+                .infer_expr_break_type(target, variables, visiting_globals)
+                .or_else(|| self.infer_expr_break_type(value, variables, visiting_globals)),
+            Stmt::Expr(value) => self.infer_expr_break_type(value, variables, visiting_globals),
+        }
+    }
+
+    fn infer_expr_break_type(
+        &self,
+        expr: &Expr,
+        variables: &mut HashMap<String, Type>,
+        visiting_globals: &mut std::collections::HashSet<String>,
+    ) -> Option<Type> {
+        match expr {
+            Expr::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                let mut then_variables = variables.clone();
+                if let Some(ty) = self.infer_loop_block_break_type(
+                    then_block,
+                    &mut then_variables,
+                    visiting_globals,
+                ) {
+                    return Some(ty);
+                }
+                let mut else_variables = variables.clone();
+                self.infer_loop_block_break_type(else_block, &mut else_variables, visiting_globals)
+            }
+            Expr::Match { value, arms, .. } => {
+                let matched = self.infer_expr_type_inner(value, variables, visiting_globals);
+                for arm in arms {
+                    let mut arm_variables = variables.clone();
+                    if let Some(matched) = &matched {
+                        let mut pattern = arm.pattern.clone();
+                        self.infer_pattern_bindings(&mut pattern, matched, &mut arm_variables);
+                    }
+                    if let Some(ty) = self.infer_loop_block_break_type(
+                        &arm.body,
+                        &mut arm_variables,
+                        visiting_globals,
+                    ) {
+                        return Some(ty);
+                    }
+                }
+                None
+            }
+            Expr::Lambda { .. } | Expr::Loop { .. } => None,
+            _ => None,
         }
     }
 }

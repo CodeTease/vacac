@@ -12,6 +12,7 @@ Some examples to explore:
 
 - [`if_expression.vca`](../examples/if_expression.vca) — choose a value with an expression conditional.
 - [`enum_match.vca`](../examples/enum_match.vca) — construct enum variants and handle each one with an exhaustive `match`.
+- [`nested_match.vca`](../examples/nested_match.vca) — dispatch on nested enum payloads, struct fields, and array slots in one ordered `match`.
 - [`result_propagation.vca`](../examples/result_propagation.vca) — return recoverable errors with `Result<T, E>` and propagate them with `?`.
 - [`loop_control.vca`](../examples/loop_control.vca) — use `continue` and `break` in a range loop.
 - [`read_number.vca`](../examples/read_number.vca) — read and classify an integer from standard input.

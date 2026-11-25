@@ -172,6 +172,35 @@ fn generic_inference_uses_enum_payload_bindings() {
 }
 
 #[test]
+fn generic_inference_reads_match_arm_statements_and_value_loop_scrutinees() {
+    let result = compile_and_run(
+        r#"
+        enum Choice<T> { Some(T), None }
+        fn identity<T>(value: T) -> T { value }
+        fn unwrap_or<T>(value: T, fallback: T) -> T {
+            match loop { break Choice::Some(value); } {
+                Choice::Some(inner) => {
+                    let inner = identity(inner);
+                    inner
+                },
+                Choice::None => { fallback },
+            }
+        }
+        fn main() -> i64 {
+            identity(match 40 {
+                number => {
+                    let number = number + 2;
+                    number
+                },
+            }) + unwrap_or(0, 1) - 42
+        }
+        "#,
+        "generics-match-statements-loop",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
 fn generic_functions_can_call_themselves_after_specialization() {
     let result = compile_and_run(
         r#"
@@ -295,6 +324,28 @@ fn main() -> i64 {
 }
 "#,
         "generics-expected-if-scope",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn inferred_if_branches_keep_local_binding_scopes() {
+    let result = compile_and_run(
+        r#"
+fn identity<T>(value: T) -> T { value }
+fn main() -> i64 {
+    let value = 42;
+    let flag = if true {
+        let value = true;
+        value
+    } else {
+        false
+    };
+    let other = identity(flag);
+    if other { 0 } else { 1 }
+}
+"#,
+        "generics-if-scope",
     );
     assert_eq!(result.status.code(), Some(0));
 }

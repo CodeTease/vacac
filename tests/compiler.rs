@@ -26,6 +26,8 @@ mod language;
 mod matching_loops;
 #[path = "compiler/modules.rs"]
 mod modules;
+#[path = "compiler/nested_matching.rs"]
+mod nested_matching;
 #[path = "compiler/pointers.rs"]
 mod pointers;
 #[path = "compiler/references.rs"]
