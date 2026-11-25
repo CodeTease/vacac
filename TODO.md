@@ -21,7 +21,7 @@
 * [ ] Generic traits and generic trait functions, including inference, coherence, visibility, and specialization-limit coverage.
 * [x] Persistent mutable owned closure captures, with closure aliases sharing environment state and separately created closures remaining independent.
 * [x] Unit-producing statement matches that skip result PHI construction.
-* [ ] Generalized aggregate and nested matching with multiple dispatch arms, nested variant and scalar patterns, and exhaustive/unreachable-arm analysis.
+* [x] Generalized aggregate and nested matching with multiple dispatch arms, nested variant and scalar patterns, and exhaustive/unreachable-arm analysis.
 * [ ] Mutable-reference reborrowing and named-lifetime returns, preserving overlap and local-escape checks.
 * [ ] Non-lexical lifetimes that end shared and mutable loans at last use across branches and loops.
 * [ ] ~~Object-oriented features such as methods, classes, inheritance, and polymorphism.~~
