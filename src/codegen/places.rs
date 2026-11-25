@@ -47,186 +47,9 @@ impl<'ctx> Codegen<'ctx> {
         root_pointer: PointerValue<'ctx>,
         root_type: ValueType,
     ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
-        let (pointer, ty, _) =
-            self.emit_place_pointer_with_deref(expr, root_name, root_pointer, root_type)?;
+        let (pointer, ty, _steps, _mutability) =
+            self.plan_place_path(expr, root_name, root_pointer, root_type)?;
         Ok((pointer, ty))
-    }
-
-    /// Computes the address of a place expression. The third element reports the
-    /// mutability of the first dereference in the place path so assignment code
-    /// can check write access without evaluating the pointer expression twice.
-    fn emit_place_pointer_with_deref(
-        &mut self,
-        expr: &Expr,
-        root_name: &str,
-        root_pointer: PointerValue<'ctx>,
-        root_type: ValueType,
-    ) -> Result<(PointerValue<'ctx>, ValueType, Option<DerefMutability>), Diagnostic> {
-        match expr {
-            Expr::Variable(name, _) if name == root_name => Ok((root_pointer, root_type, None)),
-            Expr::Unary {
-                op: UnaryOp::Dereference,
-                value,
-                span,
-            } => {
-                let pointer_value = self.emit_expression(value)?;
-                let (target_type, mutability) = match pointer_value.ty {
-                    ValueType::MutableReference(index) => (
-                        self.mutable_reference_types[index],
-                        DerefMutability::Mutable,
-                    ),
-                    ValueType::Reference(index) => (
-                        self.reference_types[index],
-                        DerefMutability::SharedReference,
-                    ),
-                    ValueType::RawPointer(index) => {
-                        let (target_type, mutable) = self.raw_pointer_types[index];
-                        let mutability = if mutable {
-                            DerefMutability::Mutable
-                        } else {
-                            DerefMutability::Immutable
-                        };
-                        (target_type, mutability)
-                    }
-                    other => {
-                        return Err(Diagnostic::at(
-                            span.into(),
-                            format!("cannot dereference {}", self.type_name(other)),
-                        ));
-                    }
-                };
-                let pointer = pointer_value
-                    .value
-                    .ok_or("dereference pointer has no value")?
-                    .into_pointer_value();
-                Ok((pointer, target_type, Some(mutability)))
-            }
-            Expr::Field { value, name, span } => {
-                let (base_pointer, base_type, mutability) =
-                    self.emit_place_pointer_with_deref(value, root_name, root_pointer, root_type)?;
-                let ValueType::Struct(struct_id) = base_type else {
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        "field access requires a struct value".to_string(),
-                    ));
-                };
-                let field_index = self.structs[struct_id]
-                    .fields
-                    .iter()
-                    .position(|field| field.name == *name)
-                    .ok_or_else(|| {
-                        Diagnostic::at(
-                            span.into(),
-                            format!(
-                                "struct `{}` has no field `{name}`",
-                                self.structs[struct_id].name
-                            ),
-                        )
-                    })?;
-                let field = &self.structs[struct_id].fields[field_index];
-                let field_declaration_type = field.ty.clone();
-                let field_span = field.span;
-                let field_type = self.resolve_type(&field_declaration_type, field_span)?;
-                let field_pointer = self
-                    .builder
-                    .build_struct_gep(
-                        self.struct_types[struct_id],
-                        base_pointer,
-                        field_index as u32,
-                        "struct.field.ptr",
-                    )
-                    .map_err(|error| error.to_string())?;
-                Ok((field_pointer, field_type, mutability))
-            }
-            Expr::Index { array, index, span } => {
-                let (array_pointer, array_type, mutability) =
-                    self.emit_place_pointer_with_deref(array, root_name, root_pointer, root_type)?;
-                if let ValueType::Vector(vector_id) = array_type {
-                    let index_value = self.emit_expression(index)?;
-                    let index_value = self.expect_i64(index_value, "vector index", *span)?;
-                    let handle = self
-                        .builder
-                        .build_load(
-                            self.context.ptr_type(AddressSpace::default()),
-                            array_pointer,
-                            "vec.handle",
-                        )
-                        .map_err(|error| error.to_string())?
-                        .into_pointer_value();
-                    let header_type = self.context.struct_type(
-                        &[
-                            self.context.ptr_type(AddressSpace::default()).into(),
-                            self.i64_type().into(),
-                            self.i64_type().into(),
-                        ],
-                        false,
-                    );
-                    let data_ptr = self
-                        .builder
-                        .build_struct_gep(header_type, handle, 0, "vec.data.ptr")
-                        .map_err(|error| error.to_string())?;
-                    let len_ptr = self
-                        .builder
-                        .build_struct_gep(header_type, handle, 1, "vec.length.ptr")
-                        .map_err(|error| error.to_string())?;
-                    let length = self
-                        .builder
-                        .build_load(self.i64_type(), len_ptr, "vec.length")
-                        .map_err(|error| error.to_string())?
-                        .into_int_value();
-                    self.emit_dynamic_bounds_check(index_value, length)?;
-                    let data = self
-                        .builder
-                        .build_load(
-                            self.context.ptr_type(AddressSpace::default()),
-                            data_ptr,
-                            "vec.data",
-                        )
-                        .map_err(|error| error.to_string())?
-                        .into_pointer_value();
-                    let element_type = ValueType::from(self.vector_shapes[vector_id].element);
-                    self.llvm_type(element_type)
-                        .ok_or("vector element has no LLVM type")?;
-                    let size = self.vector_element_size(element_type)?;
-                    let offset = self
-                        .builder
-                        .build_int_mul(index_value, size, "vec.element.offset")
-                        .map_err(|error| error.to_string())?;
-                    let address = unsafe {
-                        self.builder.build_gep(
-                            self.context.i8_type(),
-                            data,
-                            &[offset],
-                            "vec.element.address",
-                        )
-                    }
-                    .map_err(|error| error.to_string())?;
-                    let pointer = self
-                        .builder
-                        .build_pointer_cast(
-                            address,
-                            self.context.ptr_type(AddressSpace::default()),
-                            "vec.element.ptr",
-                        )
-                        .map_err(|error| error.to_string())?;
-                    return Ok((pointer, element_type, mutability));
-                }
-                let ValueType::Array(array_id) = array_type else {
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        "indexing requires an array (or vector)".to_string(),
-                    ));
-                };
-                let index_value = self.emit_expression(index)?;
-                let index_value = self.expect_i64(index_value, "array index", *span)?;
-                let shape = self.array_shapes[array_id];
-                self.emit_bounds_check(index_value, shape.length)?;
-                let element_pointer =
-                    self.array_element_pointer(array_pointer, array_type, index_value)?;
-                Ok((element_pointer, ValueType::from(shape.element), mutability))
-            }
-            _ => Err("invalid assignment target".into()),
-        }
     }
 
     fn plan_place_path(
@@ -340,6 +163,8 @@ impl<'ctx> Codegen<'ctx> {
                 if let ValueType::Vector(vector_id) = array_type {
                     let index_value = self.emit_expression(index)?;
                     let index_value = self.expect_i64(index_value, "vector index", *span)?;
+                    let array_pointer =
+                        self.refresh_place_base(array_pointer, root_pointer, root_type, &steps)?;
                     let handle = self
                         .builder
                         .build_load(
@@ -385,6 +210,8 @@ impl<'ctx> Codegen<'ctx> {
                 };
                 let index_value = self.emit_expression(index)?;
                 let index_value = self.expect_i64(index_value, "array index", *span)?;
+                let array_pointer =
+                    self.refresh_place_base(array_pointer, root_pointer, root_type, &steps)?;
                 let shape = self.array_shapes[array_id];
                 self.emit_bounds_check(index_value, shape.length)?;
                 let element_pointer =
@@ -426,9 +253,45 @@ impl<'ctx> Codegen<'ctx> {
         &mut self,
         plan: &PlacePlan<'ctx>,
     ) -> Result<PointerValue<'ctx>, Diagnostic> {
-        let mut pointer = plan.root_pointer;
-        let mut ty = plan.root_type;
-        for step in &plan.steps {
+        let (pointer, ty) =
+            self.apply_place_steps(plan.root_pointer, plan.root_type, &plan.steps)?;
+        if ty != plan.final_type {
+            return Err("assignment target type changed while planning the store".into());
+        }
+        Ok(pointer)
+    }
+
+    /// Re-derives a place's base address after a selector is evaluated, since the
+    /// selector can grow a vector earlier on the path and move the storage that
+    /// holds the next element or handle.
+    fn refresh_place_base(
+        &mut self,
+        base_pointer: PointerValue<'ctx>,
+        root_pointer: PointerValue<'ctx>,
+        root_type: ValueType,
+        steps: &[PlaceStep<'ctx>],
+    ) -> Result<PointerValue<'ctx>, Diagnostic> {
+        if steps
+            .iter()
+            .any(|step| matches!(step, PlaceStep::Vector { .. }))
+        {
+            Ok(self.apply_place_steps(root_pointer, root_type, steps)?.0)
+        } else {
+            Ok(base_pointer)
+        }
+    }
+
+    /// Walks already-evaluated place steps from the root, reloading each vector
+    /// data pointer so the resulting address tracks the vector's current storage.
+    fn apply_place_steps(
+        &mut self,
+        root_pointer: PointerValue<'ctx>,
+        root_type: ValueType,
+        steps: &[PlaceStep<'ctx>],
+    ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
+        let mut pointer = root_pointer;
+        let mut ty = root_type;
+        for step in steps {
             match step {
                 PlaceStep::Deref {
                     pointer: dereferenced,
@@ -473,10 +336,7 @@ impl<'ctx> Codegen<'ctx> {
                 }
             }
         }
-        if ty != plan.final_type {
-            return Err("assignment target type changed while planning the store".into());
-        }
-        Ok(pointer)
+        Ok((pointer, ty))
     }
 
     fn vector_element_pointer(

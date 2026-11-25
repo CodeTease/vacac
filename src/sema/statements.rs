@@ -296,7 +296,10 @@ impl Checker {
                 Ok(false)
             }
             Stmt::Assign { name, value, span } => {
-                self.reject_borrowed(name, *span)?;
+                let captured = self.is_captured_binding(name);
+                if !captured {
+                    self.reject_borrowed(name, *span)?;
+                }
                 let binding_type = if let Some(ty) = self.lookup_local(name) {
                     ty
                 } else if let Some(global) = self.find_global_name(name) {
@@ -333,7 +336,9 @@ impl Checker {
                 ) {
                     return Err(at(*span, "reference bindings cannot be reassigned"));
                 }
-                self.reject_borrowed(name, *span)?;
+                if !captured {
+                    self.reject_borrowed(name, *span)?;
+                }
                 let value_type = self.check_expr_expected(value, binding_type)?;
                 self.expect_type(
                     value_type,
@@ -370,7 +375,10 @@ impl Checker {
                 };
                 self.record_capture_use(root, *span)?;
                 let target_type = self.check_place(target, binding_type)?;
-                if !through_pointer && self.lookup_local(root).is_some() {
+                if !through_pointer
+                    && self.lookup_local(root).is_some()
+                    && !self.is_captured_binding(root)
+                {
                     self.reject_borrowed_place(target, *span)?;
                 }
                 if matches!(

@@ -844,6 +844,17 @@ impl Checker {
         Ok(())
     }
 
+    /// True when `name` resolves outside the innermost lambda, so a write targets
+    /// the closure environment slot instead of the source binding.
+    pub(super) fn is_captured_binding(&self, name: &str) -> bool {
+        let Some((scope_index, _)) = self.lookup_local_with_scope(name) else {
+            return false;
+        };
+        self.lambda_scope_boundaries
+            .last()
+            .is_some_and(|boundary| scope_index < *boundary)
+    }
+
     pub(super) fn record_lambda_capture(&mut self, name: &str, scope_index: usize) {
         let immutable = self.is_immutable_binding(name);
         let loop_variable = self.is_loop_variable(name);

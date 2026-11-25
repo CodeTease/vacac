@@ -314,12 +314,16 @@ fn reentrant_closure_calls_observe_updates_through_the_same_environment() {
                 }
             };
             vec_push(functions, bump);
-            bump() - 2
+            const first = bump();
+            print_i64(first);
+            print_i64(bump());
+            first - 2
         }
         "#,
         "function-values-reentrant-capture",
     );
     assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "2\n3\n");
 }
 
 #[test]
@@ -363,6 +367,34 @@ fn captures_require_a_whole_binding_snapshot_free_of_mutable_loans() {
         "function-values-shared-borrowed-capture",
     );
     assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn captured_writes_target_the_environment_not_the_source_binding() {
+    let result = compile_and_run(
+        r#"
+        struct Pair { left: i64, right: i64 }
+
+        fn main() -> i64 {
+            let value = 1;
+            const value_reference: &i64 = &value;
+            let pair = Pair { left: 1, right: 2 };
+            const pair_reference: &Pair = &pair;
+            const write: fn() -> i64 = fn() -> i64 {
+                value = 2;
+                pair.left = 3;
+                value + pair.left
+            };
+            print_i64(write());
+            print_i64(*value_reference);
+            print_i64((*pair_reference).left);
+            5 - *value_reference - (*pair_reference).left - 3
+        }
+        "#,
+        "function-values-write-captured-slot-under-shared-borrow",
+    );
+    assert_eq!(result.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "5\n1\n1\n");
 }
 
 #[test]
