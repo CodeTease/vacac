@@ -7,6 +7,7 @@ pub(crate) struct TraitInfo {
     pub(crate) id: usize,
     pub(crate) name: String,
     pub(crate) module: String,
+    pub(crate) generic_params: Vec<GenericParam>,
     pub(crate) functions: Vec<TraitFunction>,
     pub(crate) is_public: bool,
 }
@@ -14,6 +15,7 @@ pub(crate) struct TraitInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct ImplInfo {
     pub(crate) target: Type,
+    pub(crate) trait_arguments: Vec<Type>,
     pub(crate) generic_params: Vec<GenericParam>,
     pub(crate) methods: HashMap<String, String>,
     pub(crate) span: Span,
@@ -52,7 +54,8 @@ impl TraitRegistry {
 pub(crate) fn prepare(program: &mut Program) -> Result<TraitRegistry, Diagnostic> {
     let trait_declarations = program.traits.clone();
     let impl_declarations = program.impls.clone();
-    validate_declaration_types(program, &trait_declarations, &impl_declarations)?;
+    let shapes = type_shapes(program);
+    validate_declaration_types(&trait_declarations, &impl_declarations, &shapes)?;
     program.traits.clear();
     program.impls.clear();
 
@@ -69,13 +72,14 @@ pub(crate) fn prepare(program: &mut Program) -> Result<TraitRegistry, Diagnostic
             id,
             module: declaration.module,
             name: declaration.name,
+            generic_params: declaration.generic_params,
             functions: declaration.functions,
             is_public: declaration.is_public,
         });
         registry.by_trait.push(Vec::new());
     }
 
-    validate_generic_bounds_for_program(program, &registry)?;
+    validate_generic_bounds_for_program(program, &registry, &shapes)?;
 
     let mut synthetic_functions = Vec::new();
     for (id, declaration) in impl_declarations.into_iter().enumerate() {
@@ -85,10 +89,27 @@ pub(crate) fn prepare(program: &mut Program) -> Result<TraitRegistry, Diagnostic
                 format!("unknown trait `{}`", declaration.trait_name),
             ));
         };
+        let trait_info = registry.trait_info(trait_id);
+        if declaration.trait_arguments.len() != trait_info.generic_params.len() {
+            return Err(at(
+                declaration.trait_span,
+                format!(
+                    "trait `{}` expects {} type argument(s), got {}",
+                    trait_info.name,
+                    trait_info.generic_params.len(),
+                    declaration.trait_arguments.len()
+                ),
+            ));
+        }
         validate_impl_target(&declaration)?;
-        validate_impl_bounds(&declaration, &registry)?;
-        let info =
-            validate_and_lower_impl(trait_id, declaration, &registry, &mut synthetic_functions)?;
+        validate_impl_bounds(&declaration, &registry, &shapes)?;
+        let info = validate_and_lower_impl(
+            trait_id,
+            declaration,
+            &registry,
+            &mut synthetic_functions,
+            &shapes,
+        )?;
         registry.by_trait[trait_id].push(id);
         registry.impls.push(info);
     }
@@ -98,11 +119,7 @@ pub(crate) fn prepare(program: &mut Program) -> Result<TraitRegistry, Diagnostic
     Ok(registry)
 }
 
-fn validate_declaration_types(
-    program: &Program,
-    traits: &[TraitDecl],
-    impls: &[ImplDecl],
-) -> Result<(), Diagnostic> {
+fn type_shapes(program: &Program) -> TypeShapes {
     let mut generic_arity = HashMap::new();
     let mut known_types = HashSet::new();
     for declaration in &program.structs {
@@ -117,13 +134,34 @@ fn validate_declaration_types(
             generic_arity.insert(declaration.name.clone(), declaration.generic_params.len());
         }
     }
-    let shapes = TypeShapes {
+    TypeShapes {
         generic_arity,
         known_types,
-    };
+    }
+}
 
+fn validate_declaration_types(
+    traits: &[TraitDecl],
+    impls: &[ImplDecl],
+    shapes: &TypeShapes,
+) -> Result<(), Diagnostic> {
     for declaration in traits {
+        let trait_parameters = declaration
+            .generic_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<HashSet<_>>();
         for function in &declaration.functions {
+            let parameters = trait_parameters
+                .iter()
+                .cloned()
+                .chain(
+                    function
+                        .generic_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone()),
+                )
+                .collect::<HashSet<_>>();
             let mut seen_params = HashSet::new();
             for param in &function.params {
                 if !seen_params.insert(param.name.as_str()) {
@@ -138,7 +176,7 @@ fn validate_declaration_types(
                 if param.ty == Type::Unit {
                     return Err(at(param.span, "parameters cannot have type `unit`"));
                 }
-                validate_type_shape(&param.ty, &HashSet::new(), true, &shapes, param.span)?;
+                validate_type_shape(&param.ty, &parameters, true, shapes, param.span)?;
                 validate_signature_type(&param.ty, true, false, param.span)?;
             }
             if is_reference(&function.return_type) {
@@ -149,31 +187,51 @@ fn validate_declaration_types(
             }
             validate_type_shape(
                 &function.return_type,
-                &HashSet::new(),
+                &parameters,
                 true,
-                &shapes,
+                shapes,
                 function.span,
             )?;
             validate_signature_type(&function.return_type, false, true, function.span)?;
         }
     }
     for declaration in impls {
-        let parameters = declaration
+        let impl_parameters = declaration
             .generic_params
             .iter()
             .map(|parameter| parameter.name.clone())
             .collect::<HashSet<_>>();
         validate_type_shape(
             &declaration.target,
-            &parameters,
+            &impl_parameters,
             false,
-            &shapes,
+            shapes,
             declaration.target_span,
         )?;
         validate_signature_type(&declaration.target, true, true, declaration.target_span)?;
+        for argument in &declaration.trait_arguments {
+            validate_type_shape(
+                argument,
+                &impl_parameters,
+                false,
+                shapes,
+                declaration.trait_span,
+            )?;
+            validate_signature_type(argument, false, true, declaration.trait_span)?;
+        }
         for function in &declaration.functions {
+            let parameters = impl_parameters
+                .iter()
+                .cloned()
+                .chain(
+                    function
+                        .generic_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone()),
+                )
+                .collect::<HashSet<_>>();
             for param in &function.params {
-                validate_type_shape(&param.ty, &parameters, true, &shapes, param.span)?;
+                validate_type_shape(&param.ty, &parameters, true, shapes, param.span)?;
                 validate_signature_type(&param.ty, true, false, param.span)?;
             }
             if is_reference(&function.return_type) {
@@ -186,7 +244,7 @@ fn validate_declaration_types(
                 &function.return_type,
                 &parameters,
                 true,
-                &shapes,
+                shapes,
                 function.span,
             )?;
             validate_signature_type(&function.return_type, false, true, function.span)?;
@@ -353,15 +411,63 @@ fn validate_signature_type(
 fn validate_generic_bounds_for_program(
     program: &Program,
     registry: &TraitRegistry,
+    shapes: &TypeShapes,
 ) -> Result<(), Diagnostic> {
     for declaration in &program.structs {
-        validate_bounds(&declaration.generic_params, declaration.is_public, registry)?;
+        validate_bounds(
+            &declaration.generic_params,
+            declaration.generic_params.iter(),
+            declaration.is_public,
+            false,
+            registry,
+            shapes,
+        )?;
     }
     for declaration in &program.enums {
-        validate_bounds(&declaration.generic_params, declaration.is_public, registry)?;
+        validate_bounds(
+            &declaration.generic_params,
+            declaration.generic_params.iter(),
+            declaration.is_public,
+            false,
+            registry,
+            shapes,
+        )?;
     }
     for function in &program.functions {
-        validate_bounds(&function.generic_params, function.is_public, registry)?;
+        validate_bounds(
+            &function.generic_params,
+            function.generic_params.iter(),
+            function.is_public,
+            false,
+            registry,
+            shapes,
+        )?;
+    }
+    for trait_info in &registry.traits {
+        validate_bounds(
+            &trait_info.generic_params,
+            trait_info.generic_params.iter(),
+            trait_info.is_public,
+            false,
+            registry,
+            shapes,
+        )?;
+        for function in &trait_info.functions {
+            let parameters = trait_info
+                .generic_params
+                .iter()
+                .chain(&function.generic_params)
+                .cloned()
+                .collect::<Vec<_>>();
+            validate_bounds(
+                &function.generic_params,
+                parameters.iter(),
+                trait_info.is_public,
+                true,
+                registry,
+                shapes,
+            )?;
+        }
     }
     Ok(())
 }
@@ -369,27 +475,33 @@ fn validate_generic_bounds_for_program(
 fn validate_impl_bounds(
     declaration: &ImplDecl,
     registry: &TraitRegistry,
+    shapes: &TypeShapes,
 ) -> Result<(), Diagnostic> {
-    validate_bounds(&declaration.generic_params, false, registry)
+    validate_bounds(
+        &declaration.generic_params,
+        declaration.generic_params.iter(),
+        false,
+        false,
+        registry,
+        shapes,
+    )
 }
 
-fn validate_bounds(
+fn validate_bounds<'a>(
     parameters: &[GenericParam],
+    scope: impl IntoIterator<Item = &'a GenericParam>,
     is_public: bool,
+    self_allowed: bool,
     registry: &TraitRegistry,
+    shapes: &TypeShapes,
 ) -> Result<(), Diagnostic> {
+    let scope = scope
+        .into_iter()
+        .map(|parameter| parameter.name.clone())
+        .collect::<HashSet<_>>();
     for parameter in parameters {
         let mut seen = HashSet::new();
         for bound in &parameter.bounds {
-            if !seen.insert(bound.name.as_str()) {
-                return Err(at(
-                    bound.span,
-                    format!(
-                        "trait `{}` is listed more than once in the bounds for `{}`",
-                        bound.name, parameter.name
-                    ),
-                ));
-            }
             let Some(trait_info) = registry.trait_by_name(&bound.name) else {
                 return Err(at(
                     bound.span,
@@ -399,6 +511,27 @@ fn validate_bounds(
                     ),
                 ));
             };
+            if bound.type_arguments.len() != trait_info.generic_params.len() {
+                return Err(at(
+                    bound.span,
+                    format!(
+                        "trait `{}` expects {} type argument(s), got {}",
+                        bound.name,
+                        trait_info.generic_params.len(),
+                        bound.type_arguments.len()
+                    ),
+                ));
+            }
+            let key = bound_key(&bound.name, &bound.type_arguments);
+            if !seen.insert(key) {
+                return Err(at(
+                    bound.span,
+                    format!(
+                        "trait `{}` is listed more than once in the bounds for `{}`",
+                        bound.name, parameter.name
+                    ),
+                ));
+            }
             if is_public && !trait_info.is_public {
                 return Err(at(
                     bound.span,
@@ -408,9 +541,24 @@ fn validate_bounds(
                     ),
                 ));
             }
+            for argument in &bound.type_arguments {
+                validate_type_shape(argument, &scope, self_allowed, shapes, bound.span)?;
+                validate_signature_type(argument, false, true, bound.span)?;
+            }
         }
     }
     Ok(())
+}
+
+fn bound_key(name: &str, arguments: &[Type]) -> String {
+    format!(
+        "{name}<{}>",
+        arguments
+            .iter()
+            .map(type_name)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 fn validate_impl_target(declaration: &ImplDecl) -> Result<(), Diagnostic> {
@@ -427,12 +575,15 @@ fn validate_impl_target(declaration: &ImplDecl) -> Result<(), Diagnostic> {
     }
     let mut used = HashSet::new();
     collect_target_parameters(&declaration.target, &parameters, &mut used)?;
+    for argument in &declaration.trait_arguments {
+        collect_target_parameters(argument, &parameters, &mut used)?;
+    }
     for parameter in &declaration.generic_params {
         if !used.contains(parameter.name.as_str()) {
             return Err(at(
                 parameter.span,
                 format!(
-                    "impl type parameter `{}` is not constrained by the impl target",
+                    "impl type parameter `{}` is not constrained by the impl target or trait arguments",
                     parameter.name
                 ),
             ));
@@ -498,14 +649,17 @@ fn validate_and_lower_impl(
     mut declaration: ImplDecl,
     registry: &TraitRegistry,
     synthetic_functions: &mut Vec<Function>,
+    shapes: &TypeShapes,
 ) -> Result<ImplInfo, Diagnostic> {
-    let trait_info = registry.trait_info(trait_id);
+    let trait_info = registry.trait_info(trait_id).clone();
     let mut by_name = HashMap::new();
     for required in &trait_info.functions {
         by_name.insert(required.name.as_str(), required);
     }
     let mut seen = HashSet::new();
     let mut methods = HashMap::new();
+    let target = declaration.target.clone();
+    let trait_arguments = declaration.trait_arguments.clone();
     for function in &mut declaration.functions {
         if !seen.insert(function.name.clone()) {
             return Err(at(
@@ -525,6 +679,39 @@ fn validate_and_lower_impl(
                 ),
             ));
         };
+        if function.generic_params.len() != required.generic_params.len() {
+            return Err(at(
+                function.span,
+                format!(
+                    "function `{}::{}` has {} generic parameter(s), but the trait declares {}",
+                    trait_info.name,
+                    function.name,
+                    function.generic_params.len(),
+                    required.generic_params.len()
+                ),
+            ));
+        }
+        let substitutions = signature_substitutions(
+            &trait_info.generic_params,
+            &target,
+            &trait_arguments,
+            required,
+            function,
+        );
+        let required_bounds = function_bound_keys(&required.generic_params, &substitutions);
+        let mut impl_bound_substitutions = HashMap::new();
+        impl_bound_substitutions.insert("Self".to_owned(), declaration.target.clone());
+        let actual_bounds =
+            function_bound_keys(&function.generic_params, &impl_bound_substitutions);
+        if required_bounds != actual_bounds {
+            return Err(at(
+                function.span,
+                format!(
+                    "bounds on `{}::{}` do not match the trait declaration",
+                    trait_info.name, function.name
+                ),
+            ));
+        }
         if function.params.len() != required.params.len() {
             return Err(at(
                 function.span,
@@ -539,8 +726,8 @@ fn validate_and_lower_impl(
         }
         for (actual, expected) in function.params.iter().zip(&required.params) {
             let actual_ty = substitute_self(&actual.ty, &declaration.target);
-            let expected = substitute_self(&expected.ty, &declaration.target);
-            if actual_ty != expected {
+            let expected_ty = substitute_parameters(&expected.ty, &substitutions);
+            if actual_ty != expected_ty {
                 return Err(at(
                     actual.span,
                     format!(
@@ -549,13 +736,13 @@ fn validate_and_lower_impl(
                         trait_info.name,
                         function.name,
                         type_name(&actual_ty),
-                        type_name(&expected)
+                        type_name(&expected_ty)
                     ),
                 ));
             }
         }
         let actual_return = substitute_self(&function.return_type, &declaration.target);
-        let expected_return = substitute_self(&required.return_type, &declaration.target);
+        let expected_return = substitute_parameters(&required.return_type, &substitutions);
         if actual_return != expected_return {
             return Err(at(
                 function.span,
@@ -568,6 +755,17 @@ fn validate_and_lower_impl(
                 ),
             ));
         }
+        validate_bounds(
+            &function.generic_params,
+            declaration
+                .generic_params
+                .iter()
+                .chain(&function.generic_params),
+            false,
+            true,
+            registry,
+            shapes,
+        )?;
         for param in &function.params {
             let actual = substitute_self(&param.ty, &declaration.target);
             validate_signature_type(&actual, true, false, param.span)?;
@@ -580,20 +778,19 @@ fn validate_and_lower_impl(
         }
         validate_signature_type(&actual_return, false, true, function.span)?;
 
-        let internal_name = format!(
-            "{} for {}::{}",
-            trait_info.name,
-            type_name(&declaration.target),
-            function.name
+        let internal_name = trait_method_name(
+            &trait_info.name,
+            &declaration.trait_arguments,
+            &declaration.target,
+            &function.name,
         );
         methods.insert(function.name.clone(), internal_name.clone());
         function.name = internal_name;
-        function.generic_params = declaration.generic_params.clone();
+        let mut generic_params = declaration.generic_params.clone();
+        generic_params.extend(function.generic_params.clone());
+        function.generic_params = generic_params;
         function.is_public = true;
-        for param in &mut function.params {
-            param.ty = substitute_self(&param.ty, &declaration.target);
-        }
-        function.return_type = substitute_self(&function.return_type, &declaration.target);
+        substitute_self_in_function(function, &declaration.target);
         synthetic_functions.push(function.clone());
     }
     for required in &trait_info.functions {
@@ -613,15 +810,49 @@ fn validate_and_lower_impl(
         };
         // Inherited bodies are cloned per impl and specialized like any other
         // impl function, so dispatch stays fully static.
-        let internal_name = format!(
-            "{} for {}::{}",
-            trait_info.name,
-            type_name(&declaration.target),
-            required.name
+        let internal_name = trait_method_name(
+            &trait_info.name,
+            &declaration.trait_arguments,
+            &declaration.target,
+            &required.name,
         );
+        let mut function_parameters = required.generic_params.clone();
+        let mut substitutions = HashMap::new();
+        substitutions.insert("Self".to_owned(), declaration.target.clone());
+        for (parameter, argument) in trait_info
+            .generic_params
+            .iter()
+            .zip(&declaration.trait_arguments)
+        {
+            substitutions.insert(parameter.name.clone(), argument.clone());
+        }
+        let mut used_parameter_names = declaration
+            .generic_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .chain(
+                trait_info
+                    .generic_params
+                    .iter()
+                    .map(|parameter| parameter.name.clone()),
+            )
+            .collect::<HashSet<_>>();
+        used_parameter_names.insert("Self".to_owned());
+        for (index, parameter) in function_parameters.iter_mut().enumerate() {
+            let original_name = parameter.name.clone();
+            let mut name = original_name.clone();
+            let mut suffix = index;
+            while used_parameter_names.contains(&name) {
+                name = format!("{original_name}#{suffix}");
+                suffix += 1;
+            }
+            used_parameter_names.insert(name.clone());
+            substitutions.insert(original_name, Type::Parameter(name.clone()));
+            parameter.name = name;
+        }
         let mut function = Function {
             name: internal_name.clone(),
-            generic_params: declaration.generic_params.clone(),
+            generic_params: function_parameters,
             lifetime_params: Vec::new(),
             params: required.params.clone(),
             return_type: required.return_type.clone(),
@@ -632,7 +863,12 @@ fn validate_and_lower_impl(
             // checks inside it use the trait's module rather than the impl's.
             module: trait_info.module.clone(),
         };
-        substitute_self_in_function(&mut function, &declaration.target);
+        // Trait-argument substitution applies only to the method's own generic
+        // parameters; impl-owned bounds stay as declared for registry matching.
+        substitute_parameters_in_function(&mut function, &substitutions);
+        let mut generic_params = declaration.generic_params.clone();
+        generic_params.extend(function.generic_params);
+        function.generic_params = generic_params;
         for param in &function.params {
             validate_signature_type(&param.ty, true, false, param.span)?;
         }
@@ -642,80 +878,162 @@ fn validate_and_lower_impl(
     }
     Ok(ImplInfo {
         target: declaration.target,
+        trait_arguments: declaration.trait_arguments,
         generic_params: declaration.generic_params,
         methods,
         span: declaration.span,
     })
 }
 
-fn substitute_self_in_function(function: &mut Function, self_type: &Type) {
-    for param in &mut function.params {
-        param.ty = substitute_self(&param.ty, self_type);
+fn signature_substitutions(
+    trait_parameters: &[GenericParam],
+    target: &Type,
+    trait_arguments: &[Type],
+    required: &TraitFunction,
+    function: &Function,
+) -> HashMap<String, Type> {
+    let mut substitutions = HashMap::new();
+    substitutions.insert("Self".to_owned(), target.clone());
+    for (parameter, argument) in trait_parameters.iter().zip(trait_arguments) {
+        substitutions.insert(parameter.name.clone(), argument.clone());
     }
-    function.return_type = substitute_self(&function.return_type, self_type);
-    substitute_self_in_block(&mut function.body, self_type);
+    for (trait_parameter, impl_parameter) in
+        required.generic_params.iter().zip(&function.generic_params)
+    {
+        substitutions.insert(
+            trait_parameter.name.clone(),
+            Type::Parameter(impl_parameter.name.clone()),
+        );
+    }
+    substitutions
 }
 
-fn substitute_self_in_block(block: &mut Block, self_type: &Type) {
+fn function_bound_keys(
+    parameters: &[GenericParam],
+    substitutions: &HashMap<String, Type>,
+) -> Vec<Vec<String>> {
+    parameters
+        .iter()
+        .map(|parameter| {
+            let mut keys = parameter
+                .bounds
+                .iter()
+                .map(|bound| {
+                    let arguments = bound
+                        .type_arguments
+                        .iter()
+                        .map(|argument| substitute_parameters(argument, substitutions))
+                        .collect::<Vec<_>>();
+                    bound_key(&bound.name, &arguments)
+                })
+                .collect::<Vec<_>>();
+            keys.sort();
+            keys.dedup();
+            keys
+        })
+        .collect()
+}
+
+fn trait_method_name(trait_name: &str, arguments: &[Type], target: &Type, method: &str) -> String {
+    if arguments.is_empty() {
+        format!("{trait_name} for {}::{method}", type_name(target))
+    } else {
+        format!(
+            "{trait_name}<{}> for {}::{method}",
+            arguments
+                .iter()
+                .map(type_name)
+                .collect::<Vec<_>>()
+                .join(","),
+            type_name(target)
+        )
+    }
+}
+
+fn substitute_self_in_function(function: &mut Function, self_type: &Type) {
+    let mut substitutions = HashMap::new();
+    substitutions.insert("Self".to_owned(), self_type.clone());
+    substitute_parameters_in_function(function, &substitutions);
+}
+
+fn substitute_parameters_in_function(
+    function: &mut Function,
+    substitutions: &HashMap<String, Type>,
+) {
+    for parameter in &mut function.generic_params {
+        for bound in &mut parameter.bounds {
+            for argument in &mut bound.type_arguments {
+                *argument = substitute_parameters(argument, substitutions);
+            }
+        }
+    }
+    for param in &mut function.params {
+        param.ty = substitute_parameters(&param.ty, substitutions);
+    }
+    function.return_type = substitute_parameters(&function.return_type, substitutions);
+    substitute_parameters_in_block(&mut function.body, substitutions);
+}
+
+fn substitute_parameters_in_block(block: &mut Block, substitutions: &HashMap<String, Type>) {
     for statement in &mut block.statements {
-        substitute_self_in_statement(statement, self_type);
+        substitute_parameters_in_statement(statement, substitutions);
     }
     if let Some(tail) = &mut block.tail {
-        substitute_self_in_expr(tail, self_type);
+        substitute_parameters_in_expr(tail, substitutions);
     }
 }
 
-fn substitute_self_in_statement(statement: &mut Stmt, self_type: &Type) {
+fn substitute_parameters_in_statement(statement: &mut Stmt, substitutions: &HashMap<String, Type>) {
     match statement {
         Stmt::Let { ty, value, .. } => {
             if let Some(ty) = ty {
-                *ty = substitute_self(ty, self_type);
+                *ty = substitute_parameters(ty, substitutions);
             }
-            substitute_self_in_expr(value, self_type);
+            substitute_parameters_in_expr(value, substitutions);
         }
         Stmt::Assign { value, .. } | Stmt::Expr(value) => {
-            substitute_self_in_expr(value, self_type);
+            substitute_parameters_in_expr(value, substitutions);
         }
         Stmt::If {
             condition,
             then_block,
             else_block,
         } => {
-            substitute_self_in_expr(condition, self_type);
-            substitute_self_in_block(then_block, self_type);
+            substitute_parameters_in_expr(condition, substitutions);
+            substitute_parameters_in_block(then_block, substitutions);
             if let Some(block) = else_block {
-                substitute_self_in_block(block, self_type);
+                substitute_parameters_in_block(block, substitutions);
             }
         }
         Stmt::While { condition, body } => {
-            substitute_self_in_expr(condition, self_type);
-            substitute_self_in_block(body, self_type);
+            substitute_parameters_in_expr(condition, substitutions);
+            substitute_parameters_in_block(body, substitutions);
         }
         Stmt::For {
             start, end, body, ..
         } => {
-            substitute_self_in_expr(start, self_type);
-            substitute_self_in_expr(end, self_type);
-            substitute_self_in_block(body, self_type);
+            substitute_parameters_in_expr(start, substitutions);
+            substitute_parameters_in_expr(end, substitutions);
+            substitute_parameters_in_block(body, substitutions);
         }
         Stmt::ForArray { array, body, .. } => {
-            substitute_self_in_expr(array, self_type);
-            substitute_self_in_block(body, self_type);
+            substitute_parameters_in_expr(array, substitutions);
+            substitute_parameters_in_block(body, substitutions);
         }
         Stmt::Break { value, .. } | Stmt::Return { value, .. } => {
             if let Some(value) = value {
-                substitute_self_in_expr(value, self_type);
+                substitute_parameters_in_expr(value, substitutions);
             }
         }
         Stmt::Continue { .. } => {}
         Stmt::AssignPlace { target, value, .. } => {
-            substitute_self_in_expr(target, self_type);
-            substitute_self_in_expr(value, self_type);
+            substitute_parameters_in_expr(target, substitutions);
+            substitute_parameters_in_expr(value, substitutions);
         }
     }
 }
 
-fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
+fn substitute_parameters_in_expr(expr: &mut Expr, substitutions: &HashMap<String, Type>) {
     match expr {
         Expr::Integer(..)
         | Expr::Float32(..)
@@ -726,15 +1044,15 @@ fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
         | Expr::Variable(..) => {}
         Expr::Tuple(values, _) | Expr::Array(values, _) => {
             for value in values {
-                substitute_self_in_expr(value, self_type);
+                substitute_parameters_in_expr(value, substitutions);
             }
         }
         Expr::Index { array, index, .. } => {
-            substitute_self_in_expr(array, self_type);
-            substitute_self_in_expr(index, self_type);
+            substitute_parameters_in_expr(array, substitutions);
+            substitute_parameters_in_expr(index, substitutions);
         }
         Expr::Field { value, .. } | Expr::Unary { value, .. } => {
-            substitute_self_in_expr(value, self_type);
+            substitute_parameters_in_expr(value, substitutions);
         }
         Expr::Struct {
             type_arguments,
@@ -742,15 +1060,15 @@ fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
             ..
         } => {
             for argument in type_arguments {
-                *argument = substitute_self(argument, self_type);
+                *argument = substitute_parameters(argument, substitutions);
             }
             for (_, value, _) in fields {
-                substitute_self_in_expr(value, self_type);
+                substitute_parameters_in_expr(value, substitutions);
             }
         }
         Expr::Binary { left, right, .. } => {
-            substitute_self_in_expr(left, self_type);
-            substitute_self_in_expr(right, self_type);
+            substitute_parameters_in_expr(left, substitutions);
+            substitute_parameters_in_expr(right, substitutions);
         }
         Expr::Call {
             type_arguments,
@@ -758,28 +1076,36 @@ fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
             ..
         } => {
             for argument in type_arguments {
-                *argument = substitute_self(argument, self_type);
+                *argument = substitute_parameters(argument, substitutions);
             }
             for arg in args {
-                substitute_self_in_expr(arg, self_type);
+                substitute_parameters_in_expr(arg, substitutions);
             }
         }
         Expr::TraitCall {
+            trait_arguments,
             self_type: call_self,
+            type_arguments,
             args,
             ..
         } => {
+            for argument in trait_arguments {
+                *argument = substitute_parameters(argument, substitutions);
+            }
             if let Some(call_self) = call_self {
-                *call_self = substitute_self(call_self, self_type);
+                *call_self = substitute_parameters(call_self, substitutions);
+            }
+            for argument in type_arguments {
+                *argument = substitute_parameters(argument, substitutions);
             }
             for arg in args {
-                substitute_self_in_expr(arg, self_type);
+                substitute_parameters_in_expr(arg, substitutions);
             }
         }
         Expr::CallValue { callee, args, .. } => {
-            substitute_self_in_expr(callee, self_type);
+            substitute_parameters_in_expr(callee, substitutions);
             for arg in args {
-                substitute_self_in_expr(arg, self_type);
+                substitute_parameters_in_expr(arg, substitutions);
             }
         }
         Expr::Lambda {
@@ -789,10 +1115,10 @@ fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
             ..
         } => {
             for param in params {
-                param.ty = substitute_self(&param.ty, self_type);
+                param.ty = substitute_parameters(&param.ty, substitutions);
             }
-            *return_type = substitute_self(return_type, self_type);
-            substitute_self_in_block(body, self_type);
+            *return_type = substitute_parameters(return_type, substitutions);
+            substitute_parameters_in_block(body, substitutions);
         }
         Expr::If {
             condition,
@@ -800,29 +1126,29 @@ fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
             else_block,
             ..
         } => {
-            substitute_self_in_expr(condition, self_type);
-            substitute_self_in_block(then_block, self_type);
-            substitute_self_in_block(else_block, self_type);
+            substitute_parameters_in_expr(condition, substitutions);
+            substitute_parameters_in_block(then_block, substitutions);
+            substitute_parameters_in_block(else_block, substitutions);
         }
         Expr::Match { value, arms, .. } => {
-            substitute_self_in_expr(value, self_type);
+            substitute_parameters_in_expr(value, substitutions);
             for arm in arms {
-                substitute_self_in_block(&mut arm.body, self_type);
+                substitute_parameters_in_block(&mut arm.body, substitutions);
             }
         }
-        Expr::Try { value, .. } => substitute_self_in_expr(value, self_type),
-        Expr::Loop { body, .. } => substitute_self_in_block(body, self_type),
+        Expr::Try { value, .. } => substitute_parameters_in_expr(value, substitutions),
+        Expr::Loop { body, .. } => substitute_parameters_in_block(body, substitutions),
         Expr::Variant {
             type_arguments,
             payload,
             ..
         } => {
             for argument in type_arguments {
-                *argument = substitute_self(argument, self_type);
+                *argument = substitute_parameters(argument, substitutions);
             }
             if let Some(payload) = payload {
                 for value in payload {
-                    substitute_self_in_expr(value, self_type);
+                    substitute_parameters_in_expr(value, substitutions);
                 }
             }
         }
@@ -830,39 +1156,55 @@ fn substitute_self_in_expr(expr: &mut Expr, self_type: &Type) {
 }
 
 pub(crate) fn substitute_self(ty: &Type, target: &Type) -> Type {
+    let mut substitutions = HashMap::new();
+    substitutions.insert("Self".to_owned(), target.clone());
+    substitute_parameters(ty, &substitutions)
+}
+
+pub(crate) fn substitute_parameters(ty: &Type, substitutions: &HashMap<String, Type>) -> Type {
     match ty {
-        Type::SelfType => target.clone(),
-        Type::Array(element, length) => {
-            Type::Array(Box::new(substitute_self(element, target)), *length)
+        Type::SelfType => substitutions.get("Self").cloned().unwrap_or(Type::SelfType),
+        Type::Parameter(name) => substitutions
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| Type::Parameter(name.clone())),
+        Type::Array(element, length) => Type::Array(
+            Box::new(substitute_parameters(element, substitutions)),
+            *length,
+        ),
+        Type::Vector(element) => {
+            Type::Vector(Box::new(substitute_parameters(element, substitutions)))
         }
-        Type::Vector(element) => Type::Vector(Box::new(substitute_self(element, target))),
-        Type::Reference(element, lifetime) => {
-            Type::Reference(Box::new(substitute_self(element, target)), lifetime.clone())
-        }
-        Type::MutableReference(element, lifetime) => {
-            Type::MutableReference(Box::new(substitute_self(element, target)), lifetime.clone())
-        }
-        Type::RawPointer(element, mutable) => {
-            Type::RawPointer(Box::new(substitute_self(element, target)), *mutable)
-        }
+        Type::Reference(element, lifetime) => Type::Reference(
+            Box::new(substitute_parameters(element, substitutions)),
+            lifetime.clone(),
+        ),
+        Type::MutableReference(element, lifetime) => Type::MutableReference(
+            Box::new(substitute_parameters(element, substitutions)),
+            lifetime.clone(),
+        ),
+        Type::RawPointer(element, mutable) => Type::RawPointer(
+            Box::new(substitute_parameters(element, substitutions)),
+            *mutable,
+        ),
         Type::Tuple(elements) => Type::Tuple(
             elements
                 .iter()
-                .map(|element| substitute_self(element, target))
+                .map(|element| substitute_parameters(element, substitutions))
                 .collect(),
         ),
         Type::Function(params, result) => Type::Function(
             params
                 .iter()
-                .map(|param| substitute_self(param, target))
+                .map(|param| substitute_parameters(param, substitutions))
                 .collect(),
-            Box::new(substitute_self(result, target)),
+            Box::new(substitute_parameters(result, substitutions)),
         ),
         Type::Applied(name, arguments) => Type::Applied(
             name.clone(),
             arguments
                 .iter()
-                .map(|argument| substitute_self(argument, target))
+                .map(|argument| substitute_parameters(argument, substitutions))
                 .collect(),
         ),
         other => other.clone(),
@@ -918,7 +1260,7 @@ fn reject_overlapping_impls(registry: &TraitRegistry) -> Result<(), Diagnostic> 
             for right_id in &impls[offset + 1..] {
                 let left = registry.impl_info(*left_id);
                 let right = registry.impl_info(*right_id);
-                if impl_targets_overlap(&left.target, &right.target) {
+                if impl_targets_overlap(left, right) {
                     return Err(at(
                         right.span,
                         format!(
@@ -935,12 +1277,32 @@ fn reject_overlapping_impls(registry: &TraitRegistry) -> Result<(), Diagnostic> 
     Ok(())
 }
 
-fn impl_targets_overlap(left: &Type, right: &Type) -> bool {
+fn impl_targets_overlap(left: &ImplInfo, right: &ImplInfo) -> bool {
+    if left.trait_arguments.len() != right.trait_arguments.len() {
+        return false;
+    }
     let mut left_names = HashMap::new();
     let mut right_names = HashMap::new();
-    let left = rename_overlap_variables(left, "L", &mut left_names);
-    let right = rename_overlap_variables(right, "R", &mut right_names);
-    unify_overlap(&left, &right, &mut HashMap::new()).is_ok()
+    let left_target = rename_overlap_variables(&left.target, "L", &mut left_names);
+    let right_target = rename_overlap_variables(&right.target, "R", &mut right_names);
+    let left_arguments = left
+        .trait_arguments
+        .iter()
+        .map(|argument| rename_overlap_variables(argument, "L", &mut left_names))
+        .collect::<Vec<_>>();
+    let right_arguments = right
+        .trait_arguments
+        .iter()
+        .map(|argument| rename_overlap_variables(argument, "R", &mut right_names))
+        .collect::<Vec<_>>();
+    let mut bindings = HashMap::new();
+    if unify_overlap(&left_target, &right_target, &mut bindings).is_err() {
+        return false;
+    }
+    left_arguments
+        .iter()
+        .zip(&right_arguments)
+        .all(|(left, right)| unify_overlap(left, right, &mut bindings).is_ok())
 }
 
 fn rename_overlap_variables(ty: &Type, side: &str, names: &mut HashMap<String, usize>) -> Type {
@@ -1130,28 +1492,50 @@ mod tests {
         Type::Applied("Box".into(), vec![inner])
     }
 
+    fn head(target: Type) -> ImplInfo {
+        head_with(target, Vec::new())
+    }
+
+    fn head_with(target: Type, trait_arguments: Vec<Type>) -> ImplInfo {
+        ImplInfo {
+            target,
+            trait_arguments,
+            generic_params: Vec::new(),
+            methods: HashMap::new(),
+            span: Span {
+                line: 1,
+                column: 1,
+                end_column: 1,
+                file: None,
+            },
+        }
+    }
+
     #[test]
     fn generic_and_concrete_impl_targets_overlap() {
         assert!(impl_targets_overlap(
-            &boxed(parameter("T")),
-            &boxed(Type::I64)
+            &head(boxed(parameter("T"))),
+            &head(boxed(Type::I64))
         ));
         assert!(impl_targets_overlap(
-            &boxed(Type::I64),
-            &boxed(parameter("U"))
+            &head(boxed(Type::I64)),
+            &head(boxed(parameter("U")))
         ));
         assert!(impl_targets_overlap(
-            &boxed(parameter("T")),
-            &boxed(parameter("U"))
+            &head(boxed(parameter("T"))),
+            &head(boxed(parameter("U")))
         ));
     }
 
     #[test]
     fn distinct_outer_constructors_do_not_overlap() {
-        assert!(!impl_targets_overlap(&boxed(parameter("T")), &Type::I64));
         assert!(!impl_targets_overlap(
-            &Type::Vector(Box::new(parameter("T"))),
-            &boxed(parameter("U"))
+            &head(boxed(parameter("T"))),
+            &head(Type::I64)
+        ));
+        assert!(!impl_targets_overlap(
+            &head(Type::Vector(Box::new(parameter("T")))),
+            &head(boxed(parameter("U")))
         ));
     }
 
@@ -1159,11 +1543,14 @@ mod tests {
     fn indirect_recursive_targets_do_not_overlap() {
         let left = Type::Tuple(vec![parameter("T"), Type::Vector(Box::new(parameter("T")))]);
         let right = Type::Tuple(vec![parameter("U"), parameter("U")]);
-        assert!(!impl_targets_overlap(&left, &right));
-        assert!(!impl_targets_overlap(&right, &left));
+        assert!(!impl_targets_overlap(
+            &head(left.clone()),
+            &head(right.clone())
+        ));
+        assert!(!impl_targets_overlap(&head(right), &head(left)));
         assert!(impl_targets_overlap(
-            &boxed(parameter("T")),
-            &boxed(Type::I64)
+            &head(boxed(parameter("T"))),
+            &head(boxed(Type::I64))
         ));
     }
 
@@ -1171,15 +1558,35 @@ mod tests {
     fn repeated_and_cross_parameter_overlap_is_detected() {
         let left = Type::Tuple(vec![parameter("T"), parameter("T")]);
         let right = Type::Tuple(vec![parameter("U"), Type::I64]);
-        assert!(impl_targets_overlap(&left, &right));
+        assert!(impl_targets_overlap(&head(left), &head(right)));
 
         let left = Type::Tuple(vec![parameter("T"), Type::I64]);
         let right = Type::Tuple(vec![Type::Bool, parameter("U")]);
-        assert!(impl_targets_overlap(&left, &right));
+        assert!(impl_targets_overlap(&head(left), &head(right)));
 
         let left = Type::Tuple(vec![parameter("T"), parameter("T")]);
         let right = Type::Tuple(vec![Type::Bool, Type::I64]);
-        assert!(!impl_targets_overlap(&left, &right));
+        assert!(!impl_targets_overlap(&head(left), &head(right)));
+    }
+
+    #[test]
+    fn trait_arguments_participate_in_impl_overlap() {
+        assert!(impl_targets_overlap(
+            &head_with(Type::I64, vec![parameter("T")]),
+            &head_with(Type::I64, vec![Type::Bool])
+        ));
+        assert!(impl_targets_overlap(
+            &head_with(Type::I64, vec![parameter("T")]),
+            &head_with(Type::I64, vec![Type::I64])
+        ));
+        assert!(impl_targets_overlap(
+            &head_with(Type::I64, vec![parameter("T"), Type::Bool]),
+            &head_with(Type::I64, vec![Type::I64, Type::Bool])
+        ));
+        assert!(!impl_targets_overlap(
+            &head_with(Type::I64, vec![parameter("T"), Type::Bool]),
+            &head_with(Type::I64, vec![parameter("U"), Type::I64])
+        ));
     }
 
     #[test]

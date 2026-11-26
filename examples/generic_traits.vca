@@ -1,0 +1,34 @@
+// Generic traits select an implementation from Self and trait arguments, and
+// generic trait functions add per-call type parameters.
+trait Choose<T> {
+    fn pick(value: Self, input: T) -> T;
+    fn relay<U>(value: Self, input: T, fallback: U) -> U {
+        let selected = <Self as Choose<T>>::pick(value, input);
+        if true { fallback } else { fallback }
+    }
+}
+
+struct Box<T> {
+    value: T,
+}
+
+impl<A> Choose<A> for i64 {
+    fn pick(value: i64, input: A) -> A { input }
+}
+
+impl<A> Choose<A> for Box<A> {
+    fn pick(value: Box<A>, input: A) -> A { value.value }
+}
+
+fn main() -> i64 {
+    let inferred = Choose::pick(0, 20);
+    let explicit = <Box<i64> as Choose<i64>>::pick(Box<i64> { value: 22 }, 0);
+    let relayed = Choose::relay::<i64>(0, true, 42);
+    print("inferred: ");
+    print_i64(inferred);
+    print("explicit: ");
+    print_i64(explicit);
+    print("relayed: ");
+    print_i64(relayed);
+    0
+}

@@ -16,6 +16,8 @@ mod ffi;
 mod floats;
 #[path = "compiler/function_values.rs"]
 mod function_values;
+#[path = "compiler/generic_traits.rs"]
+mod generic_traits;
 #[path = "compiler/generics.rs"]
 mod generics;
 #[path = "compiler/globals.rs"]

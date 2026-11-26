@@ -90,15 +90,26 @@ impl Parser {
             let self_type = self.parse_type()?;
             self.consume(&TokenKind::As, "`as` in qualified trait call")?;
             let trait_ref = self.parse_trait_ref()?;
-            self.consume(&TokenKind::Greater, "`>` after qualified trait call target")?;
+            self.consume_type_greater()?;
             self.consume(&TokenKind::DoubleColon, "`::` after qualified trait")?;
             let function_name = self.take_ident("trait function name")?;
+            let type_arguments = if self.at(&TokenKind::DoubleColon)
+                && matches!(&self.peek_n(1).kind, TokenKind::Less)
+            {
+                self.advance();
+                self.advance();
+                self.parse_type_arguments()?
+            } else {
+                Vec::new()
+            };
             self.consume(&TokenKind::LParen, "`(` after trait function name")?;
             let args = self.parse_call_arguments()?;
             return Ok(Expr::TraitCall {
                 trait_name: trait_ref.name,
+                trait_arguments: trait_ref.type_arguments,
                 self_type: Some(self_type),
                 function_name,
+                type_arguments,
                 args,
                 span: Span::from(&start),
             });
@@ -268,6 +279,8 @@ impl Parser {
                 } else {
                     Vec::new()
                 };
+                let type_arguments_before_path =
+                    !type_arguments.is_empty() && self.at(&TokenKind::DoubleColon);
                 if self.at(&TokenKind::DoubleColon) {
                     self.advance();
                     path.push(self.take_ident("name after `::`")?);
@@ -289,6 +302,7 @@ impl Parser {
                         name,
                         type_arguments,
                         args,
+                        type_arguments_before_path,
                         span,
                     });
                 }
@@ -455,6 +469,7 @@ impl Parser {
                         name,
                         type_arguments,
                         args,
+                        type_arguments_before_path: false,
                         span,
                     })
                 } else {

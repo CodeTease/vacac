@@ -1,0 +1,8 @@
+trait Grow<T: Grow<Vec<T>>> {}
+
+impl<T> Grow<T> for i64 {}
+impl<T, U> Grow<U> for Vec<T> {}
+
+fn use_it<T: Grow<i64>>(value: T) -> i64 { 0 }
+
+fn main() -> i64 { use_it(0) }

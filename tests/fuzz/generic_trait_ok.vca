@@ -1,0 +1,24 @@
+trait Choose<T> {
+    fn pick(value: Self, input: T) -> T;
+    fn relay(value: Self, input: T) -> T {
+        <Self as Choose<T>>::pick(value, input)
+    }
+}
+
+struct Box<U> { value: U }
+
+impl<A> Choose<A> for i64 {
+    fn pick(value: i64, input: A) -> A { input }
+}
+
+impl<A> Choose<A> for Box<A> {
+    fn pick(value: Box<A>, input: A) -> A { value.value }
+}
+
+fn main() -> i64 {
+    let first = Choose::pick(0, 42);
+    let second = <Box<i64> as Choose<i64>>::relay(Box<i64> { value: 41 }, 0);
+    print_i64(first);
+    print_i64(second);
+    first - second - 1
+}

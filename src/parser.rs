@@ -571,6 +571,22 @@ mod recovery_tests {
     }
 
     #[test]
+    fn recovery_from_a_malformed_generic_trait_preserves_main() {
+        let source = "trait Broken<T { fn broken(value: Self) -> T; }\nfn main() -> i64 { 0 }\n";
+        let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();
+
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| function.name == "main"),
+            "{:?}",
+            program.functions
+        );
+    }
+
+    #[test]
     fn failed_lifetime_generic_function_does_not_leak_lifetimes_during_recovery() {
         let source = "fn broken<'a>(value: &'a i64) -> { 0 }\nfn main(value: &'a i64) -> i64 { 0 }";
         let (program, diagnostics) = Parser::new(lexer::lex(source).unwrap()).parse_program();

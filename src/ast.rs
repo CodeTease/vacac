@@ -22,6 +22,7 @@ pub enum Type {
 #[derive(Debug, Clone)]
 pub struct TraitRef {
     pub name: String,
+    pub type_arguments: Vec<Type>,
     pub span: Span,
 }
 
@@ -138,6 +139,7 @@ pub struct UseDecl {
 #[derive(Debug, Clone)]
 pub struct TraitDecl {
     pub name: String,
+    pub generic_params: Vec<GenericParam>,
     pub functions: Vec<TraitFunction>,
     pub span: Span,
     pub is_public: bool,
@@ -147,6 +149,7 @@ pub struct TraitDecl {
 #[derive(Debug, Clone)]
 pub struct TraitFunction {
     pub name: String,
+    pub generic_params: Vec<GenericParam>,
     pub params: Vec<Param>,
     pub return_type: Type,
     /// Default body inherited by implementations that omit this function.
@@ -157,6 +160,7 @@ pub struct TraitFunction {
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
     pub trait_name: String,
+    pub trait_arguments: Vec<Type>,
     pub target: Type,
     pub generic_params: Vec<GenericParam>,
     pub functions: Vec<Function>,
@@ -335,12 +339,17 @@ pub enum Expr {
         name: String,
         type_arguments: Vec<Type>,
         args: Vec<Expr>,
+        /// `path::<...>::member(...)`: the turbofish attached to the path prefix
+        /// rather than to the selected function.
+        type_arguments_before_path: bool,
         span: Span,
     },
     TraitCall {
         trait_name: String,
+        trait_arguments: Vec<Type>,
         self_type: Option<Type>,
         function_name: String,
+        type_arguments: Vec<Type>,
         args: Vec<Expr>,
         span: Span,
     },

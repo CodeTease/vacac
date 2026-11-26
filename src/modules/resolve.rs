@@ -388,6 +388,7 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
         .collect::<HashSet<_>>();
     for declaration in &mut program.traits {
         declaration.name = qualify(&declaration.module, &declaration.name);
+        resolve_generic_bounds(&mut declaration.generic_params, &declaration.module, &scope)?;
         let mut seen = HashSet::new();
         for function in &mut declaration.functions {
             if !seen.insert(function.name.clone()) {
@@ -399,6 +400,7 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
                     ),
                 ));
             }
+            resolve_generic_bounds(&mut function.generic_params, &declaration.module, &scope)?;
             resolve_function_signature(
                 &mut function.params,
                 &mut function.return_type,
@@ -480,6 +482,14 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             &scope,
         )?;
         resolve_generic_bounds(&mut declaration.generic_params, &declaration.module, &scope)?;
+        for argument in &mut declaration.trait_arguments {
+            resolve_type(
+                argument,
+                &declaration.module,
+                declaration.trait_span,
+                &scope,
+            )?;
+        }
         resolve_type(
             &mut declaration.target,
             &declaration.module,
@@ -487,6 +497,7 @@ pub(super) fn resolve_names(program: &mut Program) -> Result<(), Diagnostic> {
             &scope,
         )?;
         for function in &mut declaration.functions {
+            resolve_generic_bounds(&mut function.generic_params, &declaration.module, &scope)?;
             resolve_function_signature(
                 &mut function.params,
                 &mut function.return_type,
@@ -514,6 +525,9 @@ fn resolve_generic_bounds(
     for parameter in parameters {
         for bound in &mut parameter.bounds {
             bound.name = resolve_reference(&bound.name, module, bound.span, scope)?;
+            for argument in &mut bound.type_arguments {
+                resolve_type(argument, module, bound.span, scope)?;
+            }
         }
     }
     Ok(())
@@ -948,14 +962,22 @@ impl<'a> Resolver<'a> {
             }
             Expr::TraitCall {
                 trait_name,
+                trait_arguments,
                 self_type,
+                type_arguments,
                 args,
                 span,
                 ..
             } => {
                 *trait_name = resolve_reference(trait_name, self.module, *span, self.scope)?;
+                for argument in trait_arguments {
+                    resolve_type(argument, self.module, *span, self.scope)?;
+                }
                 if let Some(self_type) = self_type {
                     resolve_type(self_type, self.module, *span, self.scope)?;
+                }
+                for argument in type_arguments {
+                    resolve_type(argument, self.module, *span, self.scope)?;
                 }
                 for arg in args {
                     self.resolve_expr(arg)?;
@@ -975,6 +997,7 @@ impl<'a> Resolver<'a> {
                 name,
                 type_arguments,
                 args,
+                type_arguments_before_path,
                 span,
             } => {
                 let original_name = name.clone();
@@ -1029,19 +1052,24 @@ impl<'a> Resolver<'a> {
                             .find(trait_name, self.module)
                             .is_some_and(|symbol| symbol.kind == "trait");
                     if is_trait {
-                        let resolved_trait =
-                            resolve_reference(trait_name, self.module, *span, self.scope)?;
-                        if !type_arguments.is_empty() {
+                        if *type_arguments_before_path {
                             return Err(Diagnostic::at(
                                 (*span).into(),
-                                "trait calls do not accept turbofish arguments; use `<Type as Trait>::function(...)` to choose `Self`",
+                                format!(
+                                    "`{name}` is not supported; write `<Self as {trait_name}<...>>::{function_name}(...)` or use function arguments after the function name"
+                                ),
                             ));
                         }
+                        let resolved_trait =
+                            resolve_reference(trait_name, self.module, *span, self.scope)?;
+                        let function_arguments = std::mem::take(type_arguments);
                         let payload = std::mem::take(args);
                         *expr = Expr::TraitCall {
                             trait_name: resolved_trait,
+                            trait_arguments: Vec::new(),
                             self_type: None,
                             function_name: function_name.to_owned(),
+                            type_arguments: function_arguments,
                             args: payload,
                             span: *span,
                         };

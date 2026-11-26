@@ -13,8 +13,9 @@ struct PendingFunction {
 
 struct Specializer {
     traits: crate::modules::traits::TraitRegistry,
-    trait_selections: HashMap<(usize, String), (usize, Substitution)>,
-    active_trait_selections: std::collections::HashSet<(usize, String)>,
+    trait_selections: HashMap<(usize, String, Vec<String>), (usize, Substitution)>,
+    active_trait_selections: std::collections::HashSet<(usize, String, Vec<String>)>,
+    trait_proof_depth: usize,
     global_declarations: HashMap<String, GlobalDecl>,
     module_context: String,
     current_return_type: Option<Type>,
@@ -35,6 +36,7 @@ struct Specializer {
 }
 
 const MAX_INSTANCES: usize = 512;
+const MAX_TRAIT_PROOF_DEPTH: usize = 128;
 
 pub(super) fn monomorphize(
     program: &mut Program,
@@ -97,6 +99,7 @@ pub(super) fn monomorphize(
         traits: traits.clone(),
         trait_selections: HashMap::new(),
         active_trait_selections: std::collections::HashSet::new(),
+        trait_proof_depth: 0,
         global_declarations: program
             .globals
             .iter()

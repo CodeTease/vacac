@@ -18,7 +18,7 @@
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [x] Interfaces / traits / protocols.
 * [x] Default function bodies in traits, including inherited body specialization, visibility, and static-dispatch tests.
-* [ ] Generic traits and generic trait functions, including inference, coherence, visibility, and specialization-limit coverage.
+* [x] Generic traits and generic trait functions, including inference, coherence, visibility, and specialization-limit coverage.
 * [x] Persistent mutable owned closure captures, with closure aliases sharing environment state and separately created closures remaining independent.
 * [x] Unit-producing statement matches that skip result PHI construction.
 * [x] Generalized aggregate and nested matching with multiple dispatch arms, nested variant and scalar patterns, and exhaustive/unreachable-arm analysis.

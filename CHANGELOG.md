@@ -6,6 +6,21 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Generic traits and generic trait functions complete the corresponding TODO
+roadmap item.
+
+### Added
+
+- Generic traits and generic trait functions. Traits and their functions may
+  declare type parameters, impl heads carry ordered trait arguments, and trait
+  and function arguments are inferred from value arguments or supplied with
+  qualified calls and `::<...>` turbofish. Coherence and overlap check the full
+  impl head, inherited defaults specialize trait and function parameters with
+  capture-avoiding renaming, and concrete bound proofs and specialization share
+  the existing instance and proof-depth limits.
+
 ## [0.3.0] - 2026-11-25
 
 Match arms can now combine aggregate and nested patterns, completing the

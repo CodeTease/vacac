@@ -285,6 +285,7 @@ impl Specializer {
                 type_arguments,
                 args,
                 span,
+                ..
             } => {
                 let local_callee = variables.contains_key(name);
                 // A leading `::` is an imported root declaration's identity; look
