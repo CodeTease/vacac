@@ -395,6 +395,28 @@ fn mutable_reborrows_nest_and_keep_parent_loans_lexical() {
     );
     assert_eq!(result.status.code(), Some(0));
 
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let first = 0;
+            let second = 0;
+            const first_ref: &mut i64 = &mut first;
+            const second_ref: &mut i64 = &mut second;
+            const selected = if true {
+                const child: &mut i64 = &mut *first_ref;
+                child
+            } else {
+                const child: &mut i64 = &mut *second_ref;
+                child
+            };
+            *selected = 42;
+            *selected - 42
+        }
+        "#,
+        "references-mutable-reborrow-branch-join",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
     for (source, name, diagnostic) in [
         (
             "fn main() -> i64 { let value = 0; const parent: &mut i64 = &mut value; const child: &mut i64 = &mut *parent; *parent = 1; *child }",
