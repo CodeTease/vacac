@@ -19,6 +19,11 @@ fn select_match<'a>(condition: bool, first: &'a i64, second: &'a i64) -> &'a i64
     }
 }
 
+// Named mutable returns may reborrow an eligible input parameter.
+fn advance<'a>(value: &'a mut i64) -> &'a mut i64 {
+    &mut *value
+}
+
 fn main() -> i64 {
     let first = 40;
     let second = 42;
@@ -43,7 +48,8 @@ fn main() -> i64 {
     let updated = 1;
     if true {
         const mutable: &mut i64 = &mut updated;
-        *mutable = 2;
+        const child = advance(mutable);
+        *child = 2;
         0
     } else {
         0
