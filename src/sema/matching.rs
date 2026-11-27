@@ -97,12 +97,6 @@ impl Checker {
         }
         let result_type =
             result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))?;
-        if matches!(result_type, ValueType::MutableReference(_)) {
-            return Err(at(
-                span,
-                "mutable references cannot escape through match expressions",
-            ));
-        }
         self.record_reference_join(span, result_type, result_origins, "`match`")?;
         Ok(result_type)
     }
@@ -130,16 +124,12 @@ impl Checker {
             .push(bindings.into_iter().collect::<HashMap<_, _>>());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(Vec::new());
-        self.shared_borrows.push(Vec::new());
-        self.mutable_reference_origins.push(HashMap::new());
+        self.push_loan_scope();
         let result = self.check_block_result(&arm.body, arm.span);
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
-        self.mutable_borrows.pop();
-        self.shared_borrows.pop();
-        self.mutable_reference_origins.pop();
+        self.pop_loan_scope();
         result
     }
 
