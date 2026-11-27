@@ -6,7 +6,7 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-11-27
+## [0.5.0] - 2026-11-28
 
 Mutable-reference reborrowing and named mutable returns complete the
 corresponding TODO roadmap item.
@@ -28,6 +28,24 @@ corresponding TODO roadmap item.
   per-value loan lineages. Direct and indirect call arguments reserve reference
   origins during argument evaluation, and overlapping shared/mutable call
   arguments are rejected.
+
+### Fixed
+
+- Reference origins returned from lifetime-annotated calls are now opaque.
+  Projecting a field through a returned reference keeps the whole argument
+  borrowed, so mutating an argument's field while that reference is live is
+  rejected instead of being allowed through a narrowed loan.
+- Borrow checking is now scoped per function or lambda, so parameters of
+  different callables at the same position no longer appear to alias and
+  spurious overlapping-mutable-argument errors are gone.
+- Reference-typed `if`/`match` results can no longer escape a block-local
+  binding or a pattern binding, while scalar results computed by dereferencing
+  a block-local reference are now accepted.
+- Loans created inside a block end with that block, while references that
+  escape keep their ancestor loans, so using the parent after a branch no
+  longer reports a stale conflict.
+- Reborrow index selectors are now type-checked, and non-constant indices
+  remain usable in reborrows.
 
 ## [0.4.0] - 2026-11-27
 
