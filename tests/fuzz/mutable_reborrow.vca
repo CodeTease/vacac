@@ -1,0 +1,17 @@
+// Mutable reborrows and named mutable returns keep the parent loaned.
+fn relay<'a, T>(input: &'a mut T) -> &'a mut T {
+    &mut *input
+}
+
+fn main() -> i64 {
+    let value = 0;
+    const parent: &mut i64 = &mut value;
+    if true {
+        const child = relay(parent);
+        *child = 42;
+        0
+    } else {
+        0
+    };
+    *parent - 42
+}

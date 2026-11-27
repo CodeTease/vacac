@@ -332,10 +332,222 @@ fn shared_references_can_be_reborrowed_through_direct_dereferences() {
         "references-reborrow-local-lifetime-escape",
         "cannot return a reference that does not originate from a parameter",
     );
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let answer = 42;
+            const mutable: &mut i64 = &mut answer;
+            const shared: &i64 = &*mutable;
+            *shared - 42
+        }
+        "#,
+        "references-shared-mutable-reborrow",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
     assert_compile_error(
-        "fn main() -> i64 { let answer = 42; const mutable: &mut i64 = &mut answer; const shared: &i64 = &*mutable; 0 }",
-        "references-mutable-direct-reborrow",
-        "mutable reference reborrowing is not supported",
+        "fn main() -> i64 { let answer = 42; const mutable: &mut i64 = &mut answer; const shared: &i64 = &*mutable; *mutable = 1; 0 }",
+        "references-shared-reborrow-blocks-parent-write",
+        "cannot modify `answer` while it is borrowed",
+    );
+    assert_compile_error(
+        "fn main() -> i64 { let answer = 42; const shared: &i64 = &answer; const mutable: &mut i64 = &mut *shared; 0 }",
+        "references-mutable-through-shared-reborrow",
+        "cannot mutably borrow through a shared reference",
+    );
+}
+
+#[test]
+fn mutable_reborrows_nest_and_keep_parent_loans_lexical() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let value = 0;
+            if true {
+                const parent: &mut i64 = &mut value;
+                const child: &mut i64 = &mut *parent;
+                *child = 42;
+                0
+            } else {
+                0
+            };
+            value - 42
+        }
+        "#,
+        "references-mutable-reborrow-lexical-release",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        struct Pair { left: i64, right: i64 }
+
+        fn main() -> i64 {
+            let pair = Pair { left: 0, right: 0 };
+            const whole: &mut Pair = &mut pair;
+            const left: &mut i64 = &mut (*whole).left;
+            (*whole).right = 40;
+            *left = 2;
+            (*whole).right + *left - 42
+        }
+        "#,
+        "references-mutable-reborrow-projected-places",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (source, name, diagnostic) in [
+        (
+            "fn main() -> i64 { let value = 0; const parent: &mut i64 = &mut value; const child: &mut i64 = &mut *parent; *parent = 1; *child }",
+            "references-mutable-reborrow-parent-write",
+            "cannot access `value` while it is mutably borrowed",
+        ),
+        (
+            "fn main() -> i64 { let value = 0; const parent: &mut i64 = &mut value; const first: &mut i64 = &mut *parent; const second: &mut i64 = &mut *parent; 0 }",
+            "references-mutable-reborrow-sibling",
+            "`value` is already mutably borrowed",
+        ),
+        (
+            "struct Pair { left: i64, right: i64 } fn main() -> i64 { let pair = Pair { left: 0, right: 0 }; const whole: &mut Pair = &mut pair; const left: &mut i64 = &mut (*whole).left; *whole = Pair { left: 1, right: 2 }; *left }",
+            "references-mutable-reborrow-parent-whole-write",
+            "cannot access `pair` while it is mutably borrowed",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn named_lifetimes_allow_mutable_reference_returns() {
+    let result = compile_and_run(
+        r#"
+        fn identity<'a, T>(value: &'a mut T) -> &'a mut T { value }
+        fn forward<'a>(value: &'a mut i64) -> &'a mut i64 { identity(value) }
+        fn choose<'a>(condition: bool, first: &'a mut i64, second: &'a mut i64) -> &'a mut i64 {
+            if condition { first } else { second }
+        }
+
+        fn main() -> i64 {
+            let value = 0;
+            if true {
+                const parent: &mut i64 = &mut value;
+                const child = forward(parent);
+                *child = 42;
+                0
+            } else {
+                0
+            };
+            value - 42
+        }
+        "#,
+        "references-mutable-named-lifetime-return",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        fn select<'a>(condition: bool, first: &'a mut i64, second: &'a mut i64) -> &'a mut i64 {
+            match condition {
+                true => { first },
+                false => { second },
+            }
+        }
+
+        fn main() -> i64 {
+            let first = 0;
+            let second = 0;
+            if true {
+                const first_ref: &mut i64 = &mut first;
+                const second_ref: &mut i64 = &mut second;
+                const selected = select(false, first_ref, second_ref);
+                *selected = 42;
+                *selected - 42
+            } else {
+                0
+            }
+        }
+        "#,
+        "references-mutable-named-lifetime-match",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (source, name, diagnostic) in [
+        (
+            "fn escape<'a>(input: &'a mut i64) -> &'a mut i64 { let local = 1; const reference: &mut i64 = &mut local; reference } fn main() -> i64 { 0 }",
+            "references-mutable-return-local-escape",
+            "cannot return a reference that does not originate from a parameter",
+        ),
+        (
+            "fn choose<'a, 'b>(first: &'a mut i64, second: &'b mut i64) -> &'a mut i64 { second } fn main() -> i64 { 0 }",
+            "references-mutable-return-wrong-lifetime",
+            "returned reference has lifetime `'b`, expected `'a`",
+        ),
+        (
+            "fn choose<'a, 'b>(condition: bool, first: &'a mut i64, second: &'b mut i64) -> &'a mut i64 { if condition { first } else { second } } fn main() -> i64 { 0 }",
+            "references-mutable-return-mixed-lifetimes",
+            "not all returned reference paths originate from lifetime `'a`",
+        ),
+        (
+            "fn invalid<'a>(value: &'a i64) -> &'a mut i64 { value } fn main() -> i64 { 0 }",
+            "references-mutable-return-shared-origin",
+            "return lifetime `'a` must appear on a mutable-reference parameter",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn mutable_reborrow_and_return_loans_cover_call_arguments() {
+    let result = compile_and_run(
+        r#"
+        struct Pair { left: i64, right: i64 }
+        fn set_both(first: &mut i64, second: &mut i64) -> unit {
+            *first = 20;
+            *second = 22;
+        }
+
+        fn main() -> i64 {
+            let pair = Pair { left: 0, right: 0 };
+            const whole: &mut Pair = &mut pair;
+            set_both(&mut (*whole).left, &mut (*whole).right);
+            (*whole).left + (*whole).right - 42
+        }
+        "#,
+        "references-reborrow-disjoint-call-arguments",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "fn set_both(first: &mut i64, second: &mut i64) -> unit { *first = 1; *second = 2; } fn main() -> i64 { let values = [0, 0]; const parent: &mut [i64; 2] = &mut values; set_both(&mut (*parent)[0], &mut (*parent)[0]); 0 }",
+        "references-reborrow-overlapping-call-arguments",
+        "overlapping mutable references cannot be passed to the same call",
+    );
+    assert_compile_error(
+        "fn observe(value: &mut i64, other: i64) -> i64 { *value + other } fn main() -> i64 { let value = 0; const parent: &mut i64 = &mut value; observe(&mut *parent, loop { *parent = 9; break 0; }) }",
+        "references-reborrow-later-call-argument",
+        "cannot access `value` while it is mutably borrowed",
+    );
+
+    let result = compile_and_run(
+        r#"
+        fn identity<'a>(value: &'a mut i64) -> &'a mut i64 { value }
+
+        fn main() -> i64 {
+            let value = 0;
+            const parent: &mut i64 = &mut value;
+            const child = identity(parent);
+            *child = 42;
+            0
+        }
+        "#,
+        "references-call-return-blocks-parent",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        "fn identity<'a>(value: &'a mut i64) -> &'a mut i64 { value } fn main() -> i64 { let value = 0; const parent: &mut i64 = &mut value; const child = identity(parent); *parent = 1; *child }",
+        "references-call-return-parent-write",
+        "cannot access `value` while it is mutably borrowed",
     );
 }
 
@@ -670,5 +882,15 @@ fn references_cannot_be_returned_through_function_values_or_externs() {
         "extern \"C\" fn borrow(value: i64) -> &i64; fn main() -> i64 { 0 }",
         "references-ffi-return",
         "C extern return types support only `i64`, `f32`, `f64`, and `unit`",
+    );
+    assert_compile_error(
+        "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn main() -> i64 { let function = identity; 0 }",
+        "references-function-value-inferred-shared-return",
+        "functions returning references cannot be used as function values",
+    );
+    assert_compile_error(
+        "fn identity<'a>(value: &'a mut i64) -> &'a mut i64 { value } fn main() -> i64 { let function = identity; 0 }",
+        "references-function-value-inferred-mutable-return",
+        "functions returning references cannot be used as function values",
     );
 }

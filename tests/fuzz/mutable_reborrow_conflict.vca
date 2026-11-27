@@ -1,0 +1,8 @@
+// A live child reborrow blocks overlapping access through its parent.
+fn main() -> i64 {
+    let value = 0;
+    const parent: &mut i64 = &mut value;
+    const child: &mut i64 = &mut *parent;
+    *parent = 1;
+    *child
+}
