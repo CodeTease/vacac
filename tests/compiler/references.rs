@@ -308,6 +308,30 @@ fn returned_reference_calls_propagate_shared_loans_through_aliases() {
 }
 
 #[test]
+fn returned_reference_projections_do_not_narrow_argument_loans() {
+    assert_compile_error(
+        r#"
+        struct Point { x: i64, y: i64 }
+        struct Holder { left: Point, right: Point }
+
+        fn left<'a>(holder: &'a Holder) -> &'a Point { &(*holder).left }
+
+        fn main() -> i64 {
+            let holder = Holder {
+                left: Point { x: 1, y: 2 },
+                right: Point { x: 3, y: 4 },
+            };
+            const x: &i64 = &(*left(&holder)).x;
+            holder.left.x = 99;
+            *x - 1
+        }
+        "#,
+        "references-returned-projection-does-not-narrow",
+        "cannot modify `holder` while it is borrowed",
+    );
+}
+
+#[test]
 fn shared_references_can_be_reborrowed_through_direct_dereferences() {
     let result = compile_and_run(
         r#"

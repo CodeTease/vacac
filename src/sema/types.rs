@@ -88,7 +88,15 @@ impl Checker {
                     }
                 }
                 Ok(origin
-                    .map(ReferenceProvenance::into_derived)
+                    .map(|mut origin| {
+                        // A callee can return a subplace of an argument, but the
+                        // caller cannot recover that projection. Keep the
+                        // argument coverage opaque so later reborrows of the
+                        // returned reference cannot narrow it.
+                        origin
+                            .map_places(|place| place.projections.push(BorrowProjection::Unknown));
+                        origin.into_derived()
+                    })
                     .or_else(|| Some(ReferenceProvenance::unknown())))
             }
             Expr::If { span, .. } | Expr::Match { span, .. } => Ok(self

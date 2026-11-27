@@ -222,6 +222,9 @@ enum BorrowRoot {
 enum BorrowProjection {
     Field(String),
     Index(Option<i64>),
+    /// A subplace that is not known at the use site, such as the pointee of a
+    /// reference returned from a call. Later projections must not narrow it.
+    Unknown,
 }
 
 impl BorrowPlace {
@@ -269,8 +272,8 @@ impl BorrowPlace {
                 | (BorrowProjection::Index(Some(_)), BorrowProjection::Index(Some(_))) => {
                     return false;
                 }
-                // An unknown index, or different projection kinds, may refer to
-                // the same memory. Remain conservative in those cases.
+                // An unknown index or projection, or different projection
+                // kinds, may refer to the same memory. Remain conservative.
                 _ => return true,
             }
         }

@@ -332,6 +332,12 @@ impl Checker {
                         _ => return Err(at(span, "indexing requires an array (or vector)")),
                     };
                 }
+                BorrowProjection::Unknown => {
+                    return Err(at(
+                        span,
+                        "cannot project through an unknown reference origin",
+                    ));
+                }
             }
         }
         Ok(ty)
