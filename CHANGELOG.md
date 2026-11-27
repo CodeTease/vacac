@@ -6,7 +6,7 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-27
 
 Generic traits and generic trait functions complete the corresponding TODO
 roadmap item.
@@ -20,6 +20,15 @@ roadmap item.
   impl head, inherited defaults specialize trait and function parameters with
   capture-avoiding renaming, and concrete bound proofs and specialization share
   the existing instance and proof-depth limits.
+
+### Fixed
+
+- Generic trait inference now finds trait arguments nested inside aggregate
+  payloads, so an argument supplied deep in a tuple, array, or struct field
+  still specializes the impl.
+- Generic trait argument inference no longer depends on the order in which
+  value arguments appear, so an impl head is selected correctly when an earlier
+  parameter is only narrowed by a later one.
 
 ## [0.3.0] - 2026-11-25
 
@@ -174,6 +183,7 @@ checks source in Rust and emits native Linux ELF executables through LLVM 23.
   Linux x86_64 binaries and `SHA256SUMS`.
 - Apache License 2.0.
 
+[0.4.0]: https://github.com/CodeTease/vacac/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CodeTease/vacac/releases/tag/v0.3.0
 [0.2.0]: https://github.com/CodeTease/vacac/releases/tag/v0.2.0
 [0.1.0]: https://github.com/CodeTease/vacac/releases/tag/v0.1.0
