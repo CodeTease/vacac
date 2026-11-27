@@ -652,6 +652,7 @@ impl Checker {
                 self.reject_known_overlapping_reference_arguments(args, &params)?;
                 self.push_loan_scope();
                 let checked_arguments: Result<(), Diagnostic> = (|| {
+                    let mut origins = Vec::with_capacity(args.len());
                     for (index, (arg, expected)) in args.iter().zip(&params).enumerate() {
                         if let Expr::Unary {
                             op: UnaryOp::BorrowMut,
@@ -679,9 +680,16 @@ impl Checker {
                             span_of_expr(arg),
                             &format!("argument {} to `{name}`", index + 1),
                         )?;
-                        self.reserve_reference_argument_for_type(arg, *expected, actual)?;
+                        let origin = self.reference_origin(arg)?;
+                        self.reserve_reference_argument_for_type(
+                            arg,
+                            *expected,
+                            actual,
+                            origin.as_ref(),
+                        )?;
+                        origins.push(origin);
                     }
-                    self.reject_overlapping_reference_arguments(args, &params)?;
+                    self.reject_overlapping_reference_arguments(args, &params, &origins)?;
                     Ok(())
                 })();
                 self.pop_loan_scope();
@@ -982,6 +990,7 @@ impl Checker {
         self.reject_known_overlapping_reference_arguments(args, &shape.params)?;
         self.push_loan_scope();
         let checked_arguments: Result<(), Diagnostic> = (|| {
+            let mut origins = Vec::with_capacity(args.len());
             for (index, (arg, expected)) in args.iter().zip(&shape.params).enumerate() {
                 let previous_shared_borrow_permission = self.allow_shared_borrow;
                 if matches!(*expected, ValueType::Reference(_)) {
@@ -996,9 +1005,11 @@ impl Checker {
                     span_of_expr(arg),
                     &format!("argument {} to function value", index + 1),
                 )?;
-                self.reserve_reference_argument_for_type(arg, *expected, actual)?;
+                let origin = self.reference_origin(arg)?;
+                self.reserve_reference_argument_for_type(arg, *expected, actual, origin.as_ref())?;
+                origins.push(origin);
             }
-            self.reject_overlapping_reference_arguments(args, &shape.params)?;
+            self.reject_overlapping_reference_arguments(args, &shape.params, &origins)?;
             Ok(())
         })();
         self.pop_loan_scope();
@@ -1011,6 +1022,7 @@ impl Checker {
         argument: &Expr,
         expected: ValueType,
         actual: ValueType,
+        origin: Option<&ReferenceProvenance>,
     ) -> Result<(), Diagnostic> {
         let kind = match actual {
             ValueType::Reference(_) => BorrowKind::Shared,
@@ -1021,10 +1033,10 @@ impl Checker {
             ValueType::MutableReference(_) => AccessMode::Write,
             _ => AccessMode::Read,
         };
-        let Some(origin) = self.reference_origin(argument)? else {
+        let Some(origin) = origin else {
             return Ok(());
         };
-        self.check_reference_access(&origin, &[], mode, span_of_expr(argument))?;
+        self.check_reference_access(origin, &[], mode, span_of_expr(argument))?;
         // Passing an existing reference by value does not create another
         // borrow. Only a newly formed borrow or reborrow needs a temporary
         // reservation while later arguments are evaluated.
@@ -1039,7 +1051,7 @@ impl Checker {
         ) {
             return Ok(());
         }
-        self.reserve_reference_argument(&origin, kind);
+        self.reserve_reference_argument(origin, kind);
         Ok(())
     }
 }

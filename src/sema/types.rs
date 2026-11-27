@@ -49,7 +49,7 @@ impl Checker {
                 value,
                 ..
             } => {
-                if let Some((reference, projections)) = self.reborrow_parts(value)? {
+                if let Some((reference, projections)) = self.reborrow_parts(value, false)? {
                     let Some(mut origin) = self.reference_origin(reference)? else {
                         return Ok(None);
                     };
@@ -746,6 +746,15 @@ impl Checker {
             }
             Ok((ty, origin))
         })();
+        let exited_loans = self
+            .loans
+            .last()
+            .map(|loans| loans.iter().map(|loan| loan.id).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let result = result.map(|(ty, mut origin)| {
+            origin.remove_loans(&exited_loans);
+            (ty, origin)
+        });
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();

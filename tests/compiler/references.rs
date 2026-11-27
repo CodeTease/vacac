@@ -627,7 +627,9 @@ fn borrow_overlap_distinguishes_parameter_roots_and_known_places() {
                 take(left, right);
                 0
             } else { 0 };
-            (*pair).left + (*pair).right - 3
+            if (*pair).left != 1 { return 1; }
+            if (*pair).right != 2 { return 2; }
+            0
         }
         fn main() -> i64 {
             let pair = Pair { left: 0, right: 0 };
@@ -658,10 +660,12 @@ fn borrow_overlap_distinguishes_parameter_roots_and_known_places() {
         }
         fn main() -> i64 {
             let value = 0;
-            if true {
+            let result = if true {
                 const reference: &mut i64 = &mut value;
                 nested(reference)
-            } else { 0 }
+            } else { 0 };
+            if result != 0 { return 1; }
+            value - 1
         }
         "#,
         "references-parameter-and-local-disjoint",
@@ -766,7 +770,8 @@ fn reborrow_index_selectors_require_i64_and_dynamic_indices_stay_usable() {
             let values = [10, 20];
             const reference: &[i64; 2] = &values;
             let index = 1;
-            (*reference)[index] - 20
+            const child: &i64 = &(*reference)[index];
+            *child - 20
         }
         "#,
         "references-dynamic-reborrow-index",

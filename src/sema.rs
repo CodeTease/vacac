@@ -178,6 +178,17 @@ impl ReferenceProvenance {
         }
     }
 
+    /// Forget loans that ended with a block scope. Keep every source place and
+    /// the loans inherited from enclosing scopes, so origins that escape an
+    /// `if`/`match` still block their actual ancestors.
+    fn remove_loans(&mut self, exited: &[usize]) {
+        for source in &mut self.sources {
+            if let Some(loans) = source.loans_mut() {
+                loans.retain(|loan| !exited.contains(loan));
+            }
+        }
+    }
+
     fn into_derived(mut self) -> Self {
         for source in &mut self.sources {
             source.as_derived();

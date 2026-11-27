@@ -164,14 +164,20 @@ impl Checker {
 
     /// Return the reference expression at the base of a place path and the
     /// projections applied to its pointee, e.g. `(*r).left[0]`.
+    ///
+    /// `check_selectors` is for expression typing. Provenance lookups run after
+    /// (or while) the surrounding expression is checked, so they must not
+    /// re-check index expressions just to recover the same projections.
     pub(super) fn reborrow_parts<'a>(
         &mut self,
         expr: &'a Expr,
+        check_selectors: bool,
     ) -> Result<Option<(&'a Expr, Vec<BorrowProjection>)>, Diagnostic> {
         fn collect<'a>(
             checker: &mut Checker,
             expr: &'a Expr,
             projections: &mut Vec<BorrowProjection>,
+            check_selectors: bool,
         ) -> Result<Option<&'a Expr>, Diagnostic> {
             match expr {
                 Expr::Unary {
@@ -180,23 +186,27 @@ impl Checker {
                     ..
                 } => Ok(Some(value)),
                 Expr::Field { value, name, .. } => {
-                    let Some(reference) = collect(checker, value, projections)? else {
+                    let Some(reference) = collect(checker, value, projections, check_selectors)?
+                    else {
                         return Ok(None);
                     };
                     projections.push(BorrowProjection::Field(name.clone()));
                     Ok(Some(reference))
                 }
                 Expr::Index { array, index, .. } => {
-                    let Some(reference) = collect(checker, array, projections)? else {
+                    let Some(reference) = collect(checker, array, projections, check_selectors)?
+                    else {
                         return Ok(None);
                     };
-                    let index_type = checker.check_expr(index, false)?;
-                    checker.expect_type(
-                        index_type,
-                        ValueType::I64,
-                        span_of_expr(index),
-                        "array index",
-                    )?;
+                    if check_selectors {
+                        let index_type = checker.check_expr(index, false)?;
+                        checker.expect_type(
+                            index_type,
+                            ValueType::I64,
+                            span_of_expr(index),
+                            "array index",
+                        )?;
+                    }
                     projections.push(BorrowProjection::Index(constant_i64(index)));
                     Ok(Some(reference))
                 }
@@ -205,7 +215,7 @@ impl Checker {
         }
 
         let mut projections = Vec::new();
-        let reference = collect(self, expr, &mut projections)?;
+        let reference = collect(self, expr, &mut projections, check_selectors)?;
         Ok(reference.map(|reference| (reference, projections)))
     }
 
@@ -214,7 +224,7 @@ impl Checker {
         expr: &Expr,
         span: Span,
     ) -> Result<Option<ReferencePlaceAccess>, Diagnostic> {
-        let Some((reference, projections)) = self.reborrow_parts(expr)? else {
+        let Some((reference, projections)) = self.reborrow_parts(expr, true)? else {
             return Ok(None);
         };
         let reference_type = self.check_expr(reference, false)?;
@@ -350,12 +360,10 @@ impl Checker {
         &mut self,
         args: &[Expr],
         params: &[ValueType],
+        origins: &[Option<ReferenceProvenance>],
         conservative: bool,
     ) -> Result<(), Diagnostic> {
-        let origins = args
-            .iter()
-            .map(|argument| self.reference_origin(argument))
-            .collect::<Result<Vec<_>, _>>()?;
+        debug_assert_eq!(args.len(), origins.len());
         for later in 0..args.len() {
             let later_expected = params.get(later).copied();
             let later_mutable = matches!(later_expected, Some(ValueType::MutableReference(_)));
@@ -402,15 +410,20 @@ impl Checker {
         args: &[Expr],
         params: &[ValueType],
     ) -> Result<(), Diagnostic> {
-        self.reject_overlapping_reference_arguments_with(args, params, false)
+        let origins = args
+            .iter()
+            .map(|argument| self.reference_origin(argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.reject_overlapping_reference_arguments_with(args, params, &origins, false)
     }
 
     pub(super) fn reject_overlapping_reference_arguments(
         &mut self,
         args: &[Expr],
         params: &[ValueType],
+        origins: &[Option<ReferenceProvenance>],
     ) -> Result<(), Diagnostic> {
-        self.reject_overlapping_reference_arguments_with(args, params, true)
+        self.reject_overlapping_reference_arguments_with(args, params, origins, true)
     }
 }
 

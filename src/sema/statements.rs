@@ -143,7 +143,7 @@ impl Checker {
                     value: borrowed,
                     ..
                 } = value
-                    && self.reborrow_parts(borrowed)?.is_none()
+                    && self.reborrow_parts(borrowed, false)?.is_none()
                 {
                     let Some(source) = Self::direct_local_place_root(borrowed) else {
                         return Err(at(
