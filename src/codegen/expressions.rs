@@ -9,6 +9,42 @@ pub(super) fn codegen_borrow_root(expr: &Expr) -> Option<&str> {
     }
 }
 
+/// Return the reference expression and projections at the base of a place
+/// rooted at a dereference, such as `(*r).left[0]`.
+pub(super) fn codegen_reborrow_parts(
+    expr: &Expr,
+) -> Option<(&Expr, Vec<MutableReferenceProjection>)> {
+    fn collect<'a>(
+        expr: &'a Expr,
+        projections: &mut Vec<MutableReferenceProjection>,
+    ) -> Option<&'a Expr> {
+        match expr {
+            Expr::Unary {
+                op: UnaryOp::Dereference,
+                value,
+                ..
+            } => Some(value),
+            Expr::Field { value, name, .. } => {
+                let reference = collect(value, projections)?;
+                projections.push(MutableReferenceProjection::Field(name.clone()));
+                Some(reference)
+            }
+            Expr::Index { array, index, .. } => {
+                let reference = collect(array, projections)?;
+                projections.push(MutableReferenceProjection::Index(codegen_constant_i64(
+                    index,
+                )));
+                Some(reference)
+            }
+            _ => None,
+        }
+    }
+
+    let mut projections = Vec::new();
+    let reference = collect(expr, &mut projections)?;
+    Some((reference, projections))
+}
+
 pub(super) fn codegen_mutable_borrow_origin(
     expr: &Expr,
     root_binding_id: usize,
@@ -36,41 +72,41 @@ pub(super) fn codegen_mutable_borrow_origin(
         }
     }
 
-    fn codegen_constant_i64(expr: &Expr) -> Option<i64> {
-        match expr {
-            Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(*value as i64),
-            Expr::Unary {
-                op: UnaryOp::Negate,
-                value,
-                ..
-            } => match value.as_ref() {
-                Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(-(*value as i64)),
-                Expr::Integer(value, _) if *value == (i64::MAX as u64) + 1 => Some(i64::MIN),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn codegen_borrow_place_is_fixed(expr: &Expr) -> bool {
+    fn fixed(expr: &Expr) -> bool {
         match expr {
             Expr::Variable(_, _) => true,
-            Expr::Field { value, .. } => codegen_borrow_place_is_fixed(value),
+            Expr::Field { value, .. } => fixed(value),
             Expr::Index { array, index, .. } => {
-                codegen_constant_i64(index).is_some() && codegen_borrow_place_is_fixed(array)
+                codegen_constant_i64(index).is_some() && fixed(array)
             }
             _ => false,
         }
     }
 
     let mut projections = Vec::new();
-    if !codegen_borrow_place_is_fixed(expr) {
+    if !fixed(expr) {
         return Some(MutableReferenceOrigin::Unknown);
     }
     collect(expr, &mut projections).then_some(MutableReferenceOrigin::Place {
         binding_id: root_binding_id,
         projections,
     })
+}
+
+fn codegen_constant_i64(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(*value as i64),
+        Expr::Unary {
+            op: UnaryOp::Negate,
+            value,
+            ..
+        } => match value.as_ref() {
+            Expr::Integer(value, _) if *value <= i64::MAX as u64 => Some(-(*value as i64)),
+            Expr::Integer(value, _) if *value == (i64::MAX as u64) + 1 => Some(i64::MIN),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -151,6 +187,15 @@ impl<'ctx> Codegen<'ctx> {
                         ));
                     }
                     let (params, result) = self.signatures[&function_name].clone();
+                    if matches!(
+                        result,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
+                        return Err(Diagnostic::at(
+                            span.into(),
+                            "functions returning references cannot be used as function values",
+                        ));
+                    }
                     let ty = self.function_type(params, result);
                     let adapter = self
                         .function_adapters
@@ -383,22 +428,13 @@ impl<'ctx> Codegen<'ctx> {
             } => self.emit_struct_literal(name, fields, *span),
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
-                    if let Expr::Unary {
-                        op: UnaryOp::Dereference,
-                        value: reference,
-                        ..
-                    } = value.as_ref()
-                    {
-                        let reference = self.emit_expression(reference)?;
-                        if let ValueType::Reference(_) = reference.ty {
-                            return Ok(reference);
-                        }
-                        if matches!(reference.ty, ValueType::MutableReference(_)) {
-                            return Err(Diagnostic::at(
-                                span.into(),
-                                "mutable reference reborrowing is not supported",
-                            ));
-                        }
+                    if super::places::codegen_place_rooted_at_dereference(value) {
+                        let (pointer, target_type) = self.emit_reborrow_place_pointer(value)?;
+                        let reference_type = self.reference_type(target_type);
+                        return Ok(TypedValue {
+                            value: Some(pointer.into()),
+                            ty: reference_type,
+                        });
                     }
                     let Some(name) = codegen_borrow_root(value) else {
                         return Err(Diagnostic::at(
@@ -451,6 +487,14 @@ impl<'ctx> Codegen<'ctx> {
                     });
                 }
                 if matches!(op, UnaryOp::BorrowMut) {
+                    if super::places::codegen_place_rooted_at_dereference(value) {
+                        let (pointer, target_type) = self.emit_reborrow_place_pointer(value)?;
+                        let ty = self.mutable_reference_type(target_type);
+                        return Ok(TypedValue {
+                            value: Some(pointer.into()),
+                            ty,
+                        });
+                    }
                     let Some(name) = codegen_borrow_root(value) else {
                         return Err(Diagnostic::at(
                             span.into(),
@@ -873,16 +917,7 @@ impl<'ctx> Codegen<'ctx> {
                 ..
             } => self.emit_enum_variant(enum_name, variant_name, payload.as_deref(), *span),
             Expr::Try { value, span } => self.emit_try(value, *span),
-            Expr::Match { value, arms, span } => {
-                let value = self.emit_match(value, arms, *span)?;
-                if matches!(value.ty, ValueType::MutableReference(_)) {
-                    return Err(Diagnostic::at(
-                        span.into(),
-                        "mutable references cannot escape through match expressions",
-                    ));
-                }
-                Ok(value)
-            }
+            Expr::Match { value, arms, span } => self.emit_match(value, arms, *span),
             Expr::Loop { body, span } => {
                 let value = self.emit_loop_expression(body)?;
                 if matches!(value.ty, ValueType::Reference(_)) {
