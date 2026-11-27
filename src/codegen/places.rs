@@ -52,6 +52,25 @@ impl<'ctx> Codegen<'ctx> {
         Ok((pointer, ty))
     }
 
+    /// Lower a place rooted at a dereference, such as `(*r).left[0]`. The
+    /// synthetic root is never consulted because the path reaches a `Deref`
+    /// step before any variable lookup.
+    pub(super) fn emit_reborrow_place_pointer(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
+        if !codegen_place_rooted_at_dereference(expr) {
+            return Err(Diagnostic::at(
+                codegen_span_of_expr(expr).into(),
+                "reborrow must start with a dereference",
+            ));
+        }
+        let placeholder = self.context.ptr_type(AddressSpace::default()).const_null();
+        let (pointer, ty, _steps, _mutability) =
+            self.plan_place_path(expr, "", placeholder, ValueType::Unit)?;
+        Ok((pointer, ty))
+    }
+
     fn plan_place_path(
         &mut self,
         expr: &Expr,
@@ -673,6 +692,18 @@ fn codegen_assignment_root(expr: &Expr) -> Option<&str> {
             ..
         } => codegen_assignment_root(value),
         _ => None,
+    }
+}
+
+pub(super) fn codegen_place_rooted_at_dereference(expr: &Expr) -> bool {
+    match expr {
+        Expr::Unary {
+            op: UnaryOp::Dereference,
+            ..
+        } => true,
+        Expr::Field { value, .. } => codegen_place_rooted_at_dereference(value),
+        Expr::Index { array, .. } => codegen_place_rooted_at_dereference(array),
+        _ => false,
     }
 }
 

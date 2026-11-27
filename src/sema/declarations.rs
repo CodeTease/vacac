@@ -196,18 +196,14 @@ impl Checker {
                 .collect::<Result<_, _>>()?;
             let return_type = self.resolve_type(&function.return_type, function.span)?;
             let return_lifetime = declared_reference_lifetime(&function.return_type);
+            let return_kind = reference_kind(return_type);
             let param_lifetimes = function
                 .params
                 .iter()
                 .map(|param| declared_reference_lifetime(&param.ty))
                 .collect::<Vec<_>>();
-            if matches!(
-                return_type,
-                ValueType::Reference(_) | ValueType::MutableReference(_)
-            ) {
-                if matches!(return_type, ValueType::MutableReference(_)) {
-                    return Err(at(function.span, "functions cannot return references"));
-                }
+            let mut return_parameter_indices = Vec::new();
+            if let Some(return_kind) = return_kind {
                 let Some(lifetime) = return_lifetime.as_ref() else {
                     return Err(at(
                         function.span,
@@ -220,32 +216,26 @@ impl Checker {
                         format!("undeclared return lifetime `'{lifetime}`"),
                     ));
                 }
-                if !param_lifetimes.iter().enumerate().any(|(index, param)| {
-                    param.as_ref() == Some(lifetime)
-                        && matches!(params[index], ValueType::Reference(_))
-                }) {
+                return_parameter_indices = param_lifetimes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, param_lifetime)| {
+                        (param_lifetime.as_ref() == Some(lifetime)
+                            && reference_kind(params[index]) == Some(return_kind))
+                        .then_some(index)
+                    })
+                    .collect();
+                if return_parameter_indices.is_empty() {
+                    let kind = match return_kind {
+                        BorrowKind::Shared => "shared-reference",
+                        BorrowKind::Mutable => "mutable-reference",
+                    };
                     return Err(at(
                         function.span,
-                        format!(
-                            "return lifetime `'{lifetime}` must appear on a shared-reference parameter"
-                        ),
+                        format!("return lifetime `'{lifetime}` must appear on a {kind} parameter"),
                     ));
                 }
             }
-            let return_parameter_indices = return_lifetime
-                .as_ref()
-                .map(|lifetime| {
-                    param_lifetimes
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, param_lifetime)| {
-                            (param_lifetime.as_ref() == Some(lifetime)
-                                && matches!(params[index], ValueType::Reference(_)))
-                            .then_some(index)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
             self.signatures.insert(
                 function.name.clone(),
                 Signature {
@@ -689,18 +679,17 @@ impl Checker {
         self.current_function_owner = function.name.clone();
         self.scopes.clear();
         self.immutable_scopes.clear();
-        self.mutable_borrows.clear();
-        self.shared_borrows.clear();
+        self.loans.clear();
+        self.next_loan_id = 0;
+        self.current_callable_id = self.next_callable_id;
+        self.next_callable_id += 1;
         self.reference_origins.clear();
-        self.mutable_reference_origins.clear();
         self.loop_scopes.clear();
         self.loop_contexts.clear();
         self.scopes.push(HashMap::new());
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(Vec::new());
-        self.shared_borrows.push(Vec::new());
-        self.mutable_reference_origins.push(HashMap::new());
+        self.push_loan_scope();
         let declared_signature = self.signatures.get(&function.name).cloned();
         self.return_parameter_indices = declared_signature
             .as_ref()
@@ -709,21 +698,17 @@ impl Checker {
         for (parameter_index, param) in function.params.iter().enumerate() {
             let ty = self.resolve_type(&param.ty, param.span)?;
             self.scopes[0].insert(param.name.clone(), ty);
-            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
-                self.reference_origins.insert(
-                    (0, param.name.clone()),
-                    ReferenceProvenance::parameter(
-                        parameter_index,
-                        declared_reference_lifetime(&param.ty),
-                    ),
+            if let Some(kind) = reference_kind(ty) {
+                let provenance = self.parameter_loan(
+                    parameter_index,
+                    declared_reference_lifetime(&param.ty),
+                    kind,
                 );
+                self.reference_origins
+                    .insert((0, param.name.clone()), provenance);
             }
             if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
                 self.immutable_scopes[0].insert(param.name.clone());
-            }
-            if matches!(ty, ValueType::MutableReference(_)) {
-                self.mutable_reference_origins[0]
-                    .insert(param.name.clone(), MutableReferenceOrigin::Unknown);
             }
         }
         let return_type = self.resolve_type(&function.return_type, function.span)?;
@@ -748,6 +733,14 @@ impl Checker {
 fn declared_reference_lifetime(ty: &Type) -> Option<String> {
     match ty {
         Type::Reference(_, lifetime) | Type::MutableReference(_, lifetime) => lifetime.clone(),
+        _ => None,
+    }
+}
+
+fn reference_kind(ty: ValueType) -> Option<BorrowKind> {
+    match ty {
+        ValueType::Reference(_) => Some(BorrowKind::Shared),
+        ValueType::MutableReference(_) => Some(BorrowKind::Mutable),
         _ => None,
     }
 }

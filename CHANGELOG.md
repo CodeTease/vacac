@@ -6,6 +6,29 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-27
+
+Mutable-reference reborrowing and named mutable returns complete the
+corresponding TODO roadmap item.
+
+### Added
+
+- Mutable reborrows (`&mut *reference`) and shared views of mutable references
+  (`&*reference`), including field and constant-index projections. Child loans
+  block overlapping parent access until their lexical scope ends, while
+  known-disjoint places remain usable.
+- Named-lifetime mutable returns (`fn get<'a>(value: &'a mut T) -> &'a mut T`)
+  through direct returns, reborrows, forwarding calls, and `if`/`match`
+  selections. Callers retain loans on every eligible argument origin, and local
+  borrows still cannot escape through a return.
+
+### Changed
+
+- Safe-reference tracking now uses a unified shared/mutable loan model with
+  per-value loan lineages. Direct and indirect call arguments reserve reference
+  origins during argument evaluation, and overlapping shared/mutable call
+  arguments are rejected.
+
 ## [0.4.0] - 2026-11-27
 
 Generic traits and generic trait functions complete the corresponding TODO
@@ -183,6 +206,7 @@ checks source in Rust and emits native Linux ELF executables through LLVM 23.
   Linux x86_64 binaries and `SHA256SUMS`.
 - Apache License 2.0.
 
+[0.5.0]: https://github.com/CodeTease/vacac/releases/tag/v0.5.0
 [0.4.0]: https://github.com/CodeTease/vacac/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CodeTease/vacac/releases/tag/v0.3.0
 [0.2.0]: https://github.com/CodeTease/vacac/releases/tag/v0.2.0

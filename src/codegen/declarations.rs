@@ -104,19 +104,65 @@ impl<'ctx> Codegen<'ctx> {
     }
 
     pub(super) fn argument_origin(&self, expression: &Expr) -> Option<MutableReferenceOrigin> {
-        let Expr::Variable(name, _) = expression else {
-            return None;
-        };
-        let local = self.lookup_local(name)?;
-        if !matches!(local.ty, ValueType::MutableReference(_)) {
-            return None;
+        if let Some((reference, mut projections)) =
+            super::expressions::codegen_reborrow_parts(expression)
+        {
+            let Expr::Variable(name, _) = reference else {
+                return Some(MutableReferenceOrigin::Unknown);
+            };
+            let local = self.lookup_local(name)?;
+            let origin =
+                local
+                    .mutable_reference_origin
+                    .clone()
+                    .unwrap_or(MutableReferenceOrigin::Place {
+                        binding_id: local.binding_id,
+                        projections: Vec::new(),
+                    });
+            return Some(match origin {
+                MutableReferenceOrigin::Place {
+                    binding_id,
+                    projections: mut existing,
+                } => {
+                    existing.append(&mut projections);
+                    MutableReferenceOrigin::Place {
+                        binding_id,
+                        projections: existing,
+                    }
+                }
+                MutableReferenceOrigin::Unknown => MutableReferenceOrigin::Unknown,
+            });
         }
-        Some(
-            local
-                .mutable_reference_origin
-                .clone()
-                .unwrap_or(MutableReferenceOrigin::Unknown),
-        )
+        match expression {
+            Expr::Unary {
+                op: UnaryOp::BorrowMut,
+                value,
+                ..
+            } => {
+                let name = super::expressions::codegen_borrow_root(value)?;
+                let local = self.lookup_local(name)?;
+                Some(
+                    super::expressions::codegen_mutable_borrow_origin(value, local.binding_id)
+                        .unwrap_or(MutableReferenceOrigin::Place {
+                            binding_id: local.binding_id,
+                            projections: Vec::new(),
+                        }),
+                )
+            }
+            Expr::Variable(name, _) => {
+                let local = self.lookup_local(name)?;
+                if !matches!(local.ty, ValueType::MutableReference(_)) {
+                    return None;
+                }
+                Some(local.mutable_reference_origin.clone().unwrap_or(
+                    MutableReferenceOrigin::Place {
+                        binding_id: local.binding_id,
+                        projections: Vec::new(),
+                    },
+                ))
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn reject_overlapping_mutable_arguments(
@@ -124,36 +170,15 @@ impl<'ctx> Codegen<'ctx> {
         args: &[Expr],
         params: &[ValueType],
     ) -> Result<(), Diagnostic> {
-        let mutable_count = args
-            .iter()
-            .zip(params)
-            .filter(|(_, parameter)| matches!(parameter, ValueType::MutableReference(_)))
-            .count();
-        if mutable_count > 1
-            && args.iter().zip(params).any(|(argument, parameter)| {
-                matches!(parameter, ValueType::MutableReference(_))
-                    && self.argument_origin(argument).is_none()
-            })
-        {
-            return Err(Diagnostic::at(
-                args.iter()
-                    .zip(params)
-                    .find(|(argument, parameter)| {
-                        matches!(parameter, ValueType::MutableReference(_))
-                            && self.argument_origin(argument).is_none()
-                    })
-                    .map(|(argument, _)| codegen_span_of_expr(argument))
-                    .unwrap_or_else(|| codegen_span_of_expr(&args[0]))
-                    .into(),
-                "overlapping mutable references cannot be passed to the same call",
-            ));
-        }
         let mut origins: Vec<MutableReferenceOrigin> = Vec::new();
         for (argument, parameter) in args.iter().zip(params) {
             if matches!(parameter, ValueType::MutableReference(_)) {
                 let Some(origin) = self.argument_origin(argument) else {
                     continue;
                 };
+                if matches!(origin, MutableReferenceOrigin::Unknown) {
+                    continue;
+                }
                 if origins.iter().any(|prior| prior.overlaps(&origin)) {
                     return Err(Diagnostic::at(
                         codegen_span_of_expr(argument).into(),
@@ -921,16 +946,7 @@ impl<'ctx> Codegen<'ctx> {
                 .map(|p| self.resolve_type(&p.ty, p.span))
                 .collect::<Result<_, _>>()?;
             let ret: ValueType = self.resolve_type(&function.return_type, function.span)?;
-            if matches!(
-                ret,
-                ValueType::Reference(_) | ValueType::MutableReference(_)
-            ) {
-                if matches!(ret, ValueType::MutableReference(_)) {
-                    return Err(Diagnostic::at(
-                        function.span.into(),
-                        "functions cannot return references",
-                    ));
-                }
+            if let Some(return_kind) = codegen_reference_kind(ret) {
                 let lifetime =
                     codegen_reference_lifetime(&function.return_type).ok_or_else(|| {
                         Diagnostic::at(
@@ -940,13 +956,19 @@ impl<'ctx> Codegen<'ctx> {
                     })?;
                 if !function.lifetime_params.contains(&lifetime)
                     || !function.params.iter().any(|param| {
-                        matches!(param.ty, Type::Reference(_, _))
+                        codegen_type_reference_kind(&param.ty) == Some(return_kind)
                             && codegen_reference_lifetime(&param.ty).as_deref() == Some(&lifetime)
                     })
                 {
                     return Err(Diagnostic::at(
                         function.span.into(),
-                        "returned reference lifetime must be declared and appear on a shared-reference parameter",
+                        format!(
+                            "returned reference lifetime must be declared and appear on a {kind} parameter",
+                            kind = match return_kind {
+                                ReferenceKind::Shared => "shared-reference",
+                                ReferenceKind::Mutable => "mutable-reference",
+                            }
+                        ),
                     ));
                 }
             }
@@ -1093,6 +1115,22 @@ impl<'ctx> Codegen<'ctx> {
 fn codegen_reference_lifetime(ty: &Type) -> Option<String> {
     match ty {
         Type::Reference(_, lifetime) | Type::MutableReference(_, lifetime) => lifetime.clone(),
+        _ => None,
+    }
+}
+
+fn codegen_type_reference_kind(ty: &Type) -> Option<ReferenceKind> {
+    match ty {
+        Type::Reference(_, _) => Some(ReferenceKind::Shared),
+        Type::MutableReference(_, _) => Some(ReferenceKind::Mutable),
+        _ => None,
+    }
+}
+
+fn codegen_reference_kind(ty: ValueType) -> Option<ReferenceKind> {
+    match ty {
+        ValueType::Reference(_) => Some(ReferenceKind::Shared),
+        ValueType::MutableReference(_) => Some(ReferenceKind::Mutable),
         _ => None,
     }
 }

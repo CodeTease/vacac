@@ -155,9 +155,13 @@ def main():
         "shared-reference reborrow and generic lifetime return check",
         run([compiler, CORPUS / "shared_reborrow.vca", "--check", "--quiet"]),
     ))
+    record(check_result(
+        "mutable-reference reborrow and named return",
+        run([compiler, CORPUS / "mutable_reborrow.vca", "--run"]),
+    ))
     record(diagnostic_case(
-        compiler, "mutable-reference reborrow is rejected", "mutable_reborrow_rejected.vca",
-        "mutable reference reborrowing is not supported",
+        compiler, "a live child reborrow blocks its parent", "mutable_reborrow_conflict.vca",
+        "cannot access `value` while it is mutably borrowed",
     ))
     record(diagnostic_case(
         compiler, "mutable loan blocks overlapping write", "mutable_loan_conflict.vca",

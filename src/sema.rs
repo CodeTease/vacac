@@ -54,26 +54,103 @@ struct ReferenceProvenance {
     sources: Vec<ReferenceSource>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BorrowKind {
+    Shared,
+    Mutable,
+}
+
+impl BorrowKind {
+    fn conflicts_with(self, access: AccessMode) -> bool {
+        match self {
+            Self::Mutable => true,
+            Self::Shared => matches!(access, AccessMode::Write | AccessMode::BorrowMutable),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccessMode {
+    Read,
+    Write,
+    BorrowShared,
+    BorrowMutable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveLoan {
+    id: usize,
+    place: BorrowPlace,
+    kind: BorrowKind,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ReferenceSource {
     Parameter {
         index: usize,
         lifetime: Option<String>,
+        place: BorrowPlace,
+        loans: Vec<usize>,
     },
-    Borrowed(BorrowPlace),
+    Borrowed {
+        place: BorrowPlace,
+        loans: Vec<usize>,
+        /// True when the value came from an existing reference or a call that
+        /// promises to preserve one. Fresh owner borrows stay false so they
+        /// cannot escape through an `if`/`match` expression.
+        derived: bool,
+    },
     Unknown,
 }
 
+impl ReferenceSource {
+    fn loans(&self) -> &[usize] {
+        match self {
+            Self::Parameter { loans, .. } | Self::Borrowed { loans, .. } => loans,
+            Self::Unknown => &[],
+        }
+    }
+
+    fn loans_mut(&mut self) -> Option<&mut Vec<usize>> {
+        match self {
+            Self::Parameter { loans, .. } | Self::Borrowed { loans, .. } => Some(loans),
+            Self::Unknown => None,
+        }
+    }
+
+    fn place(&self) -> Option<&BorrowPlace> {
+        match self {
+            Self::Parameter { place, .. } | Self::Borrowed { place, .. } => Some(place),
+            Self::Unknown => None,
+        }
+    }
+
+    fn as_derived(&mut self) {
+        if let Self::Borrowed { derived, .. } = self {
+            *derived = true;
+        }
+    }
+}
+
 impl ReferenceProvenance {
-    fn parameter(index: usize, lifetime: Option<String>) -> Self {
+    fn parameter(index: usize, lifetime: Option<String>, loan_id: usize, callable: usize) -> Self {
         Self {
-            sources: vec![ReferenceSource::Parameter { index, lifetime }],
+            sources: vec![ReferenceSource::Parameter {
+                index,
+                lifetime,
+                place: BorrowPlace::parameter(callable, index),
+                loans: vec![loan_id],
+            }],
         }
     }
 
     fn borrowed(place: BorrowPlace) -> Self {
         Self {
-            sources: vec![ReferenceSource::Borrowed(place)],
+            sources: vec![ReferenceSource::Borrowed {
+                place,
+                loans: Vec::new(),
+                derived: false,
+            }],
         }
     }
 
@@ -90,6 +167,40 @@ impl ReferenceProvenance {
             }
         }
     }
+
+    fn map_places(&mut self, mut map: impl FnMut(&mut BorrowPlace)) {
+        for source in &mut self.sources {
+            match source {
+                ReferenceSource::Parameter { place, .. }
+                | ReferenceSource::Borrowed { place, .. } => map(place),
+                ReferenceSource::Unknown => {}
+            }
+        }
+    }
+
+    /// Forget loans that ended with a block scope. Keep every source place and
+    /// the loans inherited from enclosing scopes, so origins that escape an
+    /// `if`/`match` still block their actual ancestors.
+    fn remove_loans(&mut self, exited: &[usize]) {
+        for source in &mut self.sources {
+            if let Some(loans) = source.loans_mut() {
+                loans.retain(|loan| !exited.contains(loan));
+            }
+        }
+    }
+
+    fn into_derived(mut self) -> Self {
+        for source in &mut self.sources {
+            source.as_derived();
+        }
+        self
+    }
+
+    fn is_unknown(&self) -> bool {
+        self.sources
+            .iter()
+            .any(|source| matches!(source, ReferenceSource::Unknown))
+    }
 }
 
 /// A place borrowed by a safe reference. The root identifies a particular
@@ -102,35 +213,50 @@ struct BorrowPlace {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum MutableReferenceOrigin {
-    Place(BorrowPlace),
-    Unknown,
-}
-
-impl MutableReferenceOrigin {
-    fn overlaps(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Place(left), Self::Place(right)) => left.overlaps(right),
-            // Function parameters may alias caller-provided places. Keep those
-            // origins conservative even when their parameter names differ.
-            _ => true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BorrowRoot {
-    scope_index: usize,
-    name: String,
+enum BorrowRoot {
+    Local { scope_index: usize, name: String },
+    Parameter { callable: usize, index: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BorrowProjection {
     Field(String),
     Index(Option<i64>),
+    /// A subplace that is not known at the use site, such as the pointee of a
+    /// reference returned from a call. Later projections must not narrow it.
+    Unknown,
 }
 
 impl BorrowPlace {
+    fn parameter(callable: usize, index: usize) -> Self {
+        Self {
+            root: BorrowRoot::Parameter { callable, index },
+            projections: Vec::new(),
+        }
+    }
+
+    fn local(scope_index: usize, name: impl Into<String>) -> Self {
+        Self {
+            root: BorrowRoot::Local {
+                scope_index,
+                name: name.into(),
+            },
+            projections: Vec::new(),
+        }
+    }
+
+    fn root_name(&self) -> &str {
+        match &self.root {
+            BorrowRoot::Local { name, .. } => name,
+            BorrowRoot::Parameter { .. } => "reference parameter",
+        }
+    }
+
+    fn with_projections(mut self, projections: Vec<BorrowProjection>) -> Self {
+        self.projections = projections;
+        self
+    }
+
     fn overlaps(&self, other: &Self) -> bool {
         if self.root != other.root {
             return false;
@@ -146,8 +272,8 @@ impl BorrowPlace {
                 | (BorrowProjection::Index(Some(_)), BorrowProjection::Index(Some(_))) => {
                     return false;
                 }
-                // An unknown index, or different projection kinds, may refer to
-                // the same memory. Remain conservative in those cases.
+                // An unknown index or projection, or different projection
+                // kinds, may refer to the same memory. Remain conservative.
                 _ => return true,
             }
         }
@@ -162,11 +288,12 @@ struct Checker {
     signatures: HashMap<String, Signature>,
     scopes: Vec<HashMap<String, ValueType>>,
     immutable_scopes: Vec<std::collections::HashSet<String>>,
-    mutable_borrows: Vec<Vec<BorrowPlace>>,
-    shared_borrows: Vec<Vec<BorrowPlace>>,
+    loans: Vec<Vec<ActiveLoan>>,
+    next_loan_id: usize,
+    current_callable_id: usize,
+    next_callable_id: usize,
     reference_origins: HashMap<(usize, String), ReferenceProvenance>,
     expression_reference_origins: HashMap<(Option<usize>, usize, usize), ReferenceProvenance>,
-    mutable_reference_origins: Vec<HashMap<String, MutableReferenceOrigin>>,
     loop_scopes: Vec<std::collections::HashSet<String>>,
     loop_contexts: Vec<LoopContext>,
     current_return_type: ValueType,
@@ -194,7 +321,7 @@ struct Checker {
     allow_mutable_borrow_initializer: bool,
     lambda_scope_boundaries: Vec<usize>,
     lambda_capture_scopes: Vec<Vec<LambdaCapture>>,
-    lambda_capture_borrow_snapshots: Vec<Vec<Vec<BorrowPlace>>>,
+    lambda_capture_borrow_snapshots: Vec<Vec<Vec<ActiveLoan>>>,
     lambda_captures: HashMap<LambdaKey, Vec<LambdaCapture>>,
     current_function_owner: String,
     module_context: String,
@@ -214,11 +341,12 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         signatures: HashMap::new(),
         scopes: Vec::new(),
         immutable_scopes: Vec::new(),
-        mutable_borrows: Vec::new(),
-        shared_borrows: Vec::new(),
+        loans: Vec::new(),
+        next_loan_id: 0,
+        current_callable_id: 0,
+        next_callable_id: 0,
         reference_origins: HashMap::new(),
         expression_reference_origins: HashMap::new(),
-        mutable_reference_origins: Vec::new(),
         loop_scopes: Vec::new(),
         loop_contexts: Vec::new(),
         current_return_type: ValueType::Unit,
@@ -273,6 +401,7 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+mod borrows;
 mod declarations;
 mod expressions;
 mod matching;
@@ -299,16 +428,10 @@ mod pointer_mutability_tests {
 
 #[cfg(test)]
 mod borrow_place_tests {
-    use super::{BorrowPlace, BorrowProjection, BorrowRoot};
+    use super::{BorrowPlace, BorrowProjection};
 
     fn place(name: &str, projections: Vec<BorrowProjection>) -> BorrowPlace {
-        BorrowPlace {
-            root: BorrowRoot {
-                scope_index: 0,
-                name: name.to_owned(),
-            },
-            projections,
-        }
+        BorrowPlace::local(0, name).with_projections(projections)
     }
 
     #[test]
@@ -339,13 +462,7 @@ mod borrow_place_tests {
     #[test]
     fn shadowed_names_have_distinct_borrow_roots() {
         let outer = place("value", Vec::new());
-        let inner = BorrowPlace {
-            root: BorrowRoot {
-                scope_index: 1,
-                name: "value".into(),
-            },
-            projections: Vec::new(),
-        };
+        let inner = BorrowPlace::local(1, "value");
         assert!(!outer.overlaps(&inner));
     }
 }

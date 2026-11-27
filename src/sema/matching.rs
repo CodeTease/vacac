@@ -97,12 +97,6 @@ impl Checker {
         }
         let result_type =
             result_type.ok_or_else(|| at(span, "match expression must have at least one arm"))?;
-        if matches!(result_type, ValueType::MutableReference(_)) {
-            return Err(at(
-                span,
-                "mutable references cannot escape through match expressions",
-            ));
-        }
         self.record_reference_join(span, result_type, result_origins, "`match`")?;
         Ok(result_type)
     }
@@ -128,18 +122,32 @@ impl Checker {
     ) -> Result<(ValueType, ReferenceProvenance), Diagnostic> {
         self.scopes
             .push(bindings.into_iter().collect::<HashMap<_, _>>());
+        let arm_scope = self.scopes.len() - 1;
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(Vec::new());
-        self.shared_borrows.push(Vec::new());
-        self.mutable_reference_origins.push(HashMap::new());
+        self.push_loan_scope();
         let result = self.check_block_result(&arm.body, arm.span);
+        let result = result.and_then(|(ty, origin)| {
+            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
+                && origin.sources.iter().any(|source| match source {
+                    ReferenceSource::Borrowed { place, .. } => matches!(
+                        place.root,
+                        BorrowRoot::Local { scope_index, .. } if scope_index >= arm_scope
+                    ),
+                    ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
+                })
+            {
+                return Err(at(
+                    arm.span,
+                    "a reference to a pattern binding cannot escape its scope",
+                ));
+            }
+            Ok((ty, origin))
+        });
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
-        self.mutable_borrows.pop();
-        self.shared_borrows.pop();
-        self.mutable_reference_origins.pop();
+        self.pop_loan_scope();
         result
     }
 

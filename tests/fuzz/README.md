@@ -25,15 +25,14 @@ additionally exercised with `--emit-llvm`.
   counter whose aliases share environment state while separately created
   closures remain independent.
 - References are intentionally more limited than Rust: loans are lexical
-  (there is no NLL), mutable-reference reborrowing is rejected, references
-  cannot be captured or stored in aggregates, and lifetime contracts accept
-  only the documented origins/propagation paths. The fixtures check supported
-  shared reborrowing and representative rejected origins/aliases. Here
-  `&*mutable` is rejected at the earlier “mutable borrowing requires a named
-  local binding” check; `&mut *mutable` similarly cannot form a reborrow. These
-  limits are intentional, not findings of Rust borrow-checker unsoundness.
-  Place tracking permits simultaneous work on known disjoint array indexes,
-  but an unknown index is treated as possibly overlapping an active loan.
+  (there is no NLL), references cannot be captured or stored in aggregates, and
+  lifetime contracts accept only the documented origins/propagation paths.
+  The fixtures check shared and mutable reborrows, named mutable returns, and
+  representative rejected origins/aliases. A child reborrow blocks overlapping
+  access through its parent until the child's lexical scope ends, while
+  disjoint field and constant-index projections remain usable. Place tracking
+  permits simultaneous work on known disjoint array indexes, but an unknown
+  index is treated as possibly overlapping an active loan.
 - The generic reproducer grows `Vec<T>` recursively until the documented
   512-concrete-instance limit is reached. Trait impls share that limit and
   overlapping impl targets are rejected before specialization. A separate case

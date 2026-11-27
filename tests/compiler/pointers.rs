@@ -265,7 +265,7 @@ fn mutable_reference_rules_reject_unsafe_lifetimes_and_immutable_origins() {
         (
             "fn escape(value: &mut i64) -> &mut i64 { value } fn main() -> i64 { 0 }",
             "mutable-reference-return",
-            "functions cannot return references",
+            "functions returning references must specify a named return lifetime",
         ),
         (
             "fn main() -> i64 { let value = 1; const reference: &mut i64 = &mut value; let closure = fn() -> i64 { *reference }; 0 }",

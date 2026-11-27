@@ -55,6 +55,12 @@ struct VectorShape {
     element: ArrayElementType,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReferenceKind {
+    Shared,
+    Mutable,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 enum MutableReferenceOrigin {
     Place {

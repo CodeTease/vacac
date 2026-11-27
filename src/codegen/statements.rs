@@ -1,4 +1,3 @@
-use super::expressions::{codegen_borrow_root, codegen_mutable_borrow_origin};
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
@@ -189,7 +188,9 @@ impl<'ctx> Codegen<'ctx> {
                         Expr::Unary {
                             op: UnaryOp::BorrowMut,
                             ..
-                        }
+                        } | Expr::Call { .. }
+                            | Expr::If { .. }
+                            | Expr::Match { .. }
                     )
                 {
                     return Err(Diagnostic::at(
@@ -233,19 +234,7 @@ impl<'ctx> Codegen<'ctx> {
                     None => return Err("missing initializer value".into()),
                 };
                 let binding_origin = if matches!(ty, ValueType::MutableReference(_)) {
-                    match value {
-                        Expr::Unary {
-                            op: UnaryOp::BorrowMut,
-                            value: borrowed,
-                            ..
-                        } => codegen_borrow_root(borrowed)
-                            .and_then(|source| self.lookup_local(source))
-                            .and_then(|local| {
-                                codegen_mutable_borrow_origin(borrowed, local.binding_id)
-                            })
-                            .or(Some(MutableReferenceOrigin::Unknown)),
-                        _ => None,
-                    }
+                    self.argument_origin(value)
                 } else {
                     None
                 };

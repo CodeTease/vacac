@@ -8,7 +8,7 @@ impl Checker {
         origins: Vec<ReferenceProvenance>,
         construct: &str,
     ) -> Result<(), Diagnostic> {
-        if !matches!(ty, ValueType::Reference(_)) {
+        if !matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
             return Ok(());
         }
         let mut origins = origins.into_iter();
@@ -18,11 +18,12 @@ impl Checker {
         for other in origins {
             origin.extend(other);
         }
-        if origin
-            .sources
-            .iter()
-            .any(|source| !matches!(source, ReferenceSource::Parameter { .. }))
-        {
+        if origin.sources.iter().any(|source| {
+            !matches!(
+                source,
+                ReferenceSource::Parameter { .. } | ReferenceSource::Borrowed { derived: true, .. }
+            )
+        }) {
             return Err(at(
                 span,
                 format!("references cannot escape through {construct} expressions"),
@@ -33,74 +34,96 @@ impl Checker {
         Ok(())
     }
 
-    pub(super) fn reference_origin(&self, expr: &Expr) -> Option<ReferenceProvenance> {
+    pub(super) fn reference_origin(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<Option<ReferenceProvenance>, Diagnostic> {
         match expr {
-            Expr::Variable(name, _) => self
-                .lookup_local_with_scope(name)
-                .and_then(|(scope, _)| self.reference_origins.get(&(scope, name.clone())).cloned()),
+            Expr::Variable(name, _) => {
+                Ok(self.lookup_local_with_scope(name).and_then(|(scope, _)| {
+                    self.reference_origins.get(&(scope, name.clone())).cloned()
+                }))
+            }
             Expr::Unary {
-                op: UnaryOp::Borrow,
+                op: UnaryOp::Borrow | UnaryOp::BorrowMut,
                 value,
                 ..
-            } => match value.as_ref() {
-                Expr::Unary {
-                    op: UnaryOp::Dereference,
-                    value: reference,
-                    ..
-                } => self.reference_origin(reference),
-                _ => self
+            } => {
+                if let Some((reference, projections)) = self.reborrow_parts(value, false)? {
+                    let Some(mut origin) = self.reference_origin(reference)? else {
+                        return Ok(None);
+                    };
+                    origin.map_places(|place| place.projections.extend(projections.clone()));
+                    return Ok(Some(origin.into_derived()));
+                }
+                Ok(self
                     .borrow_place(value, span_of_expr(value))
                     .ok()
                     .map(ReferenceProvenance::borrowed)
-                    .or_else(|| Some(ReferenceProvenance::unknown())),
-            },
-            Expr::Unary {
-                op: UnaryOp::BorrowMut,
-                ..
-            } => Some(ReferenceProvenance::unknown()),
+                    .or_else(|| Some(ReferenceProvenance::unknown())))
+            }
             Expr::Call { name, args, .. } => {
-                let name = self.find_function_name(name)?;
-                let signature = self.signatures.get(&name)?;
-                signature.return_lifetime.as_ref()?;
+                let Some(name) = self.find_function_name(name) else {
+                    return Ok(None);
+                };
+                let Some(signature) = self.signatures.get(&name) else {
+                    return Ok(None);
+                };
+                if signature.return_lifetime.is_none() {
+                    return Ok(None);
+                }
+                let return_parameter_indices = signature.return_parameter_indices.clone();
                 let mut origin: Option<ReferenceProvenance> = None;
-                for argument_index in &signature.return_parameter_indices {
-                    let argument_origin = args
-                        .get(*argument_index)
-                        .and_then(|argument| self.reference_origin(argument))
-                        .unwrap_or_else(ReferenceProvenance::unknown);
+                for argument_index in &return_parameter_indices {
+                    let argument_origin = match args.get(*argument_index) {
+                        Some(argument) => self
+                            .reference_origin(argument)?
+                            .unwrap_or_else(ReferenceProvenance::unknown),
+                        None => ReferenceProvenance::unknown(),
+                    };
                     if let Some(origin) = &mut origin {
                         origin.extend(argument_origin);
                     } else {
                         origin = Some(argument_origin);
                     }
                 }
-                origin.or_else(|| Some(ReferenceProvenance::unknown()))
+                Ok(origin
+                    .map(|mut origin| {
+                        // A callee can return a subplace of an argument, but the
+                        // caller cannot recover that projection. Keep the
+                        // argument coverage opaque so later reborrows of the
+                        // returned reference cannot narrow it.
+                        origin
+                            .map_places(|place| place.projections.push(BorrowProjection::Unknown));
+                        origin.into_derived()
+                    })
+                    .or_else(|| Some(ReferenceProvenance::unknown())))
             }
-            Expr::If { span, .. } | Expr::Match { span, .. } => self
+            Expr::If { span, .. } | Expr::Match { span, .. } => Ok(self
                 .expression_reference_origins
                 .get(&(span.file, span.line, span.column))
-                .cloned(),
+                .cloned()),
             Expr::Unary {
                 op: UnaryOp::Dereference,
                 value,
                 ..
             } => self.reference_origin(value),
-            _ => None,
+            _ => Ok(None),
         }
     }
 
     pub(super) fn validate_return_provenance(
-        &self,
+        &mut self,
         expr: &Expr,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let expected = self.return_lifetime.as_ref().ok_or_else(|| {
+        let expected = self.return_lifetime.clone().ok_or_else(|| {
             at(
                 span,
                 "functions cannot return references without a named lifetime",
             )
         })?;
-        let Some(origin) = self.reference_origin(expr) else {
+        let Some(origin) = self.reference_origin(expr)? else {
             return Err(at(
                 span,
                 "cannot return a reference that does not originate from a parameter with the declared lifetime",
@@ -111,11 +134,13 @@ impl Checker {
         let mut saw_non_parameter = false;
         for source in &origin.sources {
             match source {
-                ReferenceSource::Parameter { index, lifetime } => {
+                ReferenceSource::Parameter {
+                    index, lifetime, ..
+                } => {
                     parameter_indices.insert(*index);
                     parameter_lifetimes.push(lifetime.as_deref());
                 }
-                ReferenceSource::Borrowed(_) => {
+                ReferenceSource::Borrowed { .. } => {
                     saw_non_parameter = true;
                 }
                 ReferenceSource::Unknown => {
@@ -143,7 +168,7 @@ impl Checker {
             ));
         }
         match parameter_lifetimes.first().copied().flatten() {
-            Some(actual) if actual == expected => {}
+            Some(actual) if actual == expected.as_str() => {}
             Some(actual) => {
                 return Err(at(
                     span,
@@ -683,9 +708,7 @@ impl Checker {
         let exited_scope = self.scopes.len() - 1;
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(Vec::new());
-        self.shared_borrows.push(Vec::new());
-        self.mutable_reference_origins.push(HashMap::new());
+        self.push_loan_scope();
         let result = (|| {
             for statement in &block.statements {
                 match statement {
@@ -711,12 +734,19 @@ impl Checker {
             };
             let ty = self.check_expr(tail, false)?;
             let origin = self
-                .reference_origin(tail)
+                .reference_origin(tail)?
                 .unwrap_or_else(ReferenceProvenance::unknown);
-            if origin.sources.iter().any(|source| match source {
-                ReferenceSource::Borrowed(place) => place.root.scope_index == exited_scope,
-                ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
-            }) {
+            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
+                && origin.sources.iter().any(|source| match source {
+                    ReferenceSource::Borrowed { place, .. } => {
+                        matches!(
+                            place.root,
+                            BorrowRoot::Local { scope_index, .. } if scope_index == exited_scope
+                        )
+                    }
+                    ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
+                })
+            {
                 return Err(at(
                     span_of_expr(tail),
                     "a reference to a block-local binding cannot escape its scope",
@@ -724,12 +754,19 @@ impl Checker {
             }
             Ok((ty, origin))
         })();
+        let exited_loans = self
+            .loans
+            .last()
+            .map(|loans| loans.iter().map(|loan| loan.id).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let result = result.map(|(ty, mut origin)| {
+            origin.remove_loans(&exited_loans);
+            (ty, origin)
+        });
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
-        self.mutable_borrows.pop();
-        self.shared_borrows.pop();
-        self.mutable_reference_origins.pop();
+        self.pop_loan_scope();
         self.reference_origins
             .retain(|(index, _), _| *index < exited_scope);
         result
@@ -769,58 +806,6 @@ impl Checker {
             .enumerate()
             .rev()
             .find_map(|(index, scope)| scope.get(name).copied().map(|ty| (index, ty)))
-    }
-
-    pub(super) fn mutable_reference_argument_origin(
-        &self,
-        expression: &Expr,
-    ) -> Option<MutableReferenceOrigin> {
-        let Expr::Variable(name, _) = expression else {
-            return None;
-        };
-        let (scope_index, ty) = self.lookup_local_with_scope(name)?;
-        if !matches!(ty, ValueType::MutableReference(_)) {
-            return None;
-        }
-        Some(
-            self.mutable_reference_origins
-                .get(scope_index)
-                .and_then(|scope| scope.get(name))
-                .cloned()
-                .unwrap_or(MutableReferenceOrigin::Unknown),
-        )
-    }
-
-    pub(super) fn reject_overlapping_mutable_reference_arguments(
-        &self,
-        args: &[Expr],
-        params: &[ValueType],
-    ) -> Result<(), Diagnostic> {
-        let origins = args
-            .iter()
-            .zip(params)
-            .map(|(argument, parameter)| {
-                matches!(parameter, ValueType::MutableReference(_))
-                    .then(|| self.mutable_reference_argument_origin(argument))
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
-        for later in 0..origins.len() {
-            let Some(later_origin) = &origins[later] else {
-                continue;
-            };
-            if origins[..later]
-                .iter()
-                .flatten()
-                .any(|earlier_origin| earlier_origin.overlaps(later_origin))
-            {
-                return Err(at(
-                    span_of_expr(&args[later]),
-                    "overlapping mutable references cannot be passed to the same call",
-                ));
-            }
-        }
-        Ok(())
     }
 
     /// Records that `name` crosses one or more lambda boundaries. Reads and writes
@@ -880,7 +865,7 @@ impl Checker {
     pub(super) fn validate_lambda_capture_borrows(
         &self,
         captures: &[LambdaCapture],
-        borrow_snapshot: &[Vec<BorrowPlace>],
+        borrow_snapshot: &[Vec<ActiveLoan>],
         span: Span,
     ) -> Result<(), Diagnostic> {
         for capture in captures {
@@ -890,17 +875,11 @@ impl Checker {
             if !scope.contains_key(&capture.name) {
                 continue;
             }
-            let place = BorrowPlace {
-                root: BorrowRoot {
-                    scope_index: capture.scope_index,
-                    name: capture.name.clone(),
-                },
-                projections: Vec::new(),
-            };
+            let place = BorrowPlace::local(capture.scope_index, capture.name.clone());
             if borrow_snapshot
                 .iter()
                 .flatten()
-                .any(|borrow| borrow.overlaps(&place))
+                .any(|loan| loan.kind == BorrowKind::Mutable && loan.place.overlaps(&place))
             {
                 return Err(at(
                     span,
@@ -982,10 +961,7 @@ impl Checker {
         let Some((scope_index, _)) = self.lookup_local_with_scope(&name) else {
             return Err(at(span, "only local bindings can be borrowed"));
         };
-        Ok(BorrowPlace {
-            root: BorrowRoot { scope_index, name },
-            projections,
-        })
+        Ok(BorrowPlace::local(scope_index, name).with_projections(projections))
     }
 
     pub(super) fn direct_local_place_root(expr: &Expr) -> Option<&str> {
@@ -1004,20 +980,19 @@ impl Checker {
     ) -> Result<bool, Diagnostic> {
         let place = self.borrow_place(expr, span)?;
         Ok(self
-            .mutable_borrows
+            .loans
             .iter()
             .flatten()
-            .any(|borrow| borrow.overlaps(&place)))
+            .any(|loan| loan.kind == BorrowKind::Mutable && loan.place.overlaps(&place)))
     }
 
     pub(super) fn is_place_borrowed(&self, expr: &Expr, span: Span) -> Result<bool, Diagnostic> {
         let place = self.borrow_place(expr, span)?;
         Ok(self
-            .mutable_borrows
+            .loans
             .iter()
             .flatten()
-            .chain(self.shared_borrows.iter().flatten())
-            .any(|borrow| borrow.overlaps(&place)))
+            .any(|loan| loan.place.overlaps(&place)))
     }
 
     pub(super) fn is_place_shared_borrowed(
@@ -1027,10 +1002,10 @@ impl Checker {
     ) -> Result<bool, Diagnostic> {
         let place = self.borrow_place(expr, span)?;
         Ok(self
-            .shared_borrows
+            .loans
             .iter()
             .flatten()
-            .any(|borrow| borrow.overlaps(&place)))
+            .any(|loan| loan.kind == BorrowKind::Shared && loan.place.overlaps(&place)))
     }
 
     pub(super) fn reject_mutably_borrowed_place(
@@ -1040,16 +1015,16 @@ impl Checker {
     ) -> Result<(), Diagnostic> {
         let place = self.borrow_place(expr, span)?;
         if self
-            .mutable_borrows
+            .loans
             .iter()
             .flatten()
-            .any(|borrow| borrow.overlaps(&place))
+            .any(|loan| loan.kind == BorrowKind::Mutable && loan.place.overlaps(&place))
         {
             Err(at(
                 span,
                 format!(
                     "cannot access `{}` while it is mutably borrowed",
-                    place.root.name
+                    place.root_name()
                 ),
             ))
         } else {
@@ -1057,41 +1032,17 @@ impl Checker {
         }
     }
 
-    pub(super) fn record_shared_borrow_place(
-        &mut self,
-        place: BorrowPlace,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        if self
-            .mutable_borrows
-            .iter()
-            .flatten()
-            .any(|borrow| borrow.overlaps(&place))
-        {
-            return Err(at(
-                span,
-                "cannot immutably borrow an already mutably borrowed place",
-            ));
-        }
-        self.shared_borrows
-            .last_mut()
-            .expect("block borrow scope exists")
-            .push(place);
-        Ok(())
-    }
-
     pub(super) fn reject_borrowed_place(&self, expr: &Expr, span: Span) -> Result<(), Diagnostic> {
         let place = self.borrow_place(expr, span)?;
         if self
-            .mutable_borrows
+            .loans
             .iter()
             .flatten()
-            .chain(self.shared_borrows.iter().flatten())
-            .any(|borrow| borrow.overlaps(&place))
+            .any(|loan| loan.place.overlaps(&place))
         {
             Err(at(
                 span,
-                format!("cannot modify `{}` while it is borrowed", place.root.name),
+                format!("cannot modify `{}` while it is borrowed", place.root_name()),
             ))
         } else {
             Ok(())
@@ -1102,28 +1053,22 @@ impl Checker {
         let Some((scope_index, _)) = self.lookup_local_with_scope(name) else {
             return Ok(());
         };
-        let place = BorrowPlace {
-            root: BorrowRoot {
-                scope_index,
-                name: name.to_owned(),
-            },
-            projections: Vec::new(),
-        };
+        let place = BorrowPlace::local(scope_index, name);
         let is_mutably_borrowed = self
-            .mutable_borrows
+            .loans
             .iter()
             .flatten()
-            .any(|borrow| borrow.overlaps(&place));
+            .any(|loan| loan.kind == BorrowKind::Mutable && loan.place.overlaps(&place));
         if is_mutably_borrowed {
             Err(at(
                 span,
                 format!("cannot access `{name}` while it is mutably borrowed"),
             ))
         } else if self
-            .shared_borrows
+            .loans
             .iter()
             .flatten()
-            .any(|borrow| borrow.overlaps(&place))
+            .any(|loan| loan.kind == BorrowKind::Shared && loan.place.overlaps(&place))
         {
             Err(at(
                 span,
@@ -1134,38 +1079,13 @@ impl Checker {
         }
     }
 
-    pub(super) fn record_mutable_borrow(
-        &mut self,
-        expr: &Expr,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        let place = self.borrow_place(expr, span)?;
-        if self.is_place_borrowed(expr, span)? {
-            return Err(at(
-                span,
-                format!("`{}` is already borrowed", place.root.name),
-            ));
-        }
-        self.mutable_borrows
-            .last_mut()
-            .expect("block borrow scope exists")
-            .push(place);
-        Ok(())
-    }
-
     pub(super) fn reject_mutably_borrowed(&self, name: &str, span: Span) -> Result<(), Diagnostic> {
         let borrowed = if let Some((scope_index, _)) = self.lookup_local_with_scope(name) {
-            let place = BorrowPlace {
-                root: BorrowRoot {
-                    scope_index,
-                    name: name.to_owned(),
-                },
-                projections: Vec::new(),
-            };
-            self.mutable_borrows
+            let place = BorrowPlace::local(scope_index, name);
+            self.loans
                 .iter()
                 .flatten()
-                .any(|borrow| borrow.overlaps(&place))
+                .any(|loan| loan.kind == BorrowKind::Mutable && loan.place.overlaps(&place))
         } else {
             false
         };

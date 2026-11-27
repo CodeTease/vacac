@@ -14,7 +14,7 @@
 * [x] Destructuring patterns for structs, arrays, and tuples; tuple types and values.
 * [x] Make `unit` a zero-sized value with a `()` literal, locals, generic arguments, and enum payloads, enabling `Result<unit, E>` and `?` for fallible side-effect-only operations.
 * [x] Typed raw pointers (`*const T` / `*mut T`) with explicit raw address-taking and dereference; restricted lexical `&mut T` borrows.
-* [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; mutable-reference returns/reborrows and NLL are deferred).
+* [x] Bounded named lifetimes and safe-reference borrowing (shared references can be returned from matching shared-reference parameters and propagated through direct named-function calls, local aliases, reborrows, and `if`/`match` joins; local loans use conservative lexical place tracking; references remain unavailable in aggregates, globals, closures, and function-value returns; NLL is deferred).
 * [x] Scalar external C FFI declarations and calls (`i64`, `f32`, `f64`, and `unit` returns), with native linker inputs for executables and `--run`.
 * [x] Interfaces / traits / protocols.
 * [x] Default function bodies in traits, including inherited body specialization, visibility, and static-dispatch tests.
@@ -22,7 +22,7 @@
 * [x] Persistent mutable owned closure captures, with closure aliases sharing environment state and separately created closures remaining independent.
 * [x] Unit-producing statement matches that skip result PHI construction.
 * [x] Generalized aggregate and nested matching with multiple dispatch arms, nested variant and scalar patterns, and exhaustive/unreachable-arm analysis.
-* [ ] Mutable-reference reborrowing and named-lifetime returns, preserving overlap and local-escape checks.
+* [x] Mutable-reference reborrowing and named-lifetime returns, preserving overlap and local-escape checks.
 * [ ] Non-lexical lifetimes that end shared and mutable loans at last use across branches and loops.
 * [ ] ~~Object-oriented features such as methods, classes, inheritance, and polymorphism.~~
 * [ ] Macros and compile-time metaprogramming.

@@ -1,3 +1,4 @@
+use super::borrows::ReferencePlaceAccess;
 use super::*;
 
 impl Checker {
@@ -113,12 +114,41 @@ impl Checker {
                     {
                         return Err(at(*span, format!("function `{name}` is private")));
                     }
+                    if matches!(
+                        signature.return_type,
+                        ValueType::Reference(_) | ValueType::MutableReference(_)
+                    ) {
+                        return Err(at(
+                            *span,
+                            "functions returning references cannot be used as function values",
+                        ));
+                    }
                     Ok(self.function_type(signature.params, signature.return_type))
                 } else {
                     Err(at(*span, format!("undefined variable `{name}`")))
                 }
             }
             Expr::Index { array, index, span } => {
+                match self.reference_place_access(expr, *span)? {
+                    Some(ReferencePlaceAccess::Safe {
+                        target_type,
+                        provenance,
+                        projections,
+                        ..
+                    }) => {
+                        self.check_reference_access(
+                            &provenance,
+                            &projections,
+                            AccessMode::Read,
+                            *span,
+                        )?;
+                        return Ok(target_type);
+                    }
+                    Some(ReferencePlaceAccess::Raw { target_type }) => {
+                        return Ok(target_type);
+                    }
+                    None => {}
+                }
                 if let Some(place_type) = self.check_local_place_read(expr)? {
                     return Ok(place_type);
                 }
@@ -141,6 +171,26 @@ impl Checker {
                 }
             }
             Expr::Field { value, name, span } => {
+                match self.reference_place_access(expr, *span)? {
+                    Some(ReferencePlaceAccess::Safe {
+                        target_type,
+                        provenance,
+                        projections,
+                        ..
+                    }) => {
+                        self.check_reference_access(
+                            &provenance,
+                            &projections,
+                            AccessMode::Read,
+                            *span,
+                        )?;
+                        return Ok(target_type);
+                    }
+                    Some(ReferencePlaceAccess::Raw { target_type }) => {
+                        return Ok(target_type);
+                    }
+                    None => {}
+                }
                 if let Some(value_type) = self.check_local_place_read(expr)? {
                     return Ok(value_type);
                 }
@@ -223,24 +273,16 @@ impl Checker {
             }
             Expr::Unary { op, value, span } => {
                 if matches!(op, UnaryOp::Borrow) {
-                    if let Expr::Unary {
-                        op: UnaryOp::Dereference,
-                        value: reference,
-                        ..
-                    } = value.as_ref()
+                    if let Some((target_type, provenance, projections, _kind)) =
+                        self.reference_access_type(value, *span)?
                     {
-                        match self.check_expr(reference, false)? {
-                            ValueType::Reference(index) => {
-                                return Ok(ValueType::Reference(index));
-                            }
-                            ValueType::MutableReference(_) => {
-                                return Err(at(
-                                    *span,
-                                    "mutable reference reborrowing is not supported",
-                                ));
-                            }
-                            _ => {}
-                        }
+                        self.check_reference_access(
+                            &provenance,
+                            &projections,
+                            AccessMode::BorrowShared,
+                            *span,
+                        )?;
+                        return Ok(self.reference_type(target_type));
                     }
                     let Some(name) = Self::direct_local_place_root(value) else {
                         return Err(at(
@@ -298,6 +340,23 @@ impl Checker {
                     return Ok(self.reference_type(target_type));
                 }
                 if matches!(op, UnaryOp::BorrowMut) {
+                    if let Some((target_type, provenance, projections, kind)) =
+                        self.reference_access_type(value, *span)?
+                    {
+                        if kind != BorrowKind::Mutable {
+                            return Err(at(
+                                *span,
+                                "cannot mutably borrow through a shared reference",
+                            ));
+                        }
+                        self.check_reference_access(
+                            &provenance,
+                            &projections,
+                            AccessMode::BorrowMutable,
+                            *span,
+                        )?;
+                        return Ok(self.mutable_reference_type(target_type));
+                    }
                     if !self.allow_mutable_borrow_initializer {
                         return Err(at(
                             *span,
@@ -370,20 +429,28 @@ impl Checker {
                     );
                 }
                 if matches!(op, UnaryOp::Dereference) {
-                    return match self.check_expr(value, false)? {
-                        ValueType::Reference(index) => Ok(self.reference_types[index]),
-                        ValueType::MutableReference(index) => {
-                            Ok(self.mutable_reference_types[index])
+                    let reference_type = self.check_expr(value, false)?;
+                    let target = match reference_type {
+                        ValueType::Reference(index) => self.reference_types[index],
+                        ValueType::MutableReference(index) => self.mutable_reference_types[index],
+                        ValueType::RawPointer(index) => {
+                            return Ok(self.raw_pointer_types[index].0);
                         }
-                        ValueType::RawPointer(index) => Ok(self.raw_pointer_types[index].0),
-                        other => Err(at(
-                            *span,
-                            format!(
-                                "unary `*` requires a reference or raw pointer, got {}",
-                                self.type_name(other)
-                            ),
-                        )),
+                        other => {
+                            return Err(at(
+                                *span,
+                                format!(
+                                    "unary `*` requires a reference or raw pointer, got {}",
+                                    self.type_name(other)
+                                ),
+                            ));
+                        }
                     };
+                    let provenance = self.reference_origin(value)?.ok_or_else(|| {
+                        at(*span, "cannot establish the origin of this reference")
+                    })?;
+                    self.check_reference_access(&provenance, &[], AccessMode::Read, *span)?;
+                    return Ok(target);
                 }
                 let value_type = self.check_expr(
                     value,
@@ -582,10 +649,11 @@ impl Checker {
                 }
                 let params = signature.params.clone();
                 let return_type = signature.return_type;
-                self.reject_overlapping_mutable_reference_arguments(args, &params)?;
-                self.shared_borrows.push(Vec::new());
+                self.reject_known_overlapping_reference_arguments(args, &params)?;
+                self.push_loan_scope();
                 let checked_arguments: Result<(), Diagnostic> = (|| {
-                    for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
+                    let mut origins = Vec::with_capacity(args.len());
+                    for (index, (arg, expected)) in args.iter().zip(&params).enumerate() {
                         if let Expr::Unary {
                             op: UnaryOp::BorrowMut,
                             value,
@@ -600,23 +668,31 @@ impl Checker {
                             ));
                         }
                         let previous_shared_borrow_permission = self.allow_shared_borrow;
-                        if matches!(expected, ValueType::Reference(_)) {
+                        if matches!(*expected, ValueType::Reference(_)) {
                             self.allow_shared_borrow = true;
                         }
-                        let checked_argument = self.check_expr_expected(arg, expected);
+                        let checked_argument = self.check_expr_expected(arg, *expected);
                         self.allow_shared_borrow = previous_shared_borrow_permission;
                         let actual = checked_argument?;
                         self.expect_type(
                             actual,
-                            expected,
+                            *expected,
                             span_of_expr(arg),
                             &format!("argument {} to `{name}`", index + 1),
                         )?;
-                        self.record_argument_shared_borrows(arg, actual)?;
+                        let origin = self.reference_origin(arg)?;
+                        self.reserve_reference_argument_for_type(
+                            arg,
+                            *expected,
+                            actual,
+                            origin.as_ref(),
+                        )?;
+                        origins.push(origin);
                     }
+                    self.reject_overlapping_reference_arguments(args, &params, &origins)?;
                     Ok(())
                 })();
-                self.shared_borrows.pop();
+                self.pop_loan_scope();
                 checked_arguments?;
                 Ok(return_type)
             }
@@ -656,46 +732,48 @@ impl Checker {
                     return Err(at(*span, "functions and lambdas cannot return references"));
                 }
                 let boundary = self.scopes.len();
-                let borrow_snapshot = self.mutable_borrows.clone();
+                let borrow_snapshot = self.loans.clone();
                 self.lambda_scope_boundaries.push(boundary);
                 self.lambda_capture_scopes.push(Vec::new());
                 self.lambda_capture_borrow_snapshots.push(borrow_snapshot);
                 self.scopes.push(HashMap::new());
+                let lambda_scope = self.scopes.len() - 1;
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
-                self.mutable_borrows.push(Vec::new());
-                self.shared_borrows.push(Vec::new());
-                self.mutable_reference_origins.push(HashMap::new());
-                for (param, ty) in params.iter().zip(param_types.iter()) {
+                self.push_loan_scope();
+                let previous_callable_id = self.current_callable_id;
+                self.current_callable_id = self.next_callable_id;
+                self.next_callable_id += 1;
+                for (index, (param, ty)) in params.iter().zip(param_types.iter()).enumerate() {
                     self.scopes
                         .last_mut()
                         .unwrap()
                         .insert(param.name.clone(), *ty);
-                    if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_)) {
+                    if let Some(kind) = match ty {
+                        ValueType::Reference(_) => Some(BorrowKind::Shared),
+                        ValueType::MutableReference(_) => Some(BorrowKind::Mutable),
+                        _ => None,
+                    } {
+                        let provenance = self.parameter_loan(index, None, kind);
+                        self.reference_origins
+                            .insert((lambda_scope, param.name.clone()), provenance);
                         self.immutable_scopes
                             .last_mut()
                             .unwrap()
                             .insert(param.name.clone());
-                    }
-                    if matches!(ty, ValueType::MutableReference(_)) {
-                        self.mutable_reference_origins
-                            .last_mut()
-                            .unwrap()
-                            .insert(param.name.clone(), MutableReferenceOrigin::Unknown);
                     }
                 }
                 let previous_return_type = self.current_return_type;
                 let previous_loops = std::mem::take(&mut self.loop_contexts);
                 self.current_return_type = return_type;
                 let checked = self.check_block(body, return_type, true);
+                self.current_callable_id = previous_callable_id;
                 self.current_return_type = previous_return_type;
                 self.loop_contexts = previous_loops;
                 self.scopes.pop();
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
-                self.mutable_borrows.pop();
-                self.shared_borrows.pop();
-                self.mutable_reference_origins.pop();
+                self.pop_loan_scope();
                 self.lambda_scope_boundaries.pop();
                 let captures = self.lambda_capture_scopes.pop().unwrap_or_default();
                 let borrow_snapshot = self
@@ -743,12 +821,6 @@ impl Checker {
                 }
                 if then_type == ValueType::Unit {
                     return Err(at(*span, "`if` expression branches must produce a value"));
-                }
-                if matches!(then_type, ValueType::MutableReference(_)) {
-                    return Err(at(
-                        *span,
-                        "mutable references cannot escape through `if` expressions",
-                    ));
                 }
                 self.record_reference_join(
                     *span,
@@ -915,48 +987,71 @@ impl Checker {
                 ),
             ));
         }
-        self.reject_overlapping_mutable_reference_arguments(args, &shape.params)?;
-        self.shared_borrows.push(Vec::new());
+        self.reject_known_overlapping_reference_arguments(args, &shape.params)?;
+        self.push_loan_scope();
         let checked_arguments: Result<(), Diagnostic> = (|| {
-            for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
+            let mut origins = Vec::with_capacity(args.len());
+            for (index, (arg, expected)) in args.iter().zip(&shape.params).enumerate() {
                 let previous_shared_borrow_permission = self.allow_shared_borrow;
-                if matches!(expected, ValueType::Reference(_)) {
+                if matches!(*expected, ValueType::Reference(_)) {
                     self.allow_shared_borrow = true;
                 }
-                let checked_argument = self.check_expr_expected(arg, expected);
+                let checked_argument = self.check_expr_expected(arg, *expected);
                 self.allow_shared_borrow = previous_shared_borrow_permission;
                 let actual = checked_argument?;
                 self.expect_type(
                     actual,
-                    expected,
+                    *expected,
                     span_of_expr(arg),
                     &format!("argument {} to function value", index + 1),
                 )?;
-                self.record_argument_shared_borrows(arg, actual)?;
+                let origin = self.reference_origin(arg)?;
+                self.reserve_reference_argument_for_type(arg, *expected, actual, origin.as_ref())?;
+                origins.push(origin);
             }
+            self.reject_overlapping_reference_arguments(args, &shape.params, &origins)?;
             Ok(())
         })();
-        self.shared_borrows.pop();
+        self.pop_loan_scope();
         checked_arguments?;
         Ok(shape.return_type)
     }
 
-    fn record_argument_shared_borrows(
+    fn reserve_reference_argument_for_type(
         &mut self,
         argument: &Expr,
+        expected: ValueType,
         actual: ValueType,
+        origin: Option<&ReferenceProvenance>,
     ) -> Result<(), Diagnostic> {
-        if !matches!(actual, ValueType::Reference(_)) {
-            return Ok(());
-        }
-        let Some(origin) = self.reference_origin(argument) else {
+        let kind = match actual {
+            ValueType::Reference(_) => BorrowKind::Shared,
+            ValueType::MutableReference(_) => BorrowKind::Mutable,
+            _ => return Ok(()),
+        };
+        let mode = match expected {
+            ValueType::MutableReference(_) => AccessMode::Write,
+            _ => AccessMode::Read,
+        };
+        let Some(origin) = origin else {
             return Ok(());
         };
-        for source in &origin.sources {
-            if let ReferenceSource::Borrowed(place) = source {
-                self.record_shared_borrow_place(place.clone(), span_of_expr(argument))?;
-            }
+        self.check_reference_access(origin, &[], mode, span_of_expr(argument))?;
+        // Passing an existing reference by value does not create another
+        // borrow. Only a newly formed borrow or reborrow needs a temporary
+        // reservation while later arguments are evaluated.
+        if !matches!(
+            argument,
+            Expr::Unary {
+                op: UnaryOp::Borrow | UnaryOp::BorrowMut,
+                ..
+            } | Expr::Call { .. }
+                | Expr::If { .. }
+                | Expr::Match { .. }
+        ) {
+            return Ok(());
         }
+        self.reserve_reference_argument(origin, kind);
         Ok(())
     }
 }

@@ -1,3 +1,4 @@
+use super::borrows::ReferencePlaceAccess;
 use super::*;
 
 impl Checker {
@@ -11,9 +12,7 @@ impl Checker {
         let exited_scope = self.scopes.len() - 1;
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
-        self.mutable_borrows.push(Vec::new());
-        self.shared_borrows.push(Vec::new());
-        self.mutable_reference_origins.push(HashMap::new());
+        self.push_loan_scope();
         let mut returns = false;
         for statement in &block.statements {
             if returns {
@@ -60,9 +59,7 @@ impl Checker {
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();
-        self.mutable_borrows.pop();
-        self.shared_borrows.pop();
-        self.mutable_reference_origins.pop();
+        self.pop_loan_scope();
         self.reference_origins
             .retain(|(index, _), _| *index < exited_scope);
         Ok(returns)
@@ -131,7 +128,9 @@ impl Checker {
                         Expr::Unary {
                             op: UnaryOp::BorrowMut,
                             ..
-                        }
+                        } | Expr::Call { .. }
+                            | Expr::If { .. }
+                            | Expr::Match { .. }
                     )
                 {
                     return Err(at(
@@ -144,6 +143,7 @@ impl Checker {
                     value: borrowed,
                     ..
                 } = value
+                    && self.reborrow_parts(borrowed, false)?.is_none()
                 {
                     let Some(source) = Self::direct_local_place_root(borrowed) else {
                         return Err(at(
@@ -187,64 +187,9 @@ impl Checker {
                     _ => "binding initializer".to_owned(),
                 };
                 self.expect_type(value_type, binding_type, span_of_expr(value), &context)?;
-                let mutable_reference_origin = if let Expr::Unary {
-                    op: UnaryOp::BorrowMut,
-                    value: borrowed,
-                    ..
-                } = value
-                {
-                    Some(self.borrow_place(borrowed, span_of_expr(borrowed))?)
-                } else {
-                    None
-                };
-                if let Expr::Unary {
-                    op: UnaryOp::BorrowMut,
-                    value: borrowed,
-                    ..
-                } = value
-                {
-                    let Some(source) = Self::direct_local_place_root(borrowed) else {
-                        return Err(at(
-                            span_of_expr(borrowed),
-                            "mutable borrowing currently requires a named local binding",
-                        ));
-                    };
-                    if self.is_immutable_binding(source) || self.is_loop_variable(source) {
-                        return Err(at(
-                            span_of_expr(borrowed),
-                            "mutable borrowing requires a mutable local binding",
-                        ));
-                    }
-                    if self.is_place_mutably_borrowed(borrowed, span_of_expr(borrowed))? {
-                        return Err(at(
-                            span_of_expr(borrowed),
-                            format!("`{source}` is already mutably borrowed"),
-                        ));
-                    }
-                }
                 let mut bindings = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 self.check_pattern(pattern, binding_type, *span, &mut bindings, &mut seen)?;
-                if matches!(
-                    binding_type,
-                    ValueType::Reference(_) | ValueType::MutableReference(_)
-                ) {
-                    let origin = self
-                        .reference_origin(value)
-                        .unwrap_or_else(ReferenceProvenance::unknown);
-                    for (name, _) in &bindings {
-                        self.reference_origins
-                            .insert((current_scope_index, name.clone()), origin.clone());
-                    }
-                    for source in &origin.sources {
-                        match source {
-                            ReferenceSource::Borrowed(place) => {
-                                self.record_shared_borrow_place(place.clone(), *span)?;
-                            }
-                            ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => {}
-                        }
-                    }
-                }
                 if let Some((name, _)) = bindings
                     .iter()
                     .find(|(name, _)| self.scopes.last().unwrap().contains_key(name))
@@ -254,20 +199,19 @@ impl Checker {
                         format!("`{name}` is already declared in this scope"),
                     ));
                 }
-                if let Expr::Unary {
-                    op,
-                    value: borrowed,
-                    ..
-                } = value
-                {
-                    match op {
-                        UnaryOp::Borrow => {}
-                        UnaryOp::BorrowMut => {
-                            self.record_mutable_borrow(borrowed, span_of_expr(borrowed))?
-                        }
-                        _ => {}
-                    }
-                }
+                let reference_kind = match binding_type {
+                    ValueType::Reference(_) => Some(BorrowKind::Shared),
+                    ValueType::MutableReference(_) => Some(BorrowKind::Mutable),
+                    _ => None,
+                };
+                let bound_origin = reference_kind
+                    .map(|kind| {
+                        let provenance = self
+                            .reference_origin(value)?
+                            .unwrap_or_else(ReferenceProvenance::unknown);
+                        self.bind_reference(provenance, kind, *span)
+                    })
+                    .transpose()?;
                 let immutable_scope = self
                     .immutable_scopes
                     .last_mut()
@@ -277,17 +221,9 @@ impl Checker {
                         .last_mut()
                         .expect("block scope exists")
                         .insert(name.clone(), binding_type);
-                    if matches!(binding_type, ValueType::MutableReference(_)) {
-                        let Some(origin) = mutable_reference_origin.clone() else {
-                            return Err(at(
-                                *span,
-                                "mutable references must be initialized by a new mutable borrow",
-                            ));
-                        };
-                        self.mutable_reference_origins
-                            .last_mut()
-                            .expect("reference-origin scope exists")
-                            .insert(name.clone(), MutableReferenceOrigin::Place(origin));
+                    if let Some(origin) = &bound_origin {
+                        self.reference_origins
+                            .insert((current_scope_index, name.clone()), origin.clone());
                     }
                     if *immutable {
                         immutable_scope.insert(name);
@@ -374,7 +310,28 @@ impl Checker {
                     return Err(at(*span, format!("undefined variable `{root}`")));
                 };
                 self.record_capture_use(root, *span)?;
-                let target_type = self.check_place(target, binding_type)?;
+                let target_type = if through_pointer {
+                    match self.reference_place_access(target, *span)? {
+                        Some(ReferencePlaceAccess::Raw { target_type }) => target_type,
+                        Some(ReferencePlaceAccess::Safe {
+                            target_type,
+                            provenance,
+                            projections,
+                            ..
+                        }) => {
+                            self.check_reference_access(
+                                &provenance,
+                                &projections,
+                                AccessMode::Write,
+                                *span,
+                            )?;
+                            target_type
+                        }
+                        None => self.check_place(target, binding_type)?,
+                    }
+                } else {
+                    self.check_place(target, binding_type)?
+                };
                 if !through_pointer
                     && self.lookup_local(root).is_some()
                     && !self.is_captured_binding(root)
@@ -491,9 +448,7 @@ impl Checker {
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
-                self.mutable_borrows.push(Vec::new());
-                self.shared_borrows.push(Vec::new());
-                self.mutable_reference_origins.push(HashMap::new());
+                self.push_loan_scope();
                 self.loop_contexts.push(LoopContext {
                     value_loop: false,
                     result_type: None,
@@ -504,9 +459,7 @@ impl Checker {
                 self.scopes.pop();
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
-                self.mutable_borrows.pop();
-                self.shared_borrows.pop();
-                self.mutable_reference_origins.pop();
+                self.pop_loan_scope();
                 Ok(false)
             }
             Stmt::ForArray {
@@ -527,9 +480,7 @@ impl Checker {
                     .push(std::collections::HashSet::from([name.clone()]));
                 self.loop_scopes
                     .push(std::collections::HashSet::from([name.clone()]));
-                self.mutable_borrows.push(Vec::new());
-                self.shared_borrows.push(Vec::new());
-                self.mutable_reference_origins.push(HashMap::new());
+                self.push_loan_scope();
                 self.loop_contexts.push(LoopContext {
                     value_loop: false,
                     result_type: None,
@@ -540,9 +491,7 @@ impl Checker {
                 self.scopes.pop();
                 self.immutable_scopes.pop();
                 self.loop_scopes.pop();
-                self.mutable_borrows.pop();
-                self.shared_borrows.pop();
-                self.mutable_reference_origins.pop();
+                self.pop_loan_scope();
                 Ok(false)
             }
             Stmt::Break { value, span } => {
