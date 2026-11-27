@@ -122,10 +122,28 @@ impl Checker {
     ) -> Result<(ValueType, ReferenceProvenance), Diagnostic> {
         self.scopes
             .push(bindings.into_iter().collect::<HashMap<_, _>>());
+        let arm_scope = self.scopes.len() - 1;
         self.immutable_scopes.push(std::collections::HashSet::new());
         self.loop_scopes.push(std::collections::HashSet::new());
         self.push_loan_scope();
         let result = self.check_block_result(&arm.body, arm.span);
+        let result = result.and_then(|(ty, origin)| {
+            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
+                && origin.sources.iter().any(|source| match source {
+                    ReferenceSource::Borrowed { place, .. } => matches!(
+                        place.root,
+                        BorrowRoot::Local { scope_index, .. } if scope_index >= arm_scope
+                    ),
+                    ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
+                })
+            {
+                return Err(at(
+                    arm.span,
+                    "a reference to a pattern binding cannot escape its scope",
+                ));
+            }
+            Ok((ty, origin))
+        });
         self.scopes.pop();
         self.immutable_scopes.pop();
         self.loop_scopes.pop();

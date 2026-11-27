@@ -681,6 +681,8 @@ impl Checker {
         self.immutable_scopes.clear();
         self.loans.clear();
         self.next_loan_id = 0;
+        self.current_callable_id = self.next_callable_id;
+        self.next_callable_id += 1;
         self.reference_origins.clear();
         self.loop_scopes.clear();
         self.loop_contexts.clear();

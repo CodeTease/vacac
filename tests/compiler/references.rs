@@ -400,17 +400,41 @@ fn mutable_reborrows_nest_and_keep_parent_loans_lexical() {
         fn main() -> i64 {
             let first = 0;
             let second = 0;
-            const first_ref: &mut i64 = &mut first;
-            const second_ref: &mut i64 = &mut second;
-            const selected = if true {
-                const child: &mut i64 = &mut *first_ref;
-                child
+            if true {
+                const first_ref: &mut i64 = &mut first;
+                const second_ref: &mut i64 = &mut second;
+                const selected = if false {
+                    const child: &mut i64 = &mut *first_ref;
+                    child
+                } else {
+                    const child: &mut i64 = &mut *second_ref;
+                    child
+                };
+                *selected = 42;
+                0
             } else {
-                const child: &mut i64 = &mut *second_ref;
-                child
+                0
             };
-            *selected = 42;
-            *selected - 42
+            if first != 0 { return 1; }
+            if second != 42 { return 2; }
+            if true {
+                const first_ref: &mut i64 = &mut first;
+                const second_ref: &mut i64 = &mut second;
+                const selected = if true {
+                    const child: &mut i64 = &mut *first_ref;
+                    child
+                } else {
+                    const child: &mut i64 = &mut *second_ref;
+                    child
+                };
+                *selected = 12;
+                0
+            } else {
+                0
+            };
+            if first != 12 { return 3; }
+            if second != 42 { return 4; }
+            first + second - 54
         }
         "#,
         "references-mutable-reborrow-branch-join",
@@ -482,10 +506,24 @@ fn named_lifetimes_allow_mutable_reference_returns() {
                 const second_ref: &mut i64 = &mut second;
                 const selected = select(false, first_ref, second_ref);
                 *selected = 42;
-                *selected - 42
+                0
             } else {
                 0
-            }
+            };
+            if first != 0 { return 1; }
+            if second != 42 { return 2; }
+            if true {
+                const first_ref: &mut i64 = &mut first;
+                const second_ref: &mut i64 = &mut second;
+                const selected = select(true, first_ref, second_ref);
+                *selected = 12;
+                0
+            } else {
+                0
+            };
+            if first != 12 { return 3; }
+            if second != 42 { return 4; }
+            first + second - 54
         }
         "#,
         "references-mutable-named-lifetime-match",
@@ -570,6 +608,242 @@ fn mutable_reborrow_and_return_loans_cover_call_arguments() {
         "fn identity<'a>(value: &'a mut i64) -> &'a mut i64 { value } fn main() -> i64 { let value = 0; const parent: &mut i64 = &mut value; const child = identity(parent); *parent = 1; *child }",
         "references-call-return-parent-write",
         "cannot access `value` while it is mutably borrowed",
+    );
+}
+
+#[test]
+fn borrow_overlap_distinguishes_parameter_roots_and_known_places() {
+    let result = compile_and_run(
+        r#"
+        struct Pair { left: i64, right: i64 }
+        fn take(first: &mut i64, second: &mut i64) -> unit {
+            *first = 1;
+            *second = 2;
+        }
+        fn nested(pair: &mut Pair) -> i64 {
+            if true {
+                const left: &mut i64 = &mut (*pair).left;
+                const right: &mut i64 = &mut (*pair).right;
+                take(left, right);
+                0
+            } else { 0 };
+            (*pair).left + (*pair).right - 3
+        }
+        fn main() -> i64 {
+            let pair = Pair { left: 0, right: 0 };
+            if true {
+                const reference: &mut Pair = &mut pair;
+                nested(reference)
+            } else { 0 }
+        }
+        "#,
+        "references-parameter-disjoint-fields",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        fn take(first: &mut i64, second: &mut i64) -> unit {
+            *first = 1;
+            *second = 2;
+        }
+        fn nested(parameter: &mut i64) -> i64 {
+            let local = 0;
+            if true {
+                const reference: &mut i64 = &mut local;
+                take(parameter, reference);
+                0
+            } else { 0 };
+            local - 2
+        }
+        fn main() -> i64 {
+            let value = 0;
+            if true {
+                const reference: &mut i64 = &mut value;
+                nested(reference)
+            } else { 0 }
+        }
+        "#,
+        "references-parameter-and-local-disjoint",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        fn outer(value: &mut i64) -> i64 {
+            let identity: fn(&mut i64) -> i64 = fn(param: &mut i64) -> i64 { *param };
+            identity(value)
+        }
+        fn main() -> i64 {
+            let value = 42;
+            if true {
+                const reference: &mut i64 = &mut value;
+                outer(reference) - 42
+            } else { 0 }
+        }
+        "#,
+        "references-parameter-callable-identity",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        fn pick(condition: bool, parent: &mut i64) -> i64 {
+            const selected = if condition {
+                const child: &mut i64 = &mut *parent;
+                child
+            } else {
+                const child: &mut i64 = &mut *parent;
+                child
+            };
+            *selected = 42;
+            *selected - 42
+        }
+        fn main() -> i64 {
+            let value = 0;
+            if true {
+                const reference: &mut i64 = &mut value;
+                pick(true, reference)
+            } else { 0 }
+        }
+        "#,
+        "references-alternative-origins-share-one-binding-loan",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        fn read(value: &i64) -> i64 { *value }
+        fn main() -> i64 {
+            let value = 42;
+            const parent: &mut i64 = &mut value;
+            const child: &i64 = &*parent;
+            read(child) - 42
+        }
+        "#,
+        "references-by-value-child-reference",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        r#"
+        struct Pair { left: i64, right: i64 }
+        fn take(first: &mut i64, second: &mut i64) -> unit { *first = 1; *second = 2; }
+        fn nested(pair: &mut Pair) -> i64 {
+            if true {
+                const left: &mut i64 = &mut (*pair).left;
+                const other: &mut i64 = &mut (*pair).left;
+                take(left, other);
+                0
+            } else { 0 }
+        }
+        fn main() -> i64 { 0 }
+        "#,
+        "references-parameter-duplicate-field",
+        "`reference parameter` is already mutably borrowed",
+    );
+    assert_compile_error(
+        r#"
+        fn set(value: &mut i64) -> unit { *value = 1; }
+        fn main() -> i64 {
+            let value = 0;
+            const parent: &mut i64 = &mut value;
+            const shared: &i64 = &*parent;
+            set(parent);
+            0
+        }
+        "#,
+        "references-by-value-mutable-argument-blocks-shared",
+        "cannot modify `value` while it is borrowed",
+    );
+}
+
+#[test]
+fn reborrow_index_selectors_require_i64_and_dynamic_indices_stay_usable() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let values = [10, 20];
+            const reference: &[i64; 2] = &values;
+            let index = 1;
+            (*reference)[index] - 20
+        }
+        "#,
+        "references-dynamic-reborrow-index",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    for (source, name) in [
+        (
+            "fn main() -> i64 { let values = [10, 20]; const reference: &[i64; 2] = &values; (*reference)[true] }",
+            "references-direct-reborrow-index-type",
+        ),
+        (
+            "fn main() -> i64 { let values = [[10, 20], [30, 40]]; const reference: &[[i64; 2]; 2] = &values; (*reference)[0][true] }",
+            "references-nested-reborrow-index-type",
+        ),
+        (
+            "fn main() -> i64 { let values = [10, 20]; const reference: &mut [i64; 2] = &mut values; const selected: &mut i64 = &mut (*reference)[true]; 0 }",
+            "references-borrowed-reborrow-index-type",
+        ),
+    ] {
+        assert_compile_error(source, name, "array index has type bool, expected i64");
+    }
+}
+
+#[test]
+fn scalar_block_results_can_dereference_local_references() {
+    let result = compile_and_run(
+        r#"
+        fn main() -> i64 {
+            let result = if true {
+                let local = 42;
+                const reference: &i64 = &local;
+                *reference
+            } else {
+                0
+            };
+            result - 42
+        }
+        "#,
+        "references-branch-local-scalar-deref",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    let result = compile_and_run(
+        r#"
+        enum Number { One(i64) }
+        fn main() -> i64 {
+            let result = match Number::One(42) {
+                Number::One(value) => {
+                    const reference: &i64 = &value;
+                    *reference
+                },
+            };
+            result - 42
+        }
+        "#,
+        "references-match-binding-scalar-deref",
+    );
+    assert_eq!(result.status.code(), Some(0));
+
+    assert_compile_error(
+        r#"
+        fn main() -> i64 {
+            let other = 0;
+            const selected = if true {
+                let local = 42;
+                const reference: &i64 = &local;
+                reference
+            } else {
+                const reference: &i64 = &other;
+                reference
+            };
+            *selected - 42
+        }
+        "#,
+        "references-branch-local-reference-escape",
+        "a reference to a block-local binding cannot escape its scope",
     );
 }
 

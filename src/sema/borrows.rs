@@ -1,5 +1,17 @@
 use super::*;
 
+pub(super) enum ReferencePlaceAccess {
+    Raw {
+        target_type: ValueType,
+    },
+    Safe {
+        target_type: ValueType,
+        provenance: ReferenceProvenance,
+        projections: Vec<BorrowProjection>,
+        kind: BorrowKind,
+    },
+}
+
 impl Checker {
     pub(super) fn push_loan_scope(&mut self) {
         self.loans.push(Vec::new());
@@ -25,8 +37,9 @@ impl Checker {
         lifetime: Option<String>,
         kind: BorrowKind,
     ) -> ReferenceProvenance {
-        let id = self.next_loan(BorrowPlace::parameter(index), kind);
-        ReferenceProvenance::parameter(index, lifetime, id)
+        let callable = self.current_callable_id;
+        let id = self.next_loan(BorrowPlace::parameter(callable, index), kind);
+        ReferenceProvenance::parameter(index, lifetime, id, callable)
     }
 
     /// Retain a new reference value. Every possible origin gains one child loan,
@@ -43,6 +56,8 @@ impl Checker {
                 "cannot establish the origin of this mutable reference",
             ));
         }
+        let loan_id = self.next_loan_id;
+        self.next_loan_id += 1;
         for source in &mut provenance.sources {
             let Some(place) = source.place().cloned() else {
                 continue;
@@ -50,7 +65,15 @@ impl Checker {
             let Some(loans) = source.loans_mut() else {
                 continue;
             };
-            loans.push(self.next_loan(place, kind));
+            loans.push(loan_id);
+            self.loans
+                .last_mut()
+                .expect("loan scope exists")
+                .push(ActiveLoan {
+                    id: loan_id,
+                    place,
+                    kind,
+                });
             source.as_derived();
         }
         Ok(provenance)
@@ -141,44 +164,94 @@ impl Checker {
 
     /// Return the reference expression at the base of a place path and the
     /// projections applied to its pointee, e.g. `(*r).left[0]`.
-    pub(super) fn reborrow_parts(expr: &Expr) -> Option<(&Expr, Vec<BorrowProjection>)> {
+    pub(super) fn reborrow_parts<'a>(
+        &mut self,
+        expr: &'a Expr,
+    ) -> Result<Option<(&'a Expr, Vec<BorrowProjection>)>, Diagnostic> {
         fn collect<'a>(
+            checker: &mut Checker,
             expr: &'a Expr,
             projections: &mut Vec<BorrowProjection>,
-        ) -> Option<&'a Expr> {
+        ) -> Result<Option<&'a Expr>, Diagnostic> {
             match expr {
                 Expr::Unary {
                     op: UnaryOp::Dereference,
                     value,
                     ..
-                } => Some(value),
+                } => Ok(Some(value)),
                 Expr::Field { value, name, .. } => {
-                    let reference = collect(value, projections)?;
+                    let Some(reference) = collect(checker, value, projections)? else {
+                        return Ok(None);
+                    };
                     projections.push(BorrowProjection::Field(name.clone()));
-                    Some(reference)
+                    Ok(Some(reference))
                 }
                 Expr::Index { array, index, .. } => {
-                    let reference = collect(array, projections)?;
+                    let Some(reference) = collect(checker, array, projections)? else {
+                        return Ok(None);
+                    };
+                    let index_type = checker.check_expr(index, false)?;
+                    checker.expect_type(
+                        index_type,
+                        ValueType::I64,
+                        span_of_expr(index),
+                        "array index",
+                    )?;
                     projections.push(BorrowProjection::Index(constant_i64(index)));
-                    Some(reference)
+                    Ok(Some(reference))
                 }
-                _ => None,
+                _ => Ok(None),
             }
         }
 
         let mut projections = Vec::new();
-        let reference = collect(expr, &mut projections)?;
-        Some((reference, projections))
+        let reference = collect(self, expr, &mut projections)?;
+        Ok(reference.map(|reference| (reference, projections)))
     }
 
-    pub(super) fn reference_place_is_raw(&mut self, expr: &Expr) -> Result<bool, Diagnostic> {
-        let Some((reference, _)) = Self::reborrow_parts(expr) else {
-            return Ok(false);
+    pub(super) fn reference_place_access(
+        &mut self,
+        expr: &Expr,
+        span: Span,
+    ) -> Result<Option<ReferencePlaceAccess>, Diagnostic> {
+        let Some((reference, projections)) = self.reborrow_parts(expr)? else {
+            return Ok(None);
         };
-        Ok(matches!(
-            self.check_expr(reference, false)?,
-            ValueType::RawPointer(_)
-        ))
+        let reference_type = self.check_expr(reference, false)?;
+        let (target, provenance, kind) = match reference_type {
+            ValueType::Reference(index) => {
+                let target = self.reference_types[index];
+                let provenance = self
+                    .reference_origin(reference)?
+                    .ok_or_else(|| at(span, "cannot establish the origin of this reference"))?;
+                (target, provenance, BorrowKind::Shared)
+            }
+            ValueType::MutableReference(index) => {
+                let target = self.mutable_reference_types[index];
+                let provenance = self
+                    .reference_origin(reference)?
+                    .ok_or_else(|| at(span, "cannot establish the origin of this reference"))?;
+                (target, provenance, BorrowKind::Mutable)
+            }
+            ValueType::RawPointer(index) => {
+                let target = self.raw_pointer_types[index].0;
+                let target_type = self.project_place_type(target, &projections, span)?;
+                return Ok(Some(ReferencePlaceAccess::Raw { target_type }));
+            }
+            other => {
+                return Err(at(
+                    span,
+                    format!("cannot dereference {}", self.type_name(other)),
+                ));
+            }
+        };
+        let target_type = self.project_place_type(target, &projections, span)?;
+        Ok(Some(ReferencePlaceAccess::Safe {
+            target_type,
+            provenance,
+            projections,
+            kind,
+        }))
     }
 
     pub(super) fn reference_access_type(
@@ -194,40 +267,19 @@ impl Checker {
         )>,
         Diagnostic,
     > {
-        let Some((reference, projections)) = Self::reborrow_parts(expr) else {
-            return Ok(None);
-        };
-        let reference_type = self.check_expr(reference, false)?;
-        let (target, provenance, kind) = match reference_type {
-            ValueType::Reference(index) => {
-                let target = self.reference_types[index];
-                let provenance = self
-                    .reference_origin(reference)
-                    .ok_or_else(|| at(span, "cannot establish the origin of this reference"))?;
-                (target, provenance, BorrowKind::Shared)
-            }
-            ValueType::MutableReference(index) => {
-                let target = self.mutable_reference_types[index];
-                let provenance = self
-                    .reference_origin(reference)
-                    .ok_or_else(|| at(span, "cannot establish the origin of this reference"))?;
-                (target, provenance, BorrowKind::Mutable)
-            }
-            ValueType::RawPointer(_) => {
-                return Err(at(
-                    span,
-                    "safe references cannot be formed through raw pointers",
-                ));
-            }
-            other => {
-                return Err(at(
-                    span,
-                    format!("cannot dereference {}", self.type_name(other)),
-                ));
-            }
-        };
-        let placed_type = self.project_place_type(target, &projections, span)?;
-        Ok(Some((placed_type, provenance, projections, kind)))
+        match self.reference_place_access(expr, span)? {
+            Some(ReferencePlaceAccess::Safe {
+                target_type,
+                provenance,
+                projections,
+                kind,
+            }) => Ok(Some((target_type, provenance, projections, kind))),
+            Some(ReferencePlaceAccess::Raw { .. }) => Err(at(
+                span,
+                "safe references cannot be formed through raw pointers",
+            )),
+            None => Ok(None),
+        }
     }
 
     pub(super) fn project_place_type(
@@ -281,16 +333,8 @@ impl Checker {
         }
         for left_source in &left.sources {
             for right_source in &right.sources {
-                match (left_source, right_source) {
-                    (
-                        ReferenceSource::Parameter { index: left, .. },
-                        ReferenceSource::Parameter { index: right, .. },
-                    ) if left == right => return true,
-                    (ReferenceSource::Parameter { .. }, ReferenceSource::Parameter { .. }) => {}
-                    (
-                        ReferenceSource::Borrowed { place: left, .. },
-                        ReferenceSource::Borrowed { place: right, .. },
-                    ) => {
+                match (left_source.place(), right_source.place()) {
+                    (Some(left), Some(right)) => {
                         if left.overlaps(right) {
                             return true;
                         }
@@ -302,15 +346,16 @@ impl Checker {
         false
     }
 
-    pub(super) fn reject_overlapping_reference_arguments(
-        &self,
+    fn reject_overlapping_reference_arguments_with(
+        &mut self,
         args: &[Expr],
         params: &[ValueType],
+        conservative: bool,
     ) -> Result<(), Diagnostic> {
         let origins = args
             .iter()
             .map(|argument| self.reference_origin(argument))
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         for later in 0..args.len() {
             let later_expected = params.get(later).copied();
             let later_mutable = matches!(later_expected, Some(ValueType::MutableReference(_)));
@@ -333,8 +378,13 @@ impl Checker {
                     continue;
                 }
                 let overlaps = match (&origins[earlier], &origins[later]) {
-                    (Some(earlier), Some(later)) => Self::provenance_may_overlap(earlier, later),
-                    _ => true,
+                    (Some(earlier), Some(later))
+                        if conservative || !(earlier.is_unknown() || later.is_unknown()) =>
+                    {
+                        Self::provenance_may_overlap(earlier, later)
+                    }
+                    (Some(_), Some(_)) => false,
+                    _ => conservative,
                 };
                 if overlaps {
                     return Err(at(
@@ -345,6 +395,22 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    pub(super) fn reject_known_overlapping_reference_arguments(
+        &mut self,
+        args: &[Expr],
+        params: &[ValueType],
+    ) -> Result<(), Diagnostic> {
+        self.reject_overlapping_reference_arguments_with(args, params, false)
+    }
+
+    pub(super) fn reject_overlapping_reference_arguments(
+        &mut self,
+        args: &[Expr],
+        params: &[ValueType],
+    ) -> Result<(), Diagnostic> {
+        self.reject_overlapping_reference_arguments_with(args, params, true)
     }
 }
 

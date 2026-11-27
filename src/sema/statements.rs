@@ -1,3 +1,4 @@
+use super::borrows::ReferencePlaceAccess;
 use super::*;
 
 impl Checker {
@@ -142,7 +143,7 @@ impl Checker {
                     value: borrowed,
                     ..
                 } = value
-                    && Self::reborrow_parts(borrowed).is_none()
+                    && self.reborrow_parts(borrowed)?.is_none()
                 {
                     let Some(source) = Self::direct_local_place_root(borrowed) else {
                         return Err(at(
@@ -206,7 +207,7 @@ impl Checker {
                 let bound_origin = reference_kind
                     .map(|kind| {
                         let provenance = self
-                            .reference_origin(value)
+                            .reference_origin(value)?
                             .unwrap_or_else(ReferenceProvenance::unknown);
                         self.bind_reference(provenance, kind, *span)
                     })
@@ -309,20 +310,28 @@ impl Checker {
                     return Err(at(*span, format!("undefined variable `{root}`")));
                 };
                 self.record_capture_use(root, *span)?;
-                let target_type = self.check_place(target, binding_type)?;
-                if through_pointer
-                    && let Some((reference, _)) = Self::reborrow_parts(target)
-                    && !matches!(self.check_expr(reference, false)?, ValueType::RawPointer(_))
-                    && let Some((_, provenance, projections, _)) =
-                        self.reference_access_type(target, *span)?
-                {
-                    self.check_reference_access(
-                        &provenance,
-                        &projections,
-                        AccessMode::Write,
-                        *span,
-                    )?;
-                }
+                let target_type = if through_pointer {
+                    match self.reference_place_access(target, *span)? {
+                        Some(ReferencePlaceAccess::Raw { target_type }) => target_type,
+                        Some(ReferencePlaceAccess::Safe {
+                            target_type,
+                            provenance,
+                            projections,
+                            ..
+                        }) => {
+                            self.check_reference_access(
+                                &provenance,
+                                &projections,
+                                AccessMode::Write,
+                                *span,
+                            )?;
+                            target_type
+                        }
+                        None => self.check_place(target, binding_type)?,
+                    }
+                } else {
+                    self.check_place(target, binding_type)?
+                };
                 if !through_pointer
                     && self.lookup_local(root).is_some()
                     && !self.is_captured_binding(root)

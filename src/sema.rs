@@ -133,12 +133,12 @@ impl ReferenceSource {
 }
 
 impl ReferenceProvenance {
-    fn parameter(index: usize, lifetime: Option<String>, loan_id: usize) -> Self {
+    fn parameter(index: usize, lifetime: Option<String>, loan_id: usize, callable: usize) -> Self {
         Self {
             sources: vec![ReferenceSource::Parameter {
                 index,
                 lifetime,
-                place: BorrowPlace::parameter(index),
+                place: BorrowPlace::parameter(callable, index),
                 loans: vec![loan_id],
             }],
         }
@@ -204,7 +204,7 @@ struct BorrowPlace {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BorrowRoot {
     Local { scope_index: usize, name: String },
-    Parameter { index: usize },
+    Parameter { callable: usize, index: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,9 +214,9 @@ enum BorrowProjection {
 }
 
 impl BorrowPlace {
-    fn parameter(index: usize) -> Self {
+    fn parameter(callable: usize, index: usize) -> Self {
         Self {
-            root: BorrowRoot::Parameter { index },
+            root: BorrowRoot::Parameter { callable, index },
             projections: Vec::new(),
         }
     }
@@ -276,6 +276,8 @@ struct Checker {
     immutable_scopes: Vec<std::collections::HashSet<String>>,
     loans: Vec<Vec<ActiveLoan>>,
     next_loan_id: usize,
+    current_callable_id: usize,
+    next_callable_id: usize,
     reference_origins: HashMap<(usize, String), ReferenceProvenance>,
     expression_reference_origins: HashMap<(Option<usize>, usize, usize), ReferenceProvenance>,
     loop_scopes: Vec<std::collections::HashSet<String>>,
@@ -327,6 +329,8 @@ pub fn check(program: &mut Program) -> Result<(), Diagnostic> {
         immutable_scopes: Vec::new(),
         loans: Vec::new(),
         next_loan_id: 0,
+        current_callable_id: 0,
+        next_callable_id: 0,
         reference_origins: HashMap::new(),
         expression_reference_origins: HashMap::new(),
         loop_scopes: Vec::new(),

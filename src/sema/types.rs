@@ -34,71 +34,88 @@ impl Checker {
         Ok(())
     }
 
-    pub(super) fn reference_origin(&self, expr: &Expr) -> Option<ReferenceProvenance> {
+    pub(super) fn reference_origin(
+        &mut self,
+        expr: &Expr,
+    ) -> Result<Option<ReferenceProvenance>, Diagnostic> {
         match expr {
-            Expr::Variable(name, _) => self
-                .lookup_local_with_scope(name)
-                .and_then(|(scope, _)| self.reference_origins.get(&(scope, name.clone())).cloned()),
+            Expr::Variable(name, _) => {
+                Ok(self.lookup_local_with_scope(name).and_then(|(scope, _)| {
+                    self.reference_origins.get(&(scope, name.clone())).cloned()
+                }))
+            }
             Expr::Unary {
                 op: UnaryOp::Borrow | UnaryOp::BorrowMut,
                 value,
                 ..
             } => {
-                if let Some((reference, projections)) = Self::reborrow_parts(value) {
-                    let mut origin = self.reference_origin(reference)?;
+                if let Some((reference, projections)) = self.reborrow_parts(value)? {
+                    let Some(mut origin) = self.reference_origin(reference)? else {
+                        return Ok(None);
+                    };
                     origin.map_places(|place| place.projections.extend(projections.clone()));
-                    return Some(origin.into_derived());
+                    return Ok(Some(origin.into_derived()));
                 }
-                self.borrow_place(value, span_of_expr(value))
+                Ok(self
+                    .borrow_place(value, span_of_expr(value))
                     .ok()
                     .map(ReferenceProvenance::borrowed)
-                    .or_else(|| Some(ReferenceProvenance::unknown()))
+                    .or_else(|| Some(ReferenceProvenance::unknown())))
             }
             Expr::Call { name, args, .. } => {
-                let name = self.find_function_name(name)?;
-                let signature = self.signatures.get(&name)?;
-                signature.return_lifetime.as_ref()?;
+                let Some(name) = self.find_function_name(name) else {
+                    return Ok(None);
+                };
+                let Some(signature) = self.signatures.get(&name) else {
+                    return Ok(None);
+                };
+                if signature.return_lifetime.is_none() {
+                    return Ok(None);
+                }
+                let return_parameter_indices = signature.return_parameter_indices.clone();
                 let mut origin: Option<ReferenceProvenance> = None;
-                for argument_index in &signature.return_parameter_indices {
-                    let argument_origin = args
-                        .get(*argument_index)
-                        .and_then(|argument| self.reference_origin(argument))
-                        .unwrap_or_else(ReferenceProvenance::unknown);
+                for argument_index in &return_parameter_indices {
+                    let argument_origin = match args.get(*argument_index) {
+                        Some(argument) => self
+                            .reference_origin(argument)?
+                            .unwrap_or_else(ReferenceProvenance::unknown),
+                        None => ReferenceProvenance::unknown(),
+                    };
                     if let Some(origin) = &mut origin {
                         origin.extend(argument_origin);
                     } else {
                         origin = Some(argument_origin);
                     }
                 }
-                origin
+                Ok(origin
                     .map(ReferenceProvenance::into_derived)
-                    .or_else(|| Some(ReferenceProvenance::unknown()))
+                    .or_else(|| Some(ReferenceProvenance::unknown())))
             }
-            Expr::If { span, .. } | Expr::Match { span, .. } => self
+            Expr::If { span, .. } | Expr::Match { span, .. } => Ok(self
                 .expression_reference_origins
                 .get(&(span.file, span.line, span.column))
-                .cloned(),
+                .cloned()),
             Expr::Unary {
                 op: UnaryOp::Dereference,
                 value,
                 ..
             } => self.reference_origin(value),
-            _ => None,
+            _ => Ok(None),
         }
     }
 
     pub(super) fn validate_return_provenance(
-        &self,
+        &mut self,
         expr: &Expr,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let expected = self.return_lifetime.as_ref().ok_or_else(|| {
+        let expected = self.return_lifetime.clone().ok_or_else(|| {
             at(
                 span,
                 "functions cannot return references without a named lifetime",
             )
         })?;
-        let Some(origin) = self.reference_origin(expr) else {
+        let Some(origin) = self.reference_origin(expr)? else {
             return Err(at(
                 span,
                 "cannot return a reference that does not originate from a parameter with the declared lifetime",
@@ -143,7 +160,7 @@ impl Checker {
             ));
         }
         match parameter_lifetimes.first().copied().flatten() {
-            Some(actual) if actual == expected => {}
+            Some(actual) if actual == expected.as_str() => {}
             Some(actual) => {
                 return Err(at(
                     span,
@@ -709,17 +726,19 @@ impl Checker {
             };
             let ty = self.check_expr(tail, false)?;
             let origin = self
-                .reference_origin(tail)
+                .reference_origin(tail)?
                 .unwrap_or_else(ReferenceProvenance::unknown);
-            if origin.sources.iter().any(|source| match source {
-                ReferenceSource::Borrowed { place, .. } => {
-                    matches!(
-                        place.root,
-                        BorrowRoot::Local { scope_index, .. } if scope_index == exited_scope
-                    )
-                }
-                ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
-            }) {
+            if matches!(ty, ValueType::Reference(_) | ValueType::MutableReference(_))
+                && origin.sources.iter().any(|source| match source {
+                    ReferenceSource::Borrowed { place, .. } => {
+                        matches!(
+                            place.root,
+                            BorrowRoot::Local { scope_index, .. } if scope_index == exited_scope
+                        )
+                    }
+                    ReferenceSource::Parameter { .. } | ReferenceSource::Unknown => false,
+                })
+            {
                 return Err(at(
                     span_of_expr(tail),
                     "a reference to a block-local binding cannot escape its scope",

@@ -1,3 +1,4 @@
+use super::borrows::ReferencePlaceAccess;
 use super::*;
 
 impl Checker {
@@ -128,24 +129,25 @@ impl Checker {
                 }
             }
             Expr::Index { array, index, span } => {
-                if !self.reference_place_is_raw(expr)?
-                    && let Some((place_type, provenance, projections, _)) =
-                        self.reference_access_type(expr, *span)?
-                {
-                    self.check_reference_access(
-                        &provenance,
-                        &projections,
-                        AccessMode::Read,
-                        *span,
-                    )?;
-                    let index_type = self.check_expr(index, false)?;
-                    self.expect_type(
-                        index_type,
-                        ValueType::I64,
-                        span_of_expr(index),
-                        "array index",
-                    )?;
-                    return Ok(place_type);
+                match self.reference_place_access(expr, *span)? {
+                    Some(ReferencePlaceAccess::Safe {
+                        target_type,
+                        provenance,
+                        projections,
+                        ..
+                    }) => {
+                        self.check_reference_access(
+                            &provenance,
+                            &projections,
+                            AccessMode::Read,
+                            *span,
+                        )?;
+                        return Ok(target_type);
+                    }
+                    Some(ReferencePlaceAccess::Raw { target_type }) => {
+                        return Ok(target_type);
+                    }
+                    None => {}
                 }
                 if let Some(place_type) = self.check_local_place_read(expr)? {
                     return Ok(place_type);
@@ -169,17 +171,25 @@ impl Checker {
                 }
             }
             Expr::Field { value, name, span } => {
-                if !self.reference_place_is_raw(expr)?
-                    && let Some((place_type, provenance, projections, _)) =
-                        self.reference_access_type(expr, *span)?
-                {
-                    self.check_reference_access(
-                        &provenance,
-                        &projections,
-                        AccessMode::Read,
-                        *span,
-                    )?;
-                    return Ok(place_type);
+                match self.reference_place_access(expr, *span)? {
+                    Some(ReferencePlaceAccess::Safe {
+                        target_type,
+                        provenance,
+                        projections,
+                        ..
+                    }) => {
+                        self.check_reference_access(
+                            &provenance,
+                            &projections,
+                            AccessMode::Read,
+                            *span,
+                        )?;
+                        return Ok(target_type);
+                    }
+                    Some(ReferencePlaceAccess::Raw { target_type }) => {
+                        return Ok(target_type);
+                    }
+                    None => {}
                 }
                 if let Some(value_type) = self.check_local_place_read(expr)? {
                     return Ok(value_type);
@@ -436,7 +446,7 @@ impl Checker {
                             ));
                         }
                     };
-                    let provenance = self.reference_origin(value).ok_or_else(|| {
+                    let provenance = self.reference_origin(value)?.ok_or_else(|| {
                         at(*span, "cannot establish the origin of this reference")
                     })?;
                     self.check_reference_access(&provenance, &[], AccessMode::Read, *span)?;
@@ -639,10 +649,10 @@ impl Checker {
                 }
                 let params = signature.params.clone();
                 let return_type = signature.return_type;
-                self.reject_overlapping_reference_arguments(args, &params)?;
+                self.reject_known_overlapping_reference_arguments(args, &params)?;
                 self.push_loan_scope();
                 let checked_arguments: Result<(), Diagnostic> = (|| {
-                    for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
+                    for (index, (arg, expected)) in args.iter().zip(&params).enumerate() {
                         if let Expr::Unary {
                             op: UnaryOp::BorrowMut,
                             value,
@@ -657,20 +667,21 @@ impl Checker {
                             ));
                         }
                         let previous_shared_borrow_permission = self.allow_shared_borrow;
-                        if matches!(expected, ValueType::Reference(_)) {
+                        if matches!(*expected, ValueType::Reference(_)) {
                             self.allow_shared_borrow = true;
                         }
-                        let checked_argument = self.check_expr_expected(arg, expected);
+                        let checked_argument = self.check_expr_expected(arg, *expected);
                         self.allow_shared_borrow = previous_shared_borrow_permission;
                         let actual = checked_argument?;
                         self.expect_type(
                             actual,
-                            expected,
+                            *expected,
                             span_of_expr(arg),
                             &format!("argument {} to `{name}`", index + 1),
                         )?;
-                        self.reserve_reference_argument_for_type(arg, actual)?;
+                        self.reserve_reference_argument_for_type(arg, *expected, actual)?;
                     }
+                    self.reject_overlapping_reference_arguments(args, &params)?;
                     Ok(())
                 })();
                 self.pop_loan_scope();
@@ -722,6 +733,9 @@ impl Checker {
                 self.immutable_scopes.push(std::collections::HashSet::new());
                 self.loop_scopes.push(std::collections::HashSet::new());
                 self.push_loan_scope();
+                let previous_callable_id = self.current_callable_id;
+                self.current_callable_id = self.next_callable_id;
+                self.next_callable_id += 1;
                 for (index, (param, ty)) in params.iter().zip(param_types.iter()).enumerate() {
                     self.scopes
                         .last_mut()
@@ -745,6 +759,7 @@ impl Checker {
                 let previous_loops = std::mem::take(&mut self.loop_contexts);
                 self.current_return_type = return_type;
                 let checked = self.check_block(body, return_type, true);
+                self.current_callable_id = previous_callable_id;
                 self.current_return_type = previous_return_type;
                 self.loop_contexts = previous_loops;
                 self.scopes.pop();
@@ -964,25 +979,26 @@ impl Checker {
                 ),
             ));
         }
-        self.reject_overlapping_reference_arguments(args, &shape.params)?;
+        self.reject_known_overlapping_reference_arguments(args, &shape.params)?;
         self.push_loan_scope();
         let checked_arguments: Result<(), Diagnostic> = (|| {
-            for (index, (arg, expected)) in args.iter().zip(shape.params).enumerate() {
+            for (index, (arg, expected)) in args.iter().zip(&shape.params).enumerate() {
                 let previous_shared_borrow_permission = self.allow_shared_borrow;
-                if matches!(expected, ValueType::Reference(_)) {
+                if matches!(*expected, ValueType::Reference(_)) {
                     self.allow_shared_borrow = true;
                 }
-                let checked_argument = self.check_expr_expected(arg, expected);
+                let checked_argument = self.check_expr_expected(arg, *expected);
                 self.allow_shared_borrow = previous_shared_borrow_permission;
                 let actual = checked_argument?;
                 self.expect_type(
                     actual,
-                    expected,
+                    *expected,
                     span_of_expr(arg),
                     &format!("argument {} to function value", index + 1),
                 )?;
-                self.reserve_reference_argument_for_type(arg, actual)?;
+                self.reserve_reference_argument_for_type(arg, *expected, actual)?;
             }
+            self.reject_overlapping_reference_arguments(args, &shape.params)?;
             Ok(())
         })();
         self.pop_loan_scope();
@@ -993,6 +1009,7 @@ impl Checker {
     fn reserve_reference_argument_for_type(
         &mut self,
         argument: &Expr,
+        expected: ValueType,
         actual: ValueType,
     ) -> Result<(), Diagnostic> {
         let kind = match actual {
@@ -1000,6 +1017,14 @@ impl Checker {
             ValueType::MutableReference(_) => BorrowKind::Mutable,
             _ => return Ok(()),
         };
+        let mode = match expected {
+            ValueType::MutableReference(_) => AccessMode::Write,
+            _ => AccessMode::Read,
+        };
+        let Some(origin) = self.reference_origin(argument)? else {
+            return Ok(());
+        };
+        self.check_reference_access(&origin, &[], mode, span_of_expr(argument))?;
         // Passing an existing reference by value does not create another
         // borrow. Only a newly formed borrow or reborrow needs a temporary
         // reservation while later arguments are evaluated.
@@ -1014,9 +1039,6 @@ impl Checker {
         ) {
             return Ok(());
         }
-        let Some(origin) = self.reference_origin(argument) else {
-            return Ok(());
-        };
         self.reserve_reference_argument(&origin, kind);
         Ok(())
     }
