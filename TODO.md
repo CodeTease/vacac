@@ -56,4 +56,4 @@
 
 * [ ] Consider a package manager and reusable library distribution once the standard library and module system mature.
 * [ ] Consider a self-hosting compiler written in Vaca, although this is not strictly necessary.
-* [ ] A Linter and a formatter.
+* [ ] Consider a linter and a formatter.
