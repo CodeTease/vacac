@@ -213,6 +213,20 @@ impl Parser {
                 self.consume(&TokenKind::Less, "`<` after `null::`")?;
                 let ty = self.parse_type()?;
                 self.consume_type_greater()?;
+                if self.type_close_debt > 0 {
+                    self.type_close_debt = 0;
+                    let close = self.previous();
+                    let span = Span {
+                        line: close.line,
+                        column: close.column + 1,
+                        end_column: close.end_column,
+                        file: close.file,
+                    };
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        "unexpected `>` after the null pointer type",
+                    ));
+                }
                 self.consume(&TokenKind::LParen, "`(` after the null pointer type")?;
                 self.consume(&TokenKind::RParen, "`)` after `null::<T>`")?;
                 Ok(Expr::Null { ty, span })

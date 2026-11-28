@@ -79,6 +79,11 @@ fn typed_null_requires_a_raw_pointer_type() {
             "null-global",
             "global initializers cannot contain raw pointers",
         ),
+        (
+            "fn main() -> i64 { const pointer = null::<*const i64>>(); 0 }",
+            "null-extra-greater",
+            "unexpected `>` after the null pointer type",
+        ),
     ] {
         assert_compile_error(source, name, diagnostic);
     }
@@ -255,7 +260,7 @@ fn raw_subplace_mutability_and_place_rules_are_checked() {
         ),
         (
             "fn main() -> i64 { let value = 1; const r: &i64 = &value; const q: *mut i64 = &raw mut value; 0 }",
-            "raw-pointer-shared-borrow",
+            "raw-subplace-shared-borrow",
             "cannot take a mutable raw pointer to `value` while it is borrowed",
         ),
         (
