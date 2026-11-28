@@ -13,11 +13,17 @@ CORPUS = Path(__file__).resolve().parent
 ROOT = CORPUS.parents[1]
 DEFAULT_COMPILER = ROOT / "target" / "release" / "vacac"
 TIMEOUT_SECONDS = 60
+OPT_LEVELS = ("-O0", "-O1", "-O2", "-O3")
+COMPILER_PATH = None
+OPT_LEVEL = None
 
 
 def run(command, *, timeout=TIMEOUT_SECONDS, **kwargs):
+    command = [str(part) for part in command]
+    if OPT_LEVEL and command[0] == COMPILER_PATH and "--check" not in command:
+        command.append(OPT_LEVEL)
     return subprocess.run(
-        [str(part) for part in command],
+        command,
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -139,12 +145,30 @@ def make_deep_modules(temporary_directory):
     return project / "main.vca"
 
 
-def main():
-    compiler = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_COMPILER
+def parse_arguments():
+    global COMPILER_PATH, OPT_LEVEL
+    compiler = DEFAULT_COMPILER
+    compiler_was_set = False
+    for argument in sys.argv[1:]:
+        if argument in OPT_LEVELS:
+            if OPT_LEVEL is not None:
+                raise SystemExit("error: optimization level may be specified only once")
+            OPT_LEVEL = argument
+        elif argument.startswith("-"):
+            raise SystemExit(f"error: unsupported argument: {argument}")
+        elif compiler_was_set:
+            raise SystemExit(f"error: unexpected argument: {argument}")
+        else:
+            compiler = Path(argument).resolve()
+            compiler_was_set = True
     if not compiler.is_file():
-        print(f"compiler binary not found: {compiler}", file=sys.stderr)
-        return 2
+        raise SystemExit(f"compiler binary not found: {compiler}")
+    COMPILER_PATH = str(compiler)
+    return compiler
 
+
+def main():
+    compiler = parse_arguments()
     failures = 0
 
     def record(ok):
@@ -359,7 +383,8 @@ def main():
         if not ok and result.stderr:
             print(f"  stderr: {result.stderr}")
 
-    print(f"\nCorpus result: {failures} failure(s)")
+    mode = OPT_LEVEL or "default optimization"
+    print(f"\nCorpus result ({mode}): {failures} failure(s)")
     return 1 if failures else 0
 
 
