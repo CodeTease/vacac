@@ -34,6 +34,7 @@ Options:
   --run                Build and run the program without keeping build artifacts
   --check              Type-check and verify without writing build artifacts
   --emit-llvm <path>   Write verified LLVM IR to a file
+  -O0, -O1, -O2, -O3  Set the emitted-code optimization level (not with --check)
   --json               Output diagnostics as JSON on errors
   -q, --quiet          Suppress successful compiler status messages
   -h, --help           Show this help
@@ -54,6 +55,7 @@ struct Options {
     source: PathBuf,
     mode: OutputMode,
     quiet: bool,
+    optimization_level: Option<codegen::OptLevel>,
     link_objects: Vec<PathBuf>,
     link_search: Vec<PathBuf>,
     link_libs: Vec<OsString>,
@@ -79,6 +81,7 @@ fn parse_args() -> Result<ParseArgs, String> {
     let mut link_libs = Vec::new();
     let mut mode: Option<OutputMode> = None;
     let mut quiet = false;
+    let mut optimization_level = None;
     while let Some(arg) = args.next() {
         if !positional_only {
             match arg.to_str() {
@@ -141,11 +144,32 @@ fn parse_args() -> Result<ParseArgs, String> {
                     set_mode(&mut mode, OutputMode::EmitLlvm(path))?;
                     continue;
                 }
+                Some("-O0") => {
+                    set_optimization_level(&mut optimization_level, codegen::OptLevel::O0)?;
+                    continue;
+                }
+                Some("-O1") => {
+                    set_optimization_level(&mut optimization_level, codegen::OptLevel::O1)?;
+                    continue;
+                }
+                Some("-O2") => {
+                    set_optimization_level(&mut optimization_level, codegen::OptLevel::O2)?;
+                    continue;
+                }
+                Some("-O3") => {
+                    set_optimization_level(&mut optimization_level, codegen::OptLevel::O3)?;
+                    continue;
+                }
                 Some("--quiet") | Some("-q") => {
                     quiet = true;
                     continue;
                 }
                 Some("--json") => continue,
+                Some(flag) if flag.starts_with("-O") => {
+                    return Err(format!(
+                        "unsupported optimization level: {flag} (supported: -O0, -O1, -O2, -O3)"
+                    ));
+                }
                 Some(flag) if flag.starts_with('-') => {
                     return Err(format!("unknown argument: {flag} (try --help)"));
                 }
@@ -171,6 +195,9 @@ fn parse_args() -> Result<ParseArgs, String> {
             if output_was_set || object_was_set {
                 return Err("-o and --emit-obj cannot be used with --check".into());
             }
+            if optimization_level.is_some() {
+                return Err("optimization levels cannot be used with --check".into());
+            }
             OutputMode::Check
         }
         Some(OutputMode::EmitLlvm(path)) => {
@@ -195,10 +222,22 @@ fn parse_args() -> Result<ParseArgs, String> {
         source,
         mode,
         quiet,
+        optimization_level,
         link_objects,
         link_search,
         link_libs,
     }))
+}
+
+fn set_optimization_level(
+    slot: &mut Option<codegen::OptLevel>,
+    level: codegen::OptLevel,
+) -> Result<(), String> {
+    if slot.is_some() {
+        return Err("optimization level may be specified only once".into());
+    }
+    *slot = Some(level);
+    Ok(())
 }
 
 fn set_mode(mode: &mut Option<OutputMode>, new_mode: OutputMode) -> Result<(), String> {
@@ -330,6 +369,7 @@ fn run() -> Result<i32, DiagnosticSet> {
         source: source_path,
         mode,
         quiet,
+        optimization_level,
         link_objects,
         link_search,
         link_libs,
@@ -360,7 +400,7 @@ fn run() -> Result<i32, DiagnosticSet> {
             }
         }
         OutputMode::EmitLlvm(path) => {
-            codegen::emit_llvm(&program, &path).map_err(|e| {
+            codegen::emit_llvm(&program, &path, optimization_level).map_err(|e| {
                 backend_diagnostic(&program, &source_path, "LLVM IR emission failed", e)
             })?;
             if !quiet {
@@ -369,7 +409,7 @@ fn run() -> Result<i32, DiagnosticSet> {
         }
         OutputMode::Executable { output, object } => {
             let object = object.unwrap_or_else(|| object_path(&output));
-            codegen::emit_object(&program, &object).map_err(|e| {
+            codegen::emit_object(&program, &object, optimization_level).map_err(|e| {
                 backend_diagnostic(&program, &source_path, "code generation failed", e)
             })?;
             let status = link_object(&object, &output, &link_objects, &link_search, &link_libs)?;
@@ -384,7 +424,7 @@ fn run() -> Result<i32, DiagnosticSet> {
             let temp = TempBuildDir::new()?;
             let executable = temp.path().join("program");
             let object = temp.path().join("program.o");
-            codegen::emit_object(&program, &object).map_err(|e| {
+            codegen::emit_object(&program, &object, optimization_level).map_err(|e| {
                 backend_diagnostic(&program, &source_path, "code generation failed", e)
             })?;
             let status = link_object(

@@ -13,6 +13,7 @@ fn help_and_version_are_available_without_a_source_file() {
     assert!(help.contains("Usage:"));
     assert!(help.contains("vacac <source.vca>"));
     assert!(help.contains("--run"));
+    assert!(help.contains("-O0, -O1, -O2, -O3"));
     assert!(help.contains("--json"));
 
     let version = Command::new(env!("CARGO_BIN_EXE_vacac"))

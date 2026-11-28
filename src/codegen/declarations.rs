@@ -1,10 +1,10 @@
 use super::*;
 
 impl<'ctx> Codegen<'ctx> {
-    pub(super) fn for_program(
+    pub(super) fn build_module(
         context: &'ctx Context,
         program: &Program,
-    ) -> Result<Self, Diagnostic> {
+    ) -> Result<Module<'ctx>, Diagnostic> {
         let mut codegen = Self::new(context, "vaca");
         codegen.lambda_captures = program.lambda_captures.clone();
         codegen.declare_enums(program)?;
@@ -44,7 +44,7 @@ impl<'ctx> Codegen<'ctx> {
             .module
             .verify()
             .map_err(|e| format!("invalid LLVM module: {e}"))?;
-        Ok(codegen)
+        Ok(codegen.module)
     }
 
     pub(super) fn new(context: &'ctx Context, name: &str) -> Self {

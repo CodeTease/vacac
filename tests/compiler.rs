@@ -30,6 +30,8 @@ mod matching_loops;
 mod modules;
 #[path = "compiler/nested_matching.rs"]
 mod nested_matching;
+#[path = "compiler/optimization.rs"]
+mod optimization;
 #[path = "compiler/pointers.rs"]
 mod pointers;
 #[path = "compiler/references.rs"]
