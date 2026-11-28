@@ -1206,7 +1206,7 @@ fn references_cannot_be_returned_through_function_values_or_externs() {
     assert_compile_error(
         "extern \"C\" fn borrow(value: i64) -> &i64; fn main() -> i64 { 0 }",
         "references-ffi-return",
-        "C extern return types support only `i64`, `f32`, `f64`, and `unit`",
+        "C extern return types support only `i64`, `f32`, `f64`, `str`, raw pointer types, and `unit`",
     );
     assert_compile_error(
         "fn identity<'a>(value: &'a i64) -> &'a i64 { value } fn main() -> i64 { let function = identity; 0 }",

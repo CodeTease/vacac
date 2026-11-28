@@ -237,6 +237,7 @@ fn codegen_span_of_expr(expr: &Expr) -> Span {
         | Expr::Float(_, span)
         | Expr::Bool(_, span)
         | Expr::String(_, span)
+        | Expr::Null { span, .. }
         | Expr::Unit(span)
         | Expr::Tuple(_, span)
         | Expr::Array(_, span)

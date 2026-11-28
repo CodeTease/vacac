@@ -409,38 +409,67 @@ impl<'ctx> Codegen<'ctx> {
             .map_err(|error| error.to_string())?)
     }
 
-    pub(super) fn emit_address_of_place(
+    pub(super) fn emit_raw_pointer_place(
         &mut self,
         expr: &Expr,
+        mutable: bool,
     ) -> Result<(PointerValue<'ctx>, ValueType), Diagnostic> {
-        if !matches!(expr, Expr::Variable(_, _)) {
+        let span = codegen_span_of_expr(expr);
+        let name = super::expressions::codegen_borrow_root(expr).ok_or_else(|| {
+            Diagnostic::at(
+                span.into(),
+                "raw address-taking requires a named local or global variable".to_string(),
+            )
+        })?;
+        let (root_pointer, root_type, binding_mutable, local_root) =
+            if let Some(local) = self.lookup_local(name) {
+                (
+                    local.pointer,
+                    local.ty,
+                    !local.immutable && !local.loop_variable,
+                    true,
+                )
+            } else {
+                let global_name = self.resolve_global_name(name).ok_or_else(|| {
+                    Diagnostic::at(span.into(), format!("undefined variable `{name}`"))
+                })?;
+                let declaration = self.global_declarations[&global_name].clone();
+                if declaration.module != self.module_context && !declaration.is_public {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        format!("global `{name}` is private"),
+                    ));
+                }
+                (
+                    self.globals[&global_name].as_pointer_value(),
+                    self.global_types[&global_name],
+                    declaration.mutable,
+                    false,
+                )
+            };
+        if mutable && !self.place_mutates_vector(expr, name, root_type)? && !binding_mutable {
             return Err(Diagnostic::at(
-                codegen_span_of_expr(expr).into(),
-                "raw address-taking currently requires a local or global variable",
+                span.into(),
+                if local_root {
+                    "cannot take a mutable raw pointer to an immutable binding"
+                } else {
+                    "cannot take a mutable raw pointer to an immutable global"
+                }
+                .to_string(),
             ));
         }
-        let span = codegen_span_of_expr(expr);
-        let name = codegen_assignment_root(expr)
-            .ok_or("raw address-taking requires a variable, field, or array element")?;
-        let (root_pointer, root_type) = if let Some(local) = self.lookup_local(name) {
-            (local.pointer, local.ty)
-        } else {
-            let global_name = self.resolve_global_name(name).ok_or_else(|| {
-                Diagnostic::at(span.into(), format!("undefined variable `{name}`"))
-            })?;
-            let declaration = self.global_declarations[&global_name].clone();
-            if declaration.module != self.module_context && !declaration.is_public {
-                return Err(Diagnostic::at(
-                    span.into(),
-                    format!("global `{name}` is private"),
-                ));
-            }
-            (
-                self.globals[&global_name].as_pointer_value(),
-                self.global_types[&global_name],
-            )
-        };
-        self.emit_place_pointer(expr, name, root_pointer, root_type)
+        let (pointer, target_type) =
+            self.emit_place_pointer(expr, name, root_pointer, root_type)?;
+        if matches!(
+            target_type,
+            ValueType::Reference(_) | ValueType::MutableReference(_)
+        ) {
+            return Err(Diagnostic::at(
+                span.into(),
+                "raw pointers cannot target safe references".to_string(),
+            ));
+        }
+        Ok((pointer, target_type))
     }
 
     pub(super) fn emit_assignment_statement(

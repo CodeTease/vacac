@@ -1335,7 +1335,10 @@ pub(super) fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Try { span, .. }
         | Expr::Loop { span, .. }
         | Expr::Variant { span, .. } => *span,
-        Expr::Bool(_, span) | Expr::String(_, span) | Expr::Unit(span) => *span,
+        Expr::Null { span, .. }
+        | Expr::Bool(_, span)
+        | Expr::String(_, span)
+        | Expr::Unit(span) => *span,
     }
 }
 

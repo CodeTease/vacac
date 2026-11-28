@@ -322,28 +322,34 @@ impl Checker {
                     ),
                 ));
             }
-            if function
-                .params
-                .iter()
-                .any(|param| !matches!(param.ty, Type::I64 | Type::F32 | Type::F64))
-            {
+            if function.params.iter().any(|param| {
+                !matches!(
+                    param.ty,
+                    Type::I64 | Type::F32 | Type::F64 | Type::Str | Type::RawPointer(_, _)
+                )
+            }) {
                 let param = function
                     .params
                     .iter()
-                    .find(|param| !matches!(param.ty, Type::I64 | Type::F32 | Type::F64))
+                    .find(|param| {
+                        !matches!(
+                            param.ty,
+                            Type::I64 | Type::F32 | Type::F64 | Type::Str | Type::RawPointer(_, _)
+                        )
+                    })
                     .unwrap();
                 return Err(at(
                     param.span,
-                    "C extern parameters support only `i64`, `f32`, and `f64`",
+                    "C extern parameters support only `i64`, `f32`, `f64`, `str`, and raw pointer types",
                 ));
             }
             if !matches!(
                 function.return_type,
-                Type::I64 | Type::F32 | Type::F64 | Type::Unit
+                Type::I64 | Type::F32 | Type::F64 | Type::Str | Type::RawPointer(_, _) | Type::Unit
             ) {
                 return Err(at(
                     function.span,
-                    "C extern return types support only `i64`, `f32`, `f64`, and `unit`",
+                    "C extern return types support only `i64`, `f32`, `f64`, `str`, raw pointer types, and `unit`",
                 ));
             }
             if self.signatures.contains_key(&function.name) {
@@ -558,6 +564,9 @@ impl Checker {
             | Expr::Bool(..)
             | Expr::String(..)
             | Expr::Unit(..) => {}
+            Expr::Null { span, .. } => {
+                return Err(at(*span, "global initializers cannot contain raw pointers"));
+            }
             Expr::TraitCall { span, .. } => {
                 return Err(at(
                     *span,

@@ -1241,6 +1241,9 @@ impl<'a> Resolver<'a> {
                     *name = resolve_reference(name, self.module, *span, self.scope)?;
                 }
             }
+            Expr::Null { ty, span } => {
+                resolve_type(ty, self.module, *span, self.scope)?;
+            }
             Expr::Integer(..)
             | Expr::Float32(..)
             | Expr::Float(..)

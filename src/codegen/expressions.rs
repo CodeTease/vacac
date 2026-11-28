@@ -136,6 +136,24 @@ impl<'ctx> Codegen<'ctx> {
                 value: Some(self.string_literal(value)?.into()),
                 ty: ValueType::Str,
             }),
+            Expr::Null { ty, span } => {
+                let resolved = self.resolve_type(ty, *span)?;
+                if !matches!(resolved, ValueType::RawPointer(_)) {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        "null requires a raw pointer type".to_string(),
+                    ));
+                }
+                Ok(TypedValue {
+                    value: Some(
+                        self.context
+                            .ptr_type(AddressSpace::default())
+                            .const_null()
+                            .into(),
+                    ),
+                    ty: resolved,
+                })
+            }
             Expr::Unit(_) => Ok(TypedValue {
                 value: None,
                 ty: ValueType::Unit,
@@ -552,46 +570,15 @@ impl<'ctx> Codegen<'ctx> {
                     });
                 }
                 if matches!(op, UnaryOp::RawBorrowConst | UnaryOp::RawBorrowMut) {
-                    if matches!(op, UnaryOp::RawBorrowMut) {
-                        let Expr::Variable(name, _) = value.as_ref() else {
-                            return Err(Diagnostic::at(
-                                span.into(),
-                                "raw address-taking currently requires a local or global variable"
-                                    .to_string(),
-                            ));
-                        };
-                        if let Some(local) = self.lookup_local(name) {
-                            if local.immutable || local.loop_variable {
-                                return Err(Diagnostic::at(
-                                    span.into(),
-                                    "cannot take a mutable raw pointer to an immutable binding"
-                                        .to_string(),
-                                ));
-                            }
-                        } else if let Some(global_name) = self.resolve_global_name(name) {
-                            if !self.global_declarations[&global_name].mutable {
-                                return Err(Diagnostic::at(
-                                    span.into(),
-                                    "cannot take a mutable raw pointer to an immutable global"
-                                        .to_string(),
-                                ));
-                            }
-                        } else {
-                            return Err(Diagnostic::at(
-                                span.into(),
-                                format!("undefined variable `{name}`"),
-                            ));
-                        }
-                    }
-                    let (pointer, target_type) = self.emit_address_of_place(value)?;
+                    let mutable = matches!(op, UnaryOp::RawBorrowMut);
+                    let (pointer, target_type) = self.emit_raw_pointer_place(value, mutable)?;
                     if target_type == ValueType::Unit {
                         return Err(Diagnostic::at(
                             span.into(),
                             "raw pointers cannot target `unit`".to_string(),
                         ));
                     }
-                    let ty =
-                        self.raw_pointer_type(target_type, matches!(op, UnaryOp::RawBorrowMut));
+                    let ty = self.raw_pointer_type(target_type, mutable);
                     return Ok(TypedValue {
                         value: Some(pointer.into()),
                         ty,

@@ -1,4 +1,5 @@
 use crate::common::*;
+use std::fs;
 
 #[test]
 fn raw_pointers_are_typed_and_can_be_dereferenced() {
@@ -23,6 +24,98 @@ fn raw_pointers_are_typed_and_can_be_dereferenced() {
 }
 
 #[test]
+fn raw_pointers_compare_by_address_and_support_typed_null() {
+    let result = compile_and_run(
+        r#"
+        struct Holder { pointer: *const i64 }
+
+        fn same(left: *const i64, right: *const i64) -> bool { left == right }
+        fn identity<T>(value: T) -> T { value }
+
+        fn main() -> i64 {
+            let value = 41;
+            const pointer: *const i64 = &raw const value;
+            const alias = pointer;
+            const null_pointer = null::<*const i64>();
+            if !(pointer == alias) || pointer != alias { return 1; }
+            if pointer == null_pointer || null_pointer != null::<*const i64>() { return 2; }
+            if null::<*mut i64>() != null::<*mut i64>() { return 3; }
+            if !same(pointer, alias) { return 4; }
+
+            const holder = Holder { pointer: null_pointer };
+            if holder.pointer != null::<*const i64>() { return 5; }
+            const pointers = [null::<*const i64>()];
+            if pointers[0] != null::<*const i64>() { return 6; }
+            const generic = identity(null::<*mut i64>());
+            if generic != null::<*mut i64>() { return 7; }
+            0
+        }
+        "#,
+        "raw-pointer-equality-and-null",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn typed_null_requires_a_raw_pointer_type() {
+    for (source, name, diagnostic) in [
+        (
+            "fn main() -> i64 { null::<i64>(); 0 }",
+            "null-non-pointer",
+            "null requires a raw pointer type",
+        ),
+        (
+            "fn main() -> i64 { null::<str>(); 0 }",
+            "null-string",
+            "null requires a raw pointer type",
+        ),
+        (
+            "fn main() -> i64 { null::<&i64>(); 0 }",
+            "null-reference",
+            "null requires a raw pointer type",
+        ),
+        (
+            "const POINTER: *const i64 = null::<*const i64>(); fn main() -> i64 { 0 }",
+            "null-global",
+            "global initializers cannot contain raw pointers",
+        ),
+        (
+            "fn main() -> i64 { const pointer = null::<*const i64>>(); 0 }",
+            "null-extra-greater",
+            "unexpected `>` after the null pointer type",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn raw_pointer_equality_emits_direct_pointer_comparisons() {
+    let (directory, emitted) = run_compiler_with_args(
+        r#"
+        fn main() -> i64 {
+            let value = 1;
+            const pointer = &raw const value;
+            if pointer == null::<*const i64>() { 0 } else { 0 }
+        }
+        "#,
+        "raw-pointer-equality-ir",
+        &["--emit-llvm", "program.ll", "--quiet"],
+    );
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let ir = fs::read_to_string(directory.join("program.ll")).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(
+        ir.contains("icmp eq ptr") && ir.contains("ptr null"),
+        "pointer equality must use direct pointer comparison:\n{ir}"
+    );
+}
+
+#[test]
 fn mutable_raw_pointers_write_through_const_bindings() {
     let result = compile_and_run(
         r#"
@@ -34,6 +127,177 @@ fn mutable_raw_pointers_write_through_const_bindings() {
         }
         "#,
         "raw-pointer-write",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn raw_addresses_target_aggregate_and_vector_subplaces() {
+    let result = compile_and_run(
+        r#"
+        struct Row { cells: [i64; 2] }
+        struct Point { x: i64, y: i64 }
+        const ORIGIN: Point = Point { x: 1, y: 2 };
+        let GLOBAL: i64 = 1;
+
+        fn main() -> i64 {
+            let point = Point { x: 3, y: 4 };
+            const y_pointer: *const i64 = &raw const point.y;
+            if *y_pointer != 4 { return 1; }
+
+            let values = [5, 6];
+            const second: *mut i64 = &raw mut values[1];
+            *second = 7;
+            if values[1] != 7 { return 2; }
+
+            let rows: Vec<Row> = vec_new();
+            vec_push(rows, Row { cells: [8, 9] });
+            const cell: *mut i64 = &raw mut rows[0].cells[1];
+            *cell = 42;
+            if rows[0].cells[1] != 42 { return 3; }
+
+            const const_rows: Vec<Row> = rows;
+            const nested: *mut i64 = &raw mut const_rows[0].cells[0];
+            *nested = 11;
+            if rows[0].cells[0] != 11 { return 4; }
+
+            if *(&raw const ORIGIN.y) != 2 { return 5; }
+            const global_pointer: *mut i64 = &raw mut GLOBAL;
+            *global_pointer = 42;
+            if GLOBAL != 42 { return 6; }
+            0
+        }
+        "#,
+        "raw-pointer-subplaces",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn raw_subplace_addresses_evaluate_indexes_once_and_track_vector_growth() {
+    let result = compile_and_run(
+        r#"
+        struct Row { cells: [i64; 1] }
+        let PICKS: i64 = 0;
+
+        fn pick() -> i64 {
+            PICKS = PICKS + 1;
+            0
+        }
+
+        fn grow(rows: Vec<Row>) -> i64 {
+            let index = 0;
+            while index < 8 {
+                vec_push(rows, Row { cells: [100 + index] });
+                index = index + 1;
+            }
+            0
+        }
+
+        fn grow_outer(outer: Vec<Vec<i64>>) -> i64 {
+            let index = 0;
+            while index < 8 {
+                let extra: Vec<i64> = vec_new();
+                vec_push(extra, 50 + index);
+                vec_push(outer, extra);
+                index = index + 1;
+            }
+            0
+        }
+
+        fn main() -> i64 {
+            let rows: Vec<Row> = vec_new();
+            vec_push(rows, Row { cells: [1] });
+            const pointer = &raw mut rows[pick()].cells[0];
+            *pointer = 42;
+            if PICKS != 1 { return 1; }
+            if rows[0].cells[0] != 42 { return 2; }
+
+            const moved = &raw mut rows[grow(rows)].cells[0];
+            *moved = 43;
+            if rows[0].cells[0] != 43 { return 3; }
+            if len(rows) != 9 { return 4; }
+
+            let outer: Vec<Vec<i64>> = vec_new();
+            let inner: Vec<i64> = vec_new();
+            vec_push(inner, 1);
+            vec_push(outer, inner);
+            const nested = &raw mut outer[0][grow_outer(outer)];
+            *nested = 5;
+            if inner[0] != 5 { return 5; }
+            if len(outer) != 9 { return 6; }
+            if outer[0][0] != 5 { return 7; }
+            0
+        }
+        "#,
+        "raw-pointer-subplace-growth",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn raw_subplace_mutability_and_place_rules_are_checked() {
+    for (source, name, diagnostic) in [
+        (
+            "struct P { x: i64 } fn main() -> i64 { const p = P { x: 1 }; const q: *mut i64 = &raw mut p.x; 0 }",
+            "raw-pointer-immutable-field",
+            "cannot take a mutable raw pointer to an immutable binding",
+        ),
+        (
+            "fn main() -> i64 { const q: *const i64 = &raw const (1 + 2); 0 }",
+            "raw-pointer-temporary",
+            "raw address-taking requires a named local or global variable",
+        ),
+        (
+            "fn main() -> i64 { let value = 1; const r: *const i64 = &raw const value; const q: *mut i64 = &raw mut *r; 0 }",
+            "raw-pointer-deref-root",
+            "raw address-taking requires a named local or global variable",
+        ),
+        (
+            "fn main() -> i64 { let value = 1; const r: &i64 = &value; const q: *const i64 = &raw const r; 0 }",
+            "raw-pointer-reference-target",
+            "raw pointers cannot target safe references",
+        ),
+        (
+            "fn main() -> i64 { let value = 1; const r: &i64 = &value; const q: *mut i64 = &raw mut value; 0 }",
+            "raw-subplace-shared-borrow",
+            "cannot take a mutable raw pointer to `value` while it is borrowed",
+        ),
+        (
+            "fn main() -> i64 { let value = 1; if true { const r: &mut i64 = &mut value; const q: *const i64 = &raw const value; } else {} 0 }",
+            "raw-pointer-mutable-borrow",
+            "cannot access `value` while it is mutably borrowed",
+        ),
+        (
+            "struct P { x: i64 } fn main() -> i64 { let p = P { x: 1 }; const r: &i64 = &p.x; const q: *mut i64 = &raw mut p.x; 0 }",
+            "raw-pointer-overlapping-subplace",
+            "cannot take a mutable raw pointer to `p` while it is borrowed",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn raw_subplace_addresses_allow_known_disjoint_loans() {
+    let result = compile_and_run(
+        r#"
+        struct Point { x: i64, y: i64 }
+
+        fn main() -> i64 {
+            let point = Point { x: 1, y: 2 };
+            if true {
+                const x_reference: &i64 = &point.x;
+                const y_pointer: *mut i64 = &raw mut point.y;
+                *y_pointer = 42;
+                if *x_reference != 1 { return 1; }
+            } else {
+                0
+            }
+            point.y - 42
+        }
+        "#,
+        "raw-pointer-disjoint-subplace-loans",
     );
     assert_eq!(result.status.code(), Some(0));
 }
@@ -82,11 +346,6 @@ fn raw_pointer_mutability_and_unsupported_escapes_are_checked() {
             "fn main() -> i64 { let value = 1; const pointer: *mut i64 = &raw mut value; let other: *const i64 = pointer; 0 }",
             "raw-pointer-no-coercion",
             "initializer for `other` has type *mut i64, expected *const i64",
-        ),
-        (
-            "fn main() -> i64 { let value = 1; const pointer = &raw const value; pointer == pointer; 0 }",
-            "raw-pointer-comparison",
-            "references and raw pointers cannot be compared",
         ),
         (
             "fn main() -> i64 { let value = 1; let pointers = [&raw const value]; pointers == pointers; 0 }",

@@ -6,6 +6,31 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Practical raw-pointer and C-string interoperability completes the
+corresponding TODO roadmap item.
+
+### Added
+
+- `extern "C"` parameters and results may use `str` and typed raw pointers.
+  Strings cross as non-null, NUL-terminated `const char *` values without
+  copying; a null C string result traps instead of entering Vaca as `str`.
+- Typed null expressions (`null::<*const T>()` and `null::<*mut T>()`) and
+  address equality (`==`/`!=`) for raw pointers of the same type.
+- `&raw const place` and `&raw mut place` now accept struct fields, fixed-array
+  elements, vector elements, and nested combinations, with single evaluation of
+  selectors and vector-storage reloads when a later index grows the vector.
+- Documented ABI and lifetime rules for C strings, nullable raw-pointer results,
+  vector-backed addresses, and non-ABI Vaca aggregate layouts.
+
+### Changed
+
+- Raw-pointer comparisons now lower directly to LLVM pointer comparisons instead
+  of being rejected.
+- Mutable raw address-taking follows ordinary place mutability, including
+  mutable vector elements through `const` handles.
+
 ## [0.5.0] - 2026-11-28
 
 Mutable-reference reborrowing and named mutable returns complete the

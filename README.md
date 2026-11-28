@@ -55,7 +55,7 @@ Start at the [documentation index](docs/README.md).
 - [Diagnostics](docs/diagnostics.md) — parser recovery and human-readable/JSON error formats.
 - [Examples](docs/examples.md) — complete programs to check, compile, and run.
 - [Testing](docs/testing.md) — Rust tests, the example runner, and the adversarial corpus.
-- [Scalar C FFI](docs/c-ffi.md) — `extern "C"` declarations and native linking.
+- [C FFI](docs/c-ffi.md) — scalar, string, and raw-pointer `extern "C"` declarations and native linking.
 - [Language reference](docs/language/syntax.md) — Vaca types, values, and statements, with links to the rest of the language guide.
 
 ## Examples

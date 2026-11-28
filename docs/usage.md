@@ -65,7 +65,7 @@ Use `--quiet` (or `-q`) to suppress success messages, and `--json` to emit error
 
 ## Linking native code
 
-Vaca can call scalar C functions using declarations such as `extern "C" fn labs(value: i64) -> i64;`. See [Scalar C FFI](c-ffi.md) for supported types and limitations.
+Vaca can call C functions using declarations such as `extern "C" fn labs(value: i64) -> i64;`. Scalar values, `str`, and typed raw pointers are supported. See [C FFI](c-ffi.md) for supported types and limitations.
 
 For native object files or libraries, pass repeatable linker inputs while building or running:
 

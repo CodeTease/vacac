@@ -38,6 +38,7 @@ impl<'ctx> Codegen<'ctx> {
                     | ValueType::Enum(_)
                     | ValueType::Struct(_)
                     | ValueType::Tuple(_)
+                    | ValueType::RawPointer(_)
             ) {
                 let lhs = left.value.ok_or("left operand has no value")?;
                 let rhs = right.value.ok_or("right operand has no value")?;

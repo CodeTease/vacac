@@ -304,6 +304,11 @@ pub enum Expr {
     Float(f64, Span),
     Bool(bool, Span),
     String(String, Span),
+    /// A typed null raw pointer: `null::<*const T>()` or `null::<*mut T>()`.
+    Null {
+        ty: Type,
+        span: Span,
+    },
     Unit(Span),
     Tuple(Vec<Expr>, Span),
     Array(Vec<Expr>, Span),

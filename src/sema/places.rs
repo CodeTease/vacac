@@ -236,19 +236,14 @@ impl Checker {
         span: Span,
         mutable: bool,
     ) -> Result<ValueType, Diagnostic> {
-        if !matches!(expr, Expr::Variable(_, _)) {
-            return Err(at(
-                span,
-                "raw address-taking currently requires a local or global variable",
-            ));
-        }
-        let root = assignment_root(expr).ok_or_else(|| {
+        let root = Self::direct_local_place_root(expr).ok_or_else(|| {
             at(
                 span,
-                "raw address-taking requires a variable, field, or array element",
+                "raw address-taking requires a named local or global variable",
             )
         })?;
-        let root_type = if let Some((scope_index, ty)) = self.lookup_local_with_scope(root) {
+        let local_root = self.lookup_local_with_scope(root);
+        let root_type = if let Some((scope_index, ty)) = local_root {
             if self
                 .lambda_scope_boundaries
                 .last()
@@ -259,43 +254,54 @@ impl Checker {
                     format!("closures cannot take the raw address of enclosing local `{root}`"),
                 ));
             }
-            self.reject_mutably_borrowed(root, span)?;
-            if mutable {
-                if self.is_place_shared_borrowed(expr, span)? {
-                    return Err(at(
-                        span,
-                        format!(
-                            "cannot take a mutable raw pointer to `{root}` while it is borrowed"
-                        ),
-                    ));
-                }
-                if self.is_immutable_binding(root) {
-                    return Err(at(
-                        span,
-                        "cannot take a mutable raw pointer to an immutable binding",
-                    ));
-                }
-            }
             ty
         } else if let Some(global) = self.find_global_name(root) {
             let declaration = self.global_declarations[&global].clone();
             if declaration.module != self.module_context && !declaration.is_public {
                 return Err(at(span, format!("global `{root}` is private")));
             }
-            if mutable && !declaration.mutable {
-                return Err(at(
-                    span,
-                    "cannot take a mutable raw pointer to an immutable global",
-                ));
-            }
             self.check_global(&global, span)?
         } else {
             return Err(at(span, format!("undefined variable `{root}`")));
         };
-        if matches!(expr, Expr::Variable(_, _)) {
-            return Ok(root_type);
+        if local_root.is_some() {
+            self.reject_mutably_borrowed_place(expr, span)?;
         }
-        self.check_place(expr, root_type)
+        if mutable {
+            // Vector elements remain mutable through a `const` handle, matching
+            // ordinary indexed assignment.
+            if !self.place_crosses_vector(expr, root_type)?
+                && ((local_root.is_some()
+                    && (self.is_immutable_binding(root) || self.is_loop_variable(root)))
+                    || (local_root.is_none()
+                        && self
+                            .find_global_name(root)
+                            .is_some_and(|global| !self.global_declarations[&global].mutable)))
+            {
+                return Err(at(
+                    span,
+                    if local_root.is_some() {
+                        "cannot take a mutable raw pointer to an immutable binding"
+                    } else {
+                        "cannot take a mutable raw pointer to an immutable global"
+                    },
+                ));
+            }
+            if local_root.is_some() && self.is_place_shared_borrowed(expr, span)? {
+                return Err(at(
+                    span,
+                    format!("cannot take a mutable raw pointer to `{root}` while it is borrowed"),
+                ));
+            }
+        }
+        let place_type = self.check_place(expr, root_type)?;
+        if matches!(
+            place_type,
+            ValueType::Reference(_) | ValueType::MutableReference(_)
+        ) {
+            return Err(at(span, "raw pointers cannot target safe references"));
+        }
+        Ok(place_type)
     }
 
     pub(super) fn place_crosses_vector(

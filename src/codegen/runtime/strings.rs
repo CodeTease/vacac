@@ -172,6 +172,85 @@ impl<'ctx> Codegen<'ctx> {
         Ok(())
     }
 
+    /// Wrap extern functions that return `str` so a `NULL` C string cannot
+    /// enter Vaca as a non-null `str`. Raw-pointer returns stay nullable.
+    pub(in crate::codegen) fn emit_c_string_result_wrappers(
+        &mut self,
+        program: &Program,
+    ) -> Result<(), Diagnostic> {
+        for (index, function) in program.extern_functions.iter().enumerate() {
+            if function.return_type != Type::Str {
+                continue;
+            }
+            let link = self
+                .module
+                .get_function(&function.link_name)
+                .ok_or_else(|| {
+                    Diagnostic::at(
+                        function.span.into(),
+                        format!("missing C symbol `{}`", function.link_name),
+                    )
+                })?;
+            let wrapper = self.module.add_function(
+                &format!("vaca.extern.str.{index}"),
+                link.get_type(),
+                Some(Linkage::Internal),
+            );
+            let entry = self.context.append_basic_block(wrapper, "entry");
+            let failure = self.context.append_basic_block(wrapper, "string.null");
+            let success = self.context.append_basic_block(wrapper, "string.valid");
+
+            self.builder.position_at_end(entry);
+            let mut arguments = Vec::with_capacity(function.params.len());
+            for parameter in 0..function.params.len() {
+                arguments.push(
+                    wrapper
+                        .get_nth_param(parameter as u32)
+                        .ok_or("extern string wrapper parameter missing")?
+                        .into(),
+                );
+            }
+            let result = self
+                .builder
+                .build_call(link, &arguments, "extern.string")
+                .map_err(|error| error.to_string())?
+                .try_as_basic_value()
+                .basic()
+                .ok_or("extern string call returned void")?
+                .into_pointer_value();
+            let is_null = self
+                .builder
+                .build_is_null(result, "extern.string.null")
+                .map_err(|error| error.to_string())?;
+            self.builder
+                .build_conditional_branch(is_null, failure, success)
+                .map_err(|error| error.to_string())?;
+
+            self.builder.position_at_end(failure);
+            let exit = self
+                .module
+                .get_function("exit")
+                .ok_or("missing runtime exit declaration")?;
+            self.builder
+                .build_call(
+                    exit,
+                    &[self.context.i32_type().const_int(1, false).into()],
+                    "extern.string.exit",
+                )
+                .map_err(|error| error.to_string())?;
+            self.builder
+                .build_unreachable()
+                .map_err(|error| error.to_string())?;
+
+            self.builder.position_at_end(success);
+            self.builder
+                .build_return(Some(&result))
+                .map_err(|error| error.to_string())?;
+            self.functions.insert(function.name.clone(), wrapper);
+        }
+        Ok(())
+    }
+
     pub(in crate::codegen) fn strcmp_function(&self) -> FunctionValue<'ctx> {
         self.module.get_function("strcmp").unwrap_or_else(|| {
             let ptr = self.context.ptr_type(AddressSpace::default());

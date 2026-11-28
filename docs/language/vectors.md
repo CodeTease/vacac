@@ -27,3 +27,5 @@ Indexing uses signed `i64` indexes and invalid indexes exit with status 1.
 ## Iteration
 
 Vector iteration evaluates the handle once and captures its length at loop entry, so elements appended during the loop are not visited; element bindings remain immutable. Vector allocations persist until process exit.
+
+Raw addresses can target vector elements, including nested subplaces such as `&raw mut rows[i].cells[j]`. The resulting pointer refers to the vector's current backing storage; a later `vec_push` through any alias may relocate that storage, so reacquire the address afterward. See [References and raw pointers](references-and-pointers.md).
