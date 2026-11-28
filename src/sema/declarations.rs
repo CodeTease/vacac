@@ -558,6 +558,9 @@ impl Checker {
             | Expr::Bool(..)
             | Expr::String(..)
             | Expr::Unit(..) => {}
+            Expr::Null { span, .. } => {
+                return Err(at(*span, "global initializers cannot contain raw pointers"));
+            }
             Expr::TraitCall { span, .. } => {
                 return Err(at(
                     *span,

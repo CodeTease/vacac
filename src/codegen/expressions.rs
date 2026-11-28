@@ -136,6 +136,24 @@ impl<'ctx> Codegen<'ctx> {
                 value: Some(self.string_literal(value)?.into()),
                 ty: ValueType::Str,
             }),
+            Expr::Null { ty, span } => {
+                let resolved = self.resolve_type(ty, *span)?;
+                if !matches!(resolved, ValueType::RawPointer(_)) {
+                    return Err(Diagnostic::at(
+                        span.into(),
+                        "null requires a raw pointer type".to_string(),
+                    ));
+                }
+                Ok(TypedValue {
+                    value: Some(
+                        self.context
+                            .ptr_type(AddressSpace::default())
+                            .const_null()
+                            .into(),
+                    ),
+                    ty: resolved,
+                })
+            }
             Expr::Unit(_) => Ok(TypedValue {
                 value: None,
                 ty: ValueType::Unit,

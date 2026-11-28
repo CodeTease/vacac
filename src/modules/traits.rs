@@ -1042,6 +1042,9 @@ fn substitute_parameters_in_expr(expr: &mut Expr, substitutions: &HashMap<String
         | Expr::String(..)
         | Expr::Unit(..)
         | Expr::Variable(..) => {}
+        Expr::Null { ty, .. } => {
+            *ty = substitute_parameters(ty, substitutions);
+        }
         Expr::Tuple(values, _) | Expr::Array(values, _) => {
             for value in values {
                 substitute_parameters_in_expr(value, substitutions);

@@ -21,6 +21,20 @@ impl Checker {
             Expr::Float(_, _) => Ok(ValueType::F64),
             Expr::Bool(_, _) => Ok(ValueType::Bool),
             Expr::String(_, _) => Ok(ValueType::Str),
+            Expr::Null { ty, span } => {
+                let resolved = self.resolve_type(ty, *span)?;
+                if matches!(resolved, ValueType::RawPointer(_)) {
+                    Ok(resolved)
+                } else {
+                    Err(at(
+                        *span,
+                        format!(
+                            "null requires a raw pointer type, got {}",
+                            self.type_name(resolved)
+                        ),
+                    ))
+                }
+            }
             Expr::Unit(_) => Ok(ValueType::Unit),
             Expr::TraitCall { span, .. } => Err(at(
                 *span,
@@ -515,19 +529,16 @@ impl Checker {
                         }
                         if matches!(
                             left_type,
-                            ValueType::Reference(_)
-                                | ValueType::MutableReference(_)
-                                | ValueType::RawPointer(_)
+                            ValueType::Reference(_) | ValueType::MutableReference(_)
                         ) {
-                            return Err(at(
-                                *span,
-                                "references and raw pointers cannot be compared",
-                            ));
+                            return Err(at(*span, "references cannot be compared"));
                         }
-                        if self.contains_raw_pointer(
-                            left_type,
-                            &mut std::collections::HashSet::new(),
-                        )? {
+                        if !matches!(left_type, ValueType::RawPointer(_))
+                            && self.contains_raw_pointer(
+                                left_type,
+                                &mut std::collections::HashSet::new(),
+                            )?
+                        {
                             return Err(at(
                                 *span,
                                 "values containing raw pointers cannot be compared",

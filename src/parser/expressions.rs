@@ -208,6 +208,15 @@ impl Parser {
             TokenKind::True => Ok(Expr::Bool(true, span)),
             TokenKind::False => Ok(Expr::Bool(false, span)),
             TokenKind::StringLit(value) => Ok(Expr::String(value, span)),
+            TokenKind::Null => {
+                self.consume(&TokenKind::DoubleColon, "`::` after `null`")?;
+                self.consume(&TokenKind::Less, "`<` after `null::`")?;
+                let ty = self.parse_type()?;
+                self.consume_type_greater()?;
+                self.consume(&TokenKind::LParen, "`(` after the null pointer type")?;
+                self.consume(&TokenKind::RParen, "`)` after `null::<T>`")?;
+                Ok(Expr::Null { ty, span })
+            }
             TokenKind::LBracket => {
                 let mut elements = Vec::new();
                 if !self.at(&TokenKind::RBracket) {

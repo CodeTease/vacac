@@ -1,4 +1,5 @@
 use crate::common::*;
+use std::fs;
 
 #[test]
 fn raw_pointers_are_typed_and_can_be_dereferenced() {
@@ -20,6 +21,83 @@ fn raw_pointers_are_typed_and_can_be_dereferenced() {
         "raw-pointer-read",
     );
     assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn raw_pointers_compare_by_address_and_support_typed_null() {
+    let result = compile_and_run(
+        r#"
+        fn same(left: *const i64, right: *const i64) -> bool { left == right }
+
+        fn main() -> i64 {
+            let value = 41;
+            const pointer: *const i64 = &raw const value;
+            const alias = pointer;
+            const null_pointer = null::<*const i64>();
+            if !(pointer == alias) || pointer != alias { return 1; }
+            if pointer == null_pointer || null_pointer != null::<*const i64>() { return 2; }
+            if null::<*mut i64>() != null::<*mut i64>() { return 3; }
+            if !same(pointer, alias) { return 4; }
+            0
+        }
+        "#,
+        "raw-pointer-equality-and-null",
+    );
+    assert_eq!(result.status.code(), Some(0));
+}
+
+#[test]
+fn typed_null_requires_a_raw_pointer_type() {
+    for (source, name, diagnostic) in [
+        (
+            "fn main() -> i64 { null::<i64>(); 0 }",
+            "null-non-pointer",
+            "null requires a raw pointer type",
+        ),
+        (
+            "fn main() -> i64 { null::<str>(); 0 }",
+            "null-string",
+            "null requires a raw pointer type",
+        ),
+        (
+            "fn main() -> i64 { null::<&i64>(); 0 }",
+            "null-reference",
+            "null requires a raw pointer type",
+        ),
+        (
+            "const POINTER: *const i64 = null::<*const i64>(); fn main() -> i64 { 0 }",
+            "null-global",
+            "global initializers cannot contain raw pointers",
+        ),
+    ] {
+        assert_compile_error(source, name, diagnostic);
+    }
+}
+
+#[test]
+fn raw_pointer_equality_emits_direct_pointer_comparisons() {
+    let (directory, emitted) = run_compiler_with_args(
+        r#"
+        fn main() -> i64 {
+            let value = 1;
+            const pointer = &raw const value;
+            if pointer == null::<*const i64>() { 0 } else { 0 }
+        }
+        "#,
+        "raw-pointer-equality-ir",
+        &["--emit-llvm", "program.ll", "--quiet"],
+    );
+    assert!(
+        emitted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let ir = fs::read_to_string(directory.join("program.ll")).unwrap();
+    let _ = std::fs::remove_dir_all(directory);
+    assert!(
+        ir.contains("icmp eq ptr") && ir.contains("ptr null"),
+        "pointer equality must use direct pointer comparison:\n{ir}"
+    );
 }
 
 #[test]
@@ -82,11 +160,6 @@ fn raw_pointer_mutability_and_unsupported_escapes_are_checked() {
             "fn main() -> i64 { let value = 1; const pointer: *mut i64 = &raw mut value; let other: *const i64 = pointer; 0 }",
             "raw-pointer-no-coercion",
             "initializer for `other` has type *mut i64, expected *const i64",
-        ),
-        (
-            "fn main() -> i64 { let value = 1; const pointer = &raw const value; pointer == pointer; 0 }",
-            "raw-pointer-comparison",
-            "references and raw pointers cannot be compared",
         ),
         (
             "fn main() -> i64 { let value = 1; let pointers = [&raw const value]; pointers == pointers; 0 }",

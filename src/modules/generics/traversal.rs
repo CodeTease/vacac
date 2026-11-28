@@ -194,6 +194,9 @@ impl Specializer {
         variables: &mut HashMap<String, Type>,
     ) -> Result<(), Diagnostic> {
         match expr {
+            Expr::Null { ty, span } => {
+                *ty = self.normalize_type(ty.clone(), substitutions, *span)?;
+            }
             Expr::Array(values, _) => {
                 for value in values {
                     self.process_expr(value, substitutions, variables)?;

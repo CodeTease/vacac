@@ -91,6 +91,12 @@ impl<'ctx> Codegen<'ctx> {
                 ty: ValueType::Str,
                 data: ConstantData::Str(value.clone()),
             },
+            Expr::Null { span, .. } => {
+                return Err(fail(
+                    *span,
+                    "global initializers cannot contain raw pointers",
+                ));
+            }
             Expr::Unit(span) => {
                 return Err(fail(*span, "global initializer type cannot be `unit`"));
             }
@@ -743,6 +749,7 @@ fn span_of_expr(expr: &Expr) -> Span {
         | Expr::Float(_, span)
         | Expr::Bool(_, span)
         | Expr::String(_, span)
+        | Expr::Null { span, .. }
         | Expr::Unit(span)
         | Expr::Tuple(_, span)
         | Expr::Array(_, span)
