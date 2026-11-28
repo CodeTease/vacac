@@ -6,7 +6,7 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-11-28
 
 Practical raw-pointer and C-string interoperability completes the
 corresponding TODO roadmap item.
@@ -30,6 +30,11 @@ corresponding TODO roadmap item.
   of being rejected.
 - Mutable raw address-taking follows ordinary place mutability, including
   mutable vector elements through `const` handles.
+
+### Fixed
+
+- A stray `>` after a typed null pointer type is now rejected with an
+  "unexpected `>` after the null pointer type" diagnostic.
 
 ## [0.5.0] - 2026-11-28
 
@@ -249,6 +254,7 @@ checks source in Rust and emits native Linux ELF executables through LLVM 23.
   Linux x86_64 binaries and `SHA256SUMS`.
 - Apache License 2.0.
 
+[0.6.0]: https://github.com/CodeTease/vacac/releases/tag/v0.6.0
 [0.5.0]: https://github.com/CodeTease/vacac/releases/tag/v0.5.0
 [0.4.0]: https://github.com/CodeTease/vacac/releases/tag/v0.4.0
 [0.3.0]: https://github.com/CodeTease/vacac/releases/tag/v0.3.0

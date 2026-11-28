@@ -1,4 +1,4 @@
-# Vaca v0.5 syntax
+# Vaca v0.6 syntax
 
 In addition to the by-value types described below, the compiler supports `&T`, `&mut T`, `*const T`, and `*mut T` as documented in [References and raw pointers](references-and-pointers.md).
 
