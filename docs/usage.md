@@ -57,6 +57,27 @@ Write the verified LLVM IR module to a text file without linking an executable:
 target/release/vacac examples/factorial.vca --emit-llvm factorial.ll
 ```
 
+## Optimization levels
+
+Select an emitted-code optimization level with `-O0`, `-O1`, `-O2`, or `-O3`:
+
+```sh
+target/release/vacac examples/factorial.vca -O2 -o factorial
+target/release/vacac examples/factorial.vca --run -O3
+```
+
+The level applies to executables, `--run`, and `--emit-llvm`. LLVM IR emission runs the selected module pass pipeline first, then writes the optimized module with the same target settings used for executable generation.
+
+| Flag | LLVM IR pipeline | Target-machine optimization |
+|---|---|---|
+| Omitted | None | LLVM default |
+| `-O0` | None | None |
+| `-O1` | `default<O1>` | Less |
+| `-O2` | `default<O2>` | Default |
+| `-O3` | `default<O3>` | Aggressive |
+
+Omitting the flag preserves the historical behavior: no IR optimization passes are run, while LLVM uses its default machine-code optimization level. `-O0` explicitly requests unoptimized machine code as well. The level may be specified only once and cannot be used with `--check`, which never initializes a target machine.
+
 ## Output modes and common options
 
 `--check` and `--emit-llvm` are exclusive output modes and cannot be combined with `-o` or `--emit-obj`. `--run` is also exclusive with other output modes and output paths.

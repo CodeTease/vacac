@@ -47,6 +47,12 @@ Write the verified LLVM IR module to a text file without linking an executable:
 target/release/vacac examples/factorial.vca --emit-llvm factorial.ll
 ```
 
+Select emitted-code optimization with `-O0`, `-O1`, `-O2`, or `-O3`:
+
+```sh
+target/release/vacac examples/factorial.vca -O2 -o factorial
+```
+
 ## Documentation
 
 Start at the [documentation index](docs/README.md).

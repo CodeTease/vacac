@@ -14,6 +14,14 @@ cargo build --release
 python3 tests/fuzz/run.py target/release/vacac
 ```
 
+Pass an optional `-O0`, `-O1`, `-O2`, or `-O3` argument to emit and execute
+cases at that optimization level. CI runs both the default corpus and an `-O3`
+corpus:
+
+```sh
+python3 tests/fuzz/run.py target/release/vacac -O3
+```
+
 The runner creates a reproducible 48-module-deep project in a temporary
 directory and removes it, as well as temporary native build artifacts, after
 the run. `--check` also constructs and verifies LLVM IR; the closure case is

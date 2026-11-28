@@ -6,6 +6,29 @@ file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- User-selectable `-O0`, `-O1`, `-O2`, and `-O3` emitted-code optimization
+  levels for executables, `--run`, and `--emit-llvm`. O1/O2/O3 run LLVM's
+  `default<O*>` module pipelines with matching target-machine optimization
+  levels; optimized `--emit-llvm` output is written after those passes.
+- `tests/fuzz/run.py` accepts an optional optimization level, and CI exercises
+  the adversarial corpus at `-O3`.
+
+### Changed
+
+- Omitting an optimization flag preserves the existing no-IR-pipeline behavior
+  and LLVM's default machine-code optimization level. `-O0` explicitly disables
+  machine-code optimization as well, and `--check` rejects optimization flags.
+
+### Fixed
+
+- Vaca-defined functions and user-written C declarations are marked
+  `nobuiltin`, so LLVM cannot replace or remove calls to names such as `labs`
+  based on assumed C library semantics.
+
 ## [0.6.0] - 2026-11-28
 
 Practical raw-pointer and C-string interoperability completes the
