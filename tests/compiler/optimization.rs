@@ -133,6 +133,25 @@ fn invalid_duplicate_and_check_optimization_flags_are_rejected() {
 }
 
 #[test]
+fn vaca_functions_with_c_library_names_keep_their_side_effects() {
+    let source = "fn labs(value: i64) -> i64 {\n    print_i64(value);\n    7\n}\nfn main() -> i64 {\n    labs(-4);\n    0\n}\n";
+    for (name, level) in LEVELS {
+        let (dir, result) = run_compiler_with_args(
+            source,
+            &format!("optimization-library-name-{name}"),
+            &["--run", level],
+        );
+        assert!(
+            result.status.success(),
+            "{level}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&result.stdout), "-4\n", "{level}");
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
 fn checked_arithmetic_and_ieee_values_survive_o3() {
     let (dir, result) = run_compiler_with_args(
         r#"

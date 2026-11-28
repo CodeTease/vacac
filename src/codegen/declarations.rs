@@ -98,6 +98,21 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// Vaca functions and user-written C declarations are not the C library
+    /// functions that LLVM recognizes by name. Without this attribute the
+    /// optimizer may replace or delete calls to names such as `labs`.
+    fn mark_not_builtin(&self, function: FunctionValue<'ctx>) -> Result<(), Diagnostic> {
+        let kind = Attribute::get_named_enum_kind_id("nobuiltin");
+        if kind == 0 {
+            return Err("LLVM does not recognize the `nobuiltin` function attribute".into());
+        }
+        function.add_attribute(
+            AttributeLoc::Function,
+            self.context.create_enum_attribute(kind, 0),
+        );
+        Ok(())
+    }
+
     pub(super) fn next_binding_id(&mut self) -> usize {
         let id = self.next_binding_id;
         self.next_binding_id += 1;
@@ -981,6 +996,7 @@ impl<'ctx> Codegen<'ctx> {
             let llvm_fn =
                 self.module
                     .add_function(llvm_name, self.llvm_fn_type(&params, ret)?, None);
+            self.mark_not_builtin(llvm_fn)?;
             c_symbols.insert(llvm_name.to_owned(), function.span);
             self.functions.insert(function.name.clone(), llvm_fn);
             self.signatures.insert(function.name.clone(), (params, ret));
@@ -1076,6 +1092,7 @@ impl<'ctx> Codegen<'ctx> {
                 self.llvm_fn_type(&params, ret)?,
                 None,
             );
+            self.mark_not_builtin(external)?;
             c_symbols.insert(function.link_name.clone(), function.span);
             self.functions.insert(function.name.clone(), external);
             self.signatures.insert(function.name.clone(), (params, ret));

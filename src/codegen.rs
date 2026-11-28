@@ -3,6 +3,7 @@ use crate::parser::{
     ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, LambdaCapture,
     LambdaKey, MatchPattern, Program, Span, Stmt, StructDecl, Type, UnaryOp,
 };
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
