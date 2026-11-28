@@ -53,8 +53,12 @@ additionally exercised with `--emit-llvm`.
 - Deep module nesting is tested at a bounded depth of 48 to stress recursive
   loading/name resolution without intentionally exhausting the host stack. Each
   level reaches its child through an aliased `use` import.
-- C interop covers only the documented scalar ABI (`i64`, `f32`, `f64`,
-  `unit`); Vaca does not support pointer/string/aggregate/variadic C FFI.
+- C interop covers the scalar ABI (`i64`, `f32`, `f64`, `unit`) plus `str` and
+  typed raw-pointer parameters and results. The pointer/string fixture checks a
+  NUL-terminated string return, a `str` argument, mutation through a projected
+  raw pointer, typed null equality, and a nullable raw-pointer result. Struct,
+  enum, vector, and closure layouts remain non-ABI, safe references and
+  booleans are not extern types, and variadics are unsupported.
 
 No compiler internal panic, miscompilation, or broken JSON recovery was
 reproduced by this corpus in the recorded run. `run.py` prints individual

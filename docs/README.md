@@ -8,7 +8,7 @@ The repository [README](../README.md) is the short landing page. This index link
 
 - [Using the compiler](usage.md) — requirements, building, compilation modes, linker inputs, and output-path safety.
 - [Diagnostics](diagnostics.md) — parser recovery, source locations, and JSON error fields.
-- [Scalar C FFI](c-ffi.md) — declaring and calling scalar C functions, and linking native code.
+- [C FFI](c-ffi.md) — declaring scalar, string, and raw-pointer C functions, and linking native code.
 - [Examples](examples.md) — complete programs to check, compile, and run.
 - [Testing](testing.md) — Rust tests, the example runner, and the adversarial corpus.
 

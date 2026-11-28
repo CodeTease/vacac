@@ -1,16 +1,18 @@
-// Call the C standard library's labs() function through Vaca's scalar FFI.
+// Call C standard library functions through Vaca's C FFI.
 extern "C" fn labs(value: i64) -> i64;
+extern "C" fn atol(value: str) -> i64;
 
 fn main() -> i64 {
     let value: i64 = -42;
     let magnitude: i64 = labs(value);
+    let parsed: i64 = atol("42");
 
     print("labs(");
     print_i64(value);
     print(") = ");
     print_i64(magnitude);
 
-    if magnitude == 42 {
+    if magnitude == 42 && parsed == 42 {
         0
     } else {
         1
