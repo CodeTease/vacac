@@ -25,6 +25,7 @@ impl<'ctx> Codegen<'ctx> {
         codegen.emit_allocator_builtin()?;
         codegen.emit_string_concat_builtin()?;
         codegen.emit_vector_runtime()?;
+        codegen.emit_c_string_result_wrappers(program)?;
         codegen.emit_function_adapters()?;
         codegen.define_globals(program)?;
         for function in &program.functions {
@@ -999,15 +1000,15 @@ impl<'ctx> Codegen<'ctx> {
         }
         for function in &program.extern_functions {
             self.module_context = function.module.clone();
-            if function
-                .params
-                .iter()
-                .any(|param| !matches!(param.ty, Type::I64 | Type::F32 | Type::F64))
-                || !matches!(
-                    function.return_type,
-                    Type::I64 | Type::F32 | Type::F64 | Type::Unit
+            if function.params.iter().any(|param| {
+                !matches!(
+                    param.ty,
+                    Type::I64 | Type::F32 | Type::F64 | Type::Str | Type::RawPointer(_, _)
                 )
-            {
+            }) || !matches!(
+                function.return_type,
+                Type::I64 | Type::F32 | Type::F64 | Type::Str | Type::RawPointer(_, _) | Type::Unit
+            ) {
                 return Err(Diagnostic::at(
                     function.span.into(),
                     format!(
@@ -1044,14 +1045,24 @@ impl<'ctx> Codegen<'ctx> {
                 .map(|param| self.resolve_type(&param.ty, param.span))
                 .collect::<Result<Vec<_>, _>>()?;
             let ret = self.resolve_type(&function.return_type, function.span)?;
-            if params
-                .iter()
-                .any(|ty| !matches!(ty, ValueType::I64 | ValueType::F32 | ValueType::F64))
-                || !matches!(
-                    ret,
-                    ValueType::I64 | ValueType::F32 | ValueType::F64 | ValueType::Unit
+            if params.iter().any(|ty| {
+                !matches!(
+                    ty,
+                    ValueType::I64
+                        | ValueType::F32
+                        | ValueType::F64
+                        | ValueType::Str
+                        | ValueType::RawPointer(_)
                 )
-            {
+            }) || !matches!(
+                ret,
+                ValueType::I64
+                    | ValueType::F32
+                    | ValueType::F64
+                    | ValueType::Str
+                    | ValueType::RawPointer(_)
+                    | ValueType::Unit
+            ) {
                 return Err(Diagnostic::at(
                     function.span.into(),
                     format!(

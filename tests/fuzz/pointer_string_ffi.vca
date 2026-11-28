@@ -1,0 +1,23 @@
+extern "C" fn fuzz_label() -> str;
+extern "C" fn fuzz_fill(label: str, out: *mut i64) -> i64;
+extern "C" fn fuzz_null() -> *mut i64;
+
+fn main() -> i64 {
+    const label = fuzz_label();
+    if label != "fuzz" {
+        return 1;
+    }
+
+    let value = 0;
+    const out = &raw mut value;
+    if fuzz_fill(label, out) != 1 {
+        return 2;
+    }
+    if value != 42 {
+        return 3;
+    }
+    if fuzz_null() != null::<*mut i64>() {
+        return 4;
+    }
+    0
+}

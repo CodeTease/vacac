@@ -27,7 +27,10 @@ fn raw_pointers_are_typed_and_can_be_dereferenced() {
 fn raw_pointers_compare_by_address_and_support_typed_null() {
     let result = compile_and_run(
         r#"
+        struct Holder { pointer: *const i64 }
+
         fn same(left: *const i64, right: *const i64) -> bool { left == right }
+        fn identity<T>(value: T) -> T { value }
 
         fn main() -> i64 {
             let value = 41;
@@ -38,6 +41,13 @@ fn raw_pointers_compare_by_address_and_support_typed_null() {
             if pointer == null_pointer || null_pointer != null::<*const i64>() { return 2; }
             if null::<*mut i64>() != null::<*mut i64>() { return 3; }
             if !same(pointer, alias) { return 4; }
+
+            const holder = Holder { pointer: null_pointer };
+            if holder.pointer != null::<*const i64>() { return 5; }
+            const pointers = [null::<*const i64>()];
+            if pointers[0] != null::<*const i64>() { return 6; }
+            const generic = identity(null::<*mut i64>());
+            if generic != null::<*mut i64>() { return 7; }
             0
         }
         "#,

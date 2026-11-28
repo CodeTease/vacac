@@ -228,7 +228,16 @@ pub(super) fn monomorphize(
             substitutions: Substitution::new(),
         });
     }
-    for function in &program.extern_functions {
+    for function in &mut program.extern_functions {
+        for param in &mut function.params {
+            param.ty =
+                specializer.normalize_type(param.ty.clone(), &Substitution::new(), param.span)?;
+        }
+        function.return_type = specializer.normalize_type(
+            function.return_type.clone(),
+            &Substitution::new(),
+            function.span,
+        )?;
         specializer.signatures.insert(
             function.name.clone(),
             (

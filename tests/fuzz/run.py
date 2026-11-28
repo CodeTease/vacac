@@ -332,6 +332,20 @@ def main():
                 ]),
             ))
 
+    with tempfile.TemporaryDirectory(prefix="vacac-fuzz-pointer-ffi-") as temporary:
+        object_file = Path(temporary) / "support.o"
+        native = run(["cc", "-c", CORPUS / "pointer_string_ffi_support.c", "-o", object_file])
+        if not check_result("compile pointer/string C FFI support object", native):
+            failures += 1
+        else:
+            record(check_result(
+                "pointer and string C FFI round-trip, null, and pointer mutation",
+                run([
+                    compiler, CORPUS / "pointer_string_ffi.vca", "--run",
+                    "--link-object", object_file,
+                ]),
+            ))
+
     with tempfile.TemporaryDirectory(prefix="vacac-fuzz-ir-") as temporary:
         ir_file = Path(temporary) / "closure.ll"
         result = run([

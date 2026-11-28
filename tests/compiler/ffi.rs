@@ -8,7 +8,7 @@ fn build_native_inputs(
     let object = directory.join("object.o");
     fs::write(
         &object_source,
-        "#include <stdint.h>\nint64_t object_value(void) { return 19; }\nint64_t add_i64(int64_t a, int64_t b) { return a + b; }\nfloat add_f32(float a, float b) { return a + b; }\ndouble add_f64(double a, double b) { return a + b; }\nvoid accept_i64(int64_t value) { (void)value; }\n",
+        "#include <stdint.h>\n#include <stddef.h>\nint64_t object_value(void) { return 19; }\nint64_t add_i64(int64_t a, int64_t b) { return a + b; }\nfloat add_f32(float a, float b) { return a + b; }\ndouble add_f64(double a, double b) { return a + b; }\nvoid accept_i64(int64_t value) { (void)value; }\nconst char *native_label(void) { return \"vaca\"; }\nconst char *native_echo(const char *text) { return text; }\nint64_t native_fill(const char *label, int64_t *out) {\n    if (label == NULL || out == NULL) return 0;\n    if (label[0] != 'v' || label[1] != 'a') return 0;\n    *out = 42;\n    return 1;\n}\nint64_t *native_null(void) { return 0; }\nconst char *native_null_string(void) { return 0; }\nvoid native_write_label(const char **out) { if (out != NULL) *out = \"from-c\"; }\n",
     )
     .unwrap();
     let result = Command::new("cc")
@@ -184,6 +184,125 @@ fn main() -> i64 {
 }
 
 #[test]
+fn supports_c_strings_and_typed_raw_pointers() {
+    let directory = std::env::temp_dir().join(format!("vacac-ffi-strings-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let (object, second_object, _) = build_native_inputs(&directory);
+    let result = compile_with_native_inputs(
+        &directory,
+        r#"
+extern "C" fn native_label() -> str;
+extern "C" fn native_echo(text: str) -> str;
+extern "C" fn native_fill(label: str, out: *mut i64) -> i64;
+extern "C" fn native_null() -> *mut i64;
+extern "C" fn native_write_label(out: *mut str) -> unit;
+
+fn main() -> i64 {
+    const label = native_label();
+    if label != "vaca" { return 1; }
+    if native_echo(label) != label { return 2; }
+
+    let value = 0;
+    const out = &raw mut value;
+    if native_fill(label, out) != 1 { return 3; }
+    if value != 42 { return 4; }
+
+    const empty = native_null();
+    if empty != null::<*mut i64>() { return 5; }
+
+    let writable = "initial";
+    const slot = &raw mut writable;
+    native_write_label(slot);
+    if writable != "from-c" { return 6; }
+    if native_null() == null::<*mut i64>() { 0 } else { 7 }
+}
+"#,
+        "--quiet",
+        &[object, second_object],
+        &["answer"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let run = Command::new(directory.join("program")).output().unwrap();
+    assert_eq!(run.status.code(), Some(0));
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn null_c_string_results_trap_instead_of_becoming_vaca_strings() {
+    let directory = std::env::temp_dir().join(format!("vacac-ffi-null-str-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&directory);
+    fs::create_dir_all(&directory).unwrap();
+    let (object, _, _) = build_native_inputs(&directory);
+
+    for (source, name) in [
+        (
+            r#"
+extern "C" fn native_null_string() -> str;
+fn main() -> i64 { const value = native_null_string(); print(value); 0 }
+"#,
+            "ffi-null-string-direct",
+        ),
+        (
+            r#"
+extern "C" fn native_null_string() -> str;
+fn main() -> i64 {
+    const function: fn() -> str = native_null_string;
+    const value = function();
+    print(value);
+    0
+}
+"#,
+            "ffi-null-string-function-value",
+        ),
+    ] {
+        let result = compile_with_native_inputs(
+            &directory,
+            source,
+            "--quiet",
+            std::slice::from_ref(&object),
+            &["answer"],
+        );
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let run = Command::new(directory.join("program")).output().unwrap();
+        assert_eq!(run.status.code(), Some(1), "{name}");
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout),
+            "",
+            "{name} must trap before using the string"
+        );
+    }
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
+fn generic_types_in_pointer_extern_signatures_are_normalized() {
+    let (directory, result) = crate::common::run_compiler_with_args(
+        r#"
+        struct Box<T> { value: T }
+        extern "C" fn accept_box(value: *mut Box<i64>) -> unit;
+        fn main() -> i64 { 0 }
+        "#,
+        "ffi-generic-pointer-check",
+        &["--check"],
+    );
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let _ = fs::remove_dir_all(directory);
+}
+
+#[test]
 fn calls_a_libc_function() {
     let result = crate::common::compile_and_run(
         "extern \"C\" fn labs(value: i64) -> i64; fn main() -> i64 { labs(-42) - 42 }",
@@ -206,9 +325,9 @@ fn rejects_unsupported_extern_types_and_duplicate_c_symbols() {
             "ffi-bool-parameter",
         ),
         (
-            "extern \"C\" fn bad() -> str; fn main() -> i64 { 0 }",
+            "extern \"C\" fn bad() -> bool; fn main() -> i64 { 0 }",
             "C extern return types support only",
-            "ffi-str-return",
+            "ffi-bool-return",
         ),
         (
             "extern \"C\" fn first() -> i64; extern \"C\" fn first() -> i64; fn main() -> i64 { 0 }",
