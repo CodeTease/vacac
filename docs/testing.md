@@ -25,6 +25,12 @@ The deterministic adversarial corpus in [`tests/fuzz/`](../tests/fuzz/) targets 
 python3 tests/fuzz/run.py target/release/vacac
 ```
 
+Pass an optimization level as an optional argument to run emitting cases at that level; checking and diagnostic cases remain unoptimized. CI runs the corpus both with the default settings and with `-O3`:
+
+```sh
+python3 tests/fuzz/run.py target/release/vacac -O3
+```
+
 Expected compile errors and runtime traps are part of the corpus; its runner checks their diagnostics and exit statuses and fails on unexpected results. See [`tests/fuzz/README.md`](../tests/fuzz/README.md) for coverage details and language limitations.
 
 Parser recovery reports multiple diagnostics when possible; their order reflects recovery and is not guaranteed to match source order. See [Diagnostics](diagnostics.md#parser-recovery).

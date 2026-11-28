@@ -23,6 +23,7 @@ pipeline, and rules that are easy to break.
 | Lint | `cargo clippy --all-targets -- -D warnings` |
 | Check/run all examples | `scripts/test-examples.sh` (after `cargo build --release`) |
 | Adversarial corpus | `python3 tests/fuzz/run.py target/release/vacac` |
+| Optimized corpus | `python3 tests/fuzz/run.py target/release/vacac -O3` |
 
 `[lints.clippy]` in `Cargo.toml` allows exactly four lints (`result_large_err`,
 `too_many_arguments`, `type_complexity`, `enum_variant_names`), each with a
@@ -30,7 +31,8 @@ comment. Everything else must stay warning free; add a new `allow` only with a
 comment explaining why the lint is wrong for this codebase. GitHub Actions
 (`.github/workflows/ci.yml`) checks `cargo fmt --all -- --check`, runs
 `cargo clippy --all-targets --locked -- -D warnings`, runs tests, builds the
-release compiler, checks and runs all examples, and runs `tests/fuzz/run.py`.
+release compiler, checks and runs all examples, and runs `tests/fuzz/run.py`
+with both the default settings and `-O3`.
 
 ## Architecture
 
@@ -44,7 +46,7 @@ Pipeline stages, all entered through `src/main.rs`:
 6. **modules/generics/** - specializes functions, structs, and enums; inference, validation, trait bounds, and static trait dispatch (512 instance limit)
 7. **sema.rs** - type checker: scopes, signatures, immutability, place-based borrows, named lifetimes, return paths and unreachable code; split across `sema/` (declarations, expressions, matching, places, statements, types)
 8. **aggregate_validation.rs** - rejects recursive by-value struct/enum/array layouts; called from sema
-9. **codegen.rs** - Inkwell/LLVM 23 backend; builds and verifies the module, emits an object file, then links with external `cc`; split across `codegen/`
+9. **codegen.rs** - Inkwell/LLVM 23 backend; builds and verifies the module, applies the selected `default<O1>`/`default<O2>`/`default<O3>` pass pipeline and matching target-machine optimization level, emits an object file, then links with external `cc`; split across `codegen/`
 10. **diagnostic.rs** - structured diagnostics with human-readable and JSON rendering
 
 Trait calls and bounds are fully resolved to ordinary direct calls during module
@@ -56,17 +58,22 @@ both layers.
 ## Compiler usage
 
 ```
-vacac <source.vca> [-o <executable>] [--emit-obj <object.o>]
-vacac <source.vca> --run
+vacac <source.vca> [-o <executable>] [--emit-obj <object.o>] [-O0|-O1|-O2|-O3]
+vacac <source.vca> --run [-O0|-O1|-O2|-O3]
 vacac <source.vca> --check
-vacac <source.vca> --emit-llvm <module.ll>
+vacac <source.vca> --emit-llvm <module.ll> [-O0|-O1|-O2|-O3]
 ```
 
 Options may appear before or after the source path; `--` ends option parsing.
 Add `--link-object <path>`, `--link-search <dir>`, and `--link-lib <name>` for
 native inputs (repeatable, executable and `--run` only). `--json` renders errors
 as JSON, `-q`/`--quiet` suppresses success messages, and `--help`/`--version` are
-available.
+available. An optimization level may be specified once and is rejected with
+`--check`. Omitting it preserves the historical no-IR-pipeline behavior with
+LLVM's default machine-code optimization level; `-O0` also disables machine-code
+optimization. `-O1`/`-O2`/`-O3` run `default<O1>`/`default<O2>`/`default<O3>` and
+use the matching machine level; `--emit-llvm` writes the module after those IR
+passes.
 
 The default executable is `a.out`. The object file is derived from the
 executable path unless `--emit-obj` is given (`-o bar` writes `bar.o`).
@@ -103,7 +110,7 @@ Integration tests are rooted at `tests/compiler.rs` and grouped by feature in
 `diagnostics`, and `semantics`/`values` submodules, `strings`, `arrays`,
 `vectors`, `structs`, `enums`, `tuples`, `generics`, `traits`, `function_values`,
 `globals`, `pointers`, `references`, `results`, `ffi`, `floats`, `bitwise`,
-`equality`, `matching_loops`, and `modules`). Shared helpers are in
+`equality`, `matching_loops`, `optimization`, and `modules`). Shared helpers are in
 `tests/compiler/common/mod.rs`. Each test invokes the already-built binary via
 `env!("CARGO_BIN_EXE_vacac")`, writes a temporary `.vca` under
 `std::env::temp_dir()`, compiles, runs, asserts stdout/status, and removes the

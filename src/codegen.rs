@@ -3,6 +3,7 @@ use crate::parser::{
     ArrayElementType, BinaryOp, Block, EnumDecl, Expr, Function, GlobalDecl, LambdaCapture,
     LambdaKey, MatchPattern, Program, Span, Stmt, StructDecl, Type, UnaryOp,
 };
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
@@ -196,21 +197,34 @@ struct Codegen<'ctx> {
     function_adapters: HashMap<String, FunctionValue<'ctx>>,
 }
 
-pub fn emit_object(program: &Program, path: &Path) -> Result<(), Diagnostic> {
-    let context = Context::create();
-    let mut codegen = Codegen::for_program(&context, program)?;
-    codegen.write_object(path)
+/// An emitted-code optimization level selected on the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptLevel {
+    O0,
+    O1,
+    O2,
+    O3,
+}
+
+pub fn emit_object(
+    program: &Program,
+    path: &Path,
+    level: Option<OptLevel>,
+) -> Result<(), Diagnostic> {
+    output::emit_object(program, path, level)
 }
 
 pub fn check(program: &Program) -> Result<(), Diagnostic> {
     let context = Context::create();
-    Codegen::for_program(&context, program).map(|_| ())
+    Codegen::build_module(&context, program).map(|_| ())
 }
 
-pub fn emit_llvm(program: &Program, path: &Path) -> Result<(), Diagnostic> {
-    let context = Context::create();
-    let mut codegen = Codegen::for_program(&context, program)?;
-    codegen.write_llvm(path)
+pub fn emit_llvm(
+    program: &Program,
+    path: &Path,
+    level: Option<OptLevel>,
+) -> Result<(), Diagnostic> {
+    output::emit_llvm(program, path, level)
 }
 
 mod aggregates;

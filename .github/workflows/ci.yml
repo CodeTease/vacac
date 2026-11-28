@@ -94,6 +94,9 @@ jobs:
       - name: Run fuzz tests
         run: python3 tests/fuzz/run.py target/release/vacac
 
+      - name: Run fuzz tests at -O3
+        run: python3 tests/fuzz/run.py target/release/vacac -O3
+
       - name: Save cargo cache
         uses: actions/cache/save@v6
         with:
